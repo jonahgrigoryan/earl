@@ -12,9 +12,11 @@ Design an Expert Advisor (EA) to pass the **FundingPips 1-step \$10,000** challe
 
 1. **News policy**
 
-   * **Entries are blocked** within **±120s** of high-impact events that affect the symbol.
-   * **Protective exits** (SL/TP/auto kill-switch/margin) are **always allowed** even inside the block.
-   * **Discretionary closes** obey `MinHoldSeconds` **except** when kill-switch/margin rules trigger.
+   * **Evaluation (Student) accounts**: the provider imposes no news/weekend restrictions. We still enforce an internal news buffer by default (see News Compliance) for safety.
+   * **Master (funded) accounts**: enforce a high‑impact news lock on affected symbols:
+     - Block opening and holding positions from **T−300s to T+300s** (5 minutes before/after).
+     - Profits from trades opened/closed inside this 10‑minute window are not counted unless the trade was opened **≥ 5 hours** prior.
+   * **Protective exits** (SL/TP/auto kill‑switch/margin) are **always allowed** inside the window.
 
 2. **Session order & scope**
 
@@ -33,8 +35,8 @@ Design an Expert Advisor (EA) to pass the **FundingPips 1-step \$10,000** challe
 
 5. **Trading-day counting & persistence**
 
-   * A trade day counts on the **first `DEAL_ENTRY_IN` between CEST midnights**.
-   * Persist: `initial_baseline`, `gDaysTraded`, `last_counted_cest_date` so restarts don’t reset state.
+   * A trade day counts on the **first `DEAL_ENTRY_IN` between platform/server‑day midnights**.
+   * Persist: `initial_baseline`, `gDaysTraded`, `last_counted_server_date` so restarts don’t reset state.
 
 6. **Kill-switch floors**
 
@@ -73,8 +75,8 @@ Design an Expert Advisor (EA) to pass the **FundingPips 1-step \$10,000** challe
 * Enforce **configurable** drawdown caps everywhere via `DailyLossCapPct`, `OverallLossCapPct`. **No hard-coded 5/10%**.
 * ATR-scaled SL/TP; auto lot sizing; **position/order caps**; equity guardian that **aggregates open & pending risk** before placing the next trade.
 * At least one built-in indicator (ATR/RSI/MA) + session stats.
-* Built-in **news filter** with **±120s** buffer and CSV fallback.
-* Multi-symbol, multi-timeframe, low CPU; Strategy Tester-ready; **CEST-anchored day baseline** via `ServerToCEST_OffsetMinutes`.
+* Built-in **news filter** with **10‑minute Master window** (5m before/after) and CSV fallback; internal buffer in Evaluation.
+* Multi-symbol, multi-timeframe, low CPU; Strategy Tester-ready; **server‑day anchored baseline** (map to CEST only for reporting if needed).
 
 **Should**
 
@@ -186,9 +188,10 @@ Focuses risk on **high-energy session bursts** or **measurable dislocations** fr
 ## News Compliance
 
 * Use MQL5 **Economic Calendar** where available; else CSV fallback.
-* **Entries blocked** from **T−120s → T+120s** for **high-impact** events affecting the symbol (and both legs for synthetic).
-* **Protective exits always allowed** (SL/TP/kill-switch/margin).
-* **Discretionary closes** respect `MinHoldSeconds` unless kill-switch/margin rules require immediate exit.
+* **Evaluation (Student)**: no provider restriction; we may apply internal buffer `NewsBufferS` for safety.
+* **Master**: **entries and holding** blocked from **T−300s → T+300s** for **high‑impact** events affecting the symbol (and both legs for synthetic). Profits from trades opened/closed inside this window won’t count unless opened **≥ 5h** prior.
+* **Protective exits always allowed** (SL/TP/kill‑switch/margin).
+* **Discretionary closes** respect `MinHoldSeconds` unless kill‑switch/margin rules require immediate exit.
 
 ### News-window behavior (for any affected symbol/leg) in [T−NewsBufferS, T+NewsBufferS]
 
@@ -206,8 +209,9 @@ Focuses risk on **high-energy session bursts** or **measurable dislocations** fr
    - Stale queue items are dropped after a TTL (see `QueuedActionTTLMin`).
 
 3. Allowed exceptions (risk-reducing/protective only)
-   - Protective exits: kill-switch on Daily/Overall floor breach, margin protection. (Allowed anytime.)
-   - Broker-side SL/TP hits: always allowed. Log as `NEWS_FORCED_EXIT`.
+   - Protective exits: kill‑switch on Daily/Overall floor breach, margin protection. (Allowed anytime.)
+   - Broker‑side SL/TP hits: always allowed. Log as `NEWS_FORCED_EXIT`.
+   - On funded (Master) accounts, ensure SL is set within **30 seconds** of opening; log enforcement if late.
    - OCO safety: if a sibling pending would increase risk after an unexpected fill, you MAY delete that sibling pending (order cancel only). Log as `NEWS_RISK_REDUCE`.
    - Replication safety: if one leg of a synthetic replication hits SL/TP, you MAY close the other leg immediately to neutralize residual delta. Log as `NEWS_PAIR_PROTECT`.
 
@@ -215,7 +219,7 @@ Focuses risk on **high-energy session bursts** or **measurable dislocations** fr
 
 ## Architecture Components
 
-* **Scheduler (OnTimer 30–60s):** session windows, CEST day rollover, news blocks, cutoffs, governance.
+* **Scheduler (OnTimer 30–60s):** session windows, server‑day rollover baseline, news blocks, cutoffs, governance.
 * **Symbol Controller:** per-symbol state (indicators, OR levels, last trade metadata).
 * **Signal Engine (BWISC):** computes BTR/SDR/ORE/RSI → bias → BC/MSC/none with candidate SL/TP.
 * **Risk Engine:** lot sizing from risk%, ATR-based SL distance; **budget gate** against daily/overall rooms; margin checks; **position caps**.
@@ -287,7 +291,7 @@ Order-->Persistence/Logs: audit rows
 
 ### Equity & Risk Caps (with floors)
 
-* **Day anchor (CEST):** `baseline_today = max(balance_at_midnight_CEST, equity_at_midnight_CEST)`.
+* **Day anchor (server):** `baseline_today = max(balance_at_server_midnight, equity_at_server_midnight)`.
 
 * **Room today:** `(DailyLossCapPct/100) * baseline_today − (baseline_today − current_equity)`.
 
@@ -326,10 +330,11 @@ Order-->Persistence/Logs: audit rows
 * **ATR\_D1:** ATR(14) on D1.
 * **RSI\_H1:** RSI(14) on H1.
 
-### News Filter (±120s)
+### News Filter (Master 10‑minute window)
 
 * Prefer MQL5 Calendar API; fallback CSV `timestamp,impact,countries,symbols`.
-* Map events to symbols (including both legs for synthetic).
+* Map events to symbols (including both legs for synthetic where relevant).
+* Master accounts: block opening and holding positions from **T−300s to T+300s** around high‑impact events. Protective exits allowed. Profits from trades opened/closed inside this window won’t count unless the trade was opened **≥ 5 hours** before the event.
 
 ---
 
@@ -337,7 +342,8 @@ Order-->Persistence/Logs: audit rows
 
 **Risk & governance**
 
-* `DailyLossCapPct` (default **3.0**)
+* `DailyLossCapPct` (default **4.0**)  
+  FundingPips 1‑Step default daily loss is 4% of the higher of starting Equity/Balance.
 * `OverallLossCapPct` (default **6.0**)
 * `MinTradeDaysRequired` (default **3**)
 * `TradingEnabledDefault` (default **true**)
@@ -359,7 +365,8 @@ Order-->Persistence/Logs: audit rows
 
 **Compliance**
 
-* `NewsBufferS` (default **120**)
+* `NewsBufferS` (default **300**)  
+  Master: 10‑minute high‑impact window (5m before/after). Evaluation: internal buffer only.
 * `MaxSpreadPoints` (default **40**)
 * `MaxSlippagePoints` (default **10**)
 * `MinHoldSeconds` (default **120**)
@@ -367,7 +374,9 @@ Order-->Persistence/Logs: audit rows
 
 **Timezone**
 
-* `ServerToCEST_OffsetMinutes` (default **0**; update on DST)
+* `UseServerMidnightBaseline` (default **true**)  
+  Use platform/server midnight for daily baseline; map to CEST only for reporting if needed.
+* `ServerToCEST_OffsetMinutes` (default **0**; update on DST when mapping)
 
 **Symbols & leverage**
 
