@@ -1,0 +1,211 @@
+RPEA EA Project Directory Structure
+==================================
+
+/RPEA_EA/
+├── 📁 src/                          # Source code directory
+│   ├── 📁 MQL5/                     # MT5 Expert Advisor files
+│   │   ├── 📄 RPEA.mq5             # Main EA file
+│   │   ├── 📁 Experts/              # Compiled EA binaries
+│   │   └── 📁 Files/                # MT5 Files directory for logs/data
+│   │       ├── 📄 rpea_logs.csv     # Trading logs
+│   │       ├── 📄 rpea_state.bin    # Persistence data
+│   │       └── 📄 news_data.csv     # News calendar fallback
+│   │
+│   ├── 📁 Include/                  # MQL5 Include files
+│   │   ├── 📄 RPEA_Defines.mqh      # Constants and enumerations
+│   │   ├── 📄 RPEA_Types.mqh        # Custom structures
+│   │   ├── 📄 RPEA_Inputs.mqh       # Input parameter definitions
+│   │   ├── 📄 RPEA_Utils.mqh        # Utility functions
+│   │   ├── 📄 RPEA_Math.mqh         # Mathematical functions
+│   │   └── 📁 Components/           # Modular components
+│   │       ├── 📄 Scheduler.mqh     # Session and timer management
+│   │       ├── 📄 SymbolController.mqh # Per-symbol state management
+│   │       ├── 📄 SignalEngine.mqh  # BWISC signal generation
+│   │       ├── 📄 SignalMR.mqh      # MR/EMRT/RL signal generation
+│   │       ├── 📄 MetaPolicy.mqh    # Ensemble decision logic
+│   │       ├── 📄 RiskEngine.mqh    # Risk calculation and allocation
+│   │       ├── 📄 OrderEngine.mqh   # Order management and execution
+│   │       ├── 📄 EquityGuardian.mqh # Drawdown and floor management
+│   │       ├── 📄 NewsFilter.mqh    # News calendar and compliance
+│   │       ├── 📄 Persistence.mqh   # State saving/loading
+│   │       └── 📄 Telemetry.mqh     # SLO monitoring and logging
+│   │
+│   ├── 📁 Scripts/                  # MQL5 Scripts
+│   │   ├── 📄 EMRT_Formation.mq5    # Weekly EMRT calculation script
+│   │   ├── 📄 ForwardDemo.mq5       # Forward testing script
+│   │   └── 📄 ParameterOptimizer.mq5 # Optimization helper
+│   │
+│   └── 📁 Indicators/               # Custom indicators
+│       ├── 📄 RPEA_BWISC_Indicator.mq5  # BWISC visualization
+│       └── 📄 RPEA_MR_Indicator.mq5     # MR signal visualization
+│
+├── 📁 config/                       # Configuration files
+│   ├── 📄 rpea_inputs.set           # Default input parameters
+│   ├── 📄 optimization_presets.set  # Strategy Tester presets
+│   ├── 📄 news_symbols.txt          # News-impacted symbols
+│   ├── 📄 symbol_universe.txt       # Tradable instruments
+│   └── 📄 risk_profiles.json        # Risk management profiles
+│
+├── 📁 data/                         # Data files
+│   ├── 📄 news_calendar.csv         # Economic calendar data
+│   ├── 📄 emrt_weights.bin          # Pre-computed EMRT weights
+│   ├── 📄 rl_qtable.bin             # Trained RL Q-table
+│   ├── 📄 historical_data/          # Backtesting data
+│   │   ├── 📄 EURUSD_H1.csv
+│   │   └── 📄 XAUUSD_H1.csv
+│   └── 📄 forward_demo_data/        # Forward testing data
+│       └── 📄 market_conditions.csv
+│
+├── 📁 docs/                         # Documentation
+│   ├── 📄 finalspec_merged.md       # Complete merged specification
+│   ├── 📄 PR_SUMMARY.md             # Pull request summary
+│   ├── 📄 CHANGELOG.md              # Version history
+│   ├── 📁 tests/                    # Testing documentation
+│   │   ├── 📄 checklist.md          # QA checklist
+│   │   ├── 📄 unit_tests.md         # Unit test specifications
+│   │   └── 📄 integration_tests.md  # Integration test specs
+│   ├── 📁 architecture/             # Architecture documentation
+│   │   ├── 📄 component_diagram.puml # PlantUML diagrams
+│   │   ├── 📄 data_flow.md          # Data flow documentation
+│   │   └── 📄 sequence_diagrams.puml # Interaction diagrams
+│   └── 📁 user_guide/               # User documentation
+│       ├── 📄 installation.md       # Setup instructions
+│       ├── 📄 configuration.md      # Configuration guide
+│       └── 📄 troubleshooting.md    # Common issues
+│
+├── 📁 tests/                        # Testing framework
+│   ├── 📁 unit/                     # Unit tests
+│   │   ├── 📄 test_emrt.cpp         # EMRT calculation tests
+│   │   ├── 📄 test_rl_engine.cpp    # RL logic tests
+│   │   ├── 📄 test_meta_policy.cpp  # Ensemble logic tests
+│   │   └── 📄 test_risk_engine.cpp  # Risk calculation tests
+│   │
+│   ├── 📁 integration/              # Integration tests
+│   │   ├── 📄 test_news_compliance.cpp  # News filter integration
+│   │   ├── 📄 test_session_governance.cpp # Session logic tests
+│   │   ├── 📄 test_xaueur_synthetic.cpp  # Synthetic cross tests
+│   │   └── 📄 test_barrier_scenarios.cpp # Edge case testing
+│   │
+│   ├── 📁 system/                   # System-level tests
+│   │   ├── 📄 test_forward_demo.py  # Python-based forward testing
+│   │   ├── 📄 test_monte_carlo.py   # Monte Carlo simulation
+│   │   └── 📄 test_regression.py    # Regression test suite
+│   │
+│   ├── 📁 data/                     # Test data
+│   │   ├── 📄 mock_news_events.csv  # Mock news data
+│   │   ├── 📄 synthetic_price_data.csv # Test price data
+│   │   └── 📄 edge_case_scenarios.json # Edge case definitions
+│   │
+│   └── 📁 performance/              # Performance benchmarks
+│       ├── 📄 benchmark_cpu_usage.py
+│       ├── 📄 benchmark_memory.py
+│       └── 📄 benchmark_latency.py
+│
+├── 📁 tools/                        # Development tools
+│   ├── 📄 build.py                  # Build automation script
+│   ├── 📄 deploy.py                 # Deployment script
+│   ├── 📄 monitor.py                # Live monitoring script
+│   ├── 📁 formatters/               # Code formatters
+│   │   ├── 📄 format_mql5.py        # MQL5 code formatter
+│   │   └── 📄 format_docs.py        # Documentation formatter
+│   └── 📁 analyzers/                # Code analysis tools
+│       ├── 📄 complexity_analyzer.py
+│       └── 📄 performance_profiler.py
+│
+├── 📁 research/                     # Research and development
+│   ├── 📄 statistical_arbitrage.txt # Original research paper
+│   ├── 📁 notebooks/                # Jupyter notebooks
+│   │   ├── 📄 emrt_analysis.ipynb   # EMRT research
+│   │   ├── 📄 rl_training.ipynb     # RL model training
+│   │   └── 📄 backtest_analysis.ipynb # Backtesting analysis
+│   ├── 📁 models/                   # ML model artifacts
+│   │   ├── 📄 rl_model.pkl          # Trained RL model
+│   │   └── 📄 feature_pipeline.pkl  # Feature engineering pipeline
+│   └── 📁 experiments/              # Experimental features
+│       ├── 📄 god_mode_roadmap.txt  # GOD mode upgrade plan
+│       └── 📄 advanced_features/    # Experimental components
+│
+├── 📁 deployment/                   # Deployment artifacts
+│   ├── 📄 Dockerfile                # Container deployment
+│   ├── 📄 docker-compose.yml        # Multi-service deployment
+│   ├── 📁 ansible/                  # Infrastructure automation
+│   │   ├── 📄 playbook.yml
+│   │   └── 📁 roles/
+│   └── 📁 kubernetes/               # K8s deployment
+│       ├── 📄 deployment.yml
+│       └── 📄 service.yml
+│
+├── 📁 monitoring/                   # Monitoring and alerting
+│   ├── 📄 prometheus.yml            # Metrics collection
+│   ├── 📄 grafana_dashboards/       # Dashboard definitions
+│   ├── 📄 alert_rules.yml           # Alerting rules
+│   └── 📁 scripts/                  # Monitoring scripts
+│       ├── 📄 health_check.py       # System health monitoring
+│       └── 📄 performance_monitor.py # Performance tracking
+│
+├── 📁 ci_cd/                        # CI/CD pipeline
+│   ├── 📄 .github/workflows/        # GitHub Actions
+│   │   ├── 📄 build.yml
+│   │   ├── 📄 test.yml
+│   │   └── 📄 deploy.yml
+│   ├── 📄 Jenkinsfile               # Jenkins pipeline
+│   ├── 📄 docker-compose.test.yml   # Test environment
+│   └── 📁 scripts/                  # Build and deploy scripts
+│       ├── 📄 build_mql5.sh
+│       ├── 📄 run_tests.sh
+│       └── 📄 deploy_production.sh
+│
+└── 📁 legacy/                       # Legacy code and archives
+    ├── 📄 old_implementation/       # Previous versions
+    └── 📄 migration_scripts/        # Data migration tools
+
+File Count Summary:
+==================
+- MQL5 Source Files: 15
+- Include Files: 12
+- Test Files: 18
+- Documentation: 15
+- Configuration: 8
+- Tools/Scripts: 12
+- Research: 8
+- Deployment: 6
+- Monitoring: 5
+- CI/CD: 7
+Total: ~106 files
+
+Key Directories Explained:
+========================
+
+📁 src/MQL5/           # Core MT5 implementation
+├── RPEA.mq5          # Main EA entry point
+├── Include/          # Modular components
+└── Files/           # Runtime data/logs
+
+📁 src/Include/Components/  # Core business logic
+├── SignalEngine.mqh     # BWISC strategy
+├── SignalMR.mqh         # MR/EMRT/RL strategy
+├── MetaPolicy.mqh       # Ensemble coordination
+├── RiskEngine.mqh       # Risk management
+└── OrderEngine.mqh      # Order execution
+
+📁 tests/             # Comprehensive testing
+├── unit/            # Component-level tests
+├── integration/     # Cross-component tests
+└── system/         # End-to-end tests
+
+📁 docs/             # Complete documentation
+├── finalspec_merged.md  # Authoritative spec
+├── tests/checklist.md   # QA procedures
+└── architecture/        # Technical diagrams
+
+📁 research/         # ML research and models
+├── notebooks/       # Analysis and training
+├── models/          # Trained ML artifacts
+└── experiments/     # GOD mode research
+
+This structure supports:
+- Modular development and testing
+- Clear separation of concerns
+- Scalable architecture for future enhancements
+- Comprehensive documentation and testing
+- Production-ready deployment pipeline
