@@ -1,0 +1,100 @@
+Awesome—here’s a drop-in prompt for v0.app that bakes in your two crucial changes:
+	1.	You’re a mobile clinic (you go to patients in homes, ALFs, SNFs).
+	2.	There’s a dedicated Referrals page for doctors.
+It keeps the site to 5 pages and rewrites wording (no copying) while using your reference site only for scope/structure inspiration.
+
+⸻
+
+Prompt for v0.app (copy/paste)
+
+Goal
+Build a 5-page, responsive, production-ready website for Advanced Wound Care & Solutions (AWCS) using Next.js (App Router) + TypeScript + Tailwind CSS + shadcn/ui. The site must feel premium, clinical, and reassuring—with tasteful motion (scroll-fade, micro-interactions, light parallax) that respects prefers-reduced-motion.
+
+Core positioning: We are a mobile wound care clinic—we go to the patient (homes, assisted living, skilled nursing). Emphasize house-call convenience + advanced therapies delivered on-site.
+
+Reference (for scope only, no copying)
+Use https://rebirthheals.com to understand offering scope and audience. Do not copy text. Extract topics, then rewrite everything in original wording. Replace all brand mentions with Advanced Wound Care & Solutions. Do not reuse logos or proprietary images; use neutral, license-safe placeholders.
+
+Brand & Voice
+	•	Name: Advanced Wound Care & Solutions (AWCS)
+	•	Tagline direction: “Advanced wound healing, delivered where you live.” (You may refine.)
+	•	Tone: compassionate, plain-language, clinically precise; no hype, no guarantees.
+	•	Look: clean, high-trust healthcare (light backgrounds, calming blues/teals, ample white space).
+	•	Type: modern legible sans for body; confident heading family/weights.
+
+Information Architecture — 5 Pages (Routes)
+	1.	Home (/)
+	•	Hero: mobile clinic value (“We come to you”), CTA “Book a Home Visit”, secondary “Refer a Patient”.
+	•	Benefits (cards): in-home convenience, wound-certified clinicians, coordinated care, fewer travel burdens, patient education.
+	•	Snapshot of advanced therapies: cellular/tissue-based products (biologic/CTP grafts), advanced dressings, selective debridement, compression/offloading, NPWT, infection management.
+	•	Who we serve: home patients, ALFs, SNFs, home-health agencies.
+	•	How it works (3-step journey): Referral → In-home evaluation & plan → Ongoing treatment & follow-up.
+	•	Mini “About our team” ribbon (generic role cards, placeholders).
+	•	FAQ teaser.
+	2.	Services (/services)
+	•	Sections with patient-friendly explanations + typical goals:
+	•	Advanced therapies (biologic/CTP grafts, advanced dressings).
+	•	Procedures & support (selective debridement, compression/offloading, NPWT, infection management, edema/lymphedema support).
+	•	Visit cadence & coordination (weekly visits, documentation, updates to PCP/specialists, collaboration with HHAs/ALFs/SNFs).
+	•	Callout: we travel to the patient across settings.
+	3.	Conditions We Treat (/conditions)
+	•	Clear, non-jargony descriptions for: diabetic foot ulcers, venous leg ulcers, arterial/ischemic ulcers, pressure injuries, post-surgical/traumatic wounds, radiation/oncologic skin injuries, burns, chronic non-healing wounds, skin tears.
+	•	“When to seek specialty wound care” (e.g., not improving after ~4 weeks, signs of infection).
+	•	No stats/claims unless provided; use cautious phrasing (“helps promote healing,” “supports limb preservation”).
+	4.	Provider Referrals (/referrals)  ← dedicated page for doctors
+	•	Audience: physicians, podiatrists, wound centers, HHAs, ALFs/SNFs.
+	•	Short explainer: mobile specialty wound care at the patient’s location; we coordinate notes and updates.
+	•	Referral form (separate from patient contact):
+	•	Practice name, provider name, NPI, contact email/phone, patient initials (no full PHI), city/ZIP, wound type, urgency, notes.
+	•	Compliance line: “Do not submit PHI via this form. We’ll contact you to securely collect clinical details.”
+	•	Downloadable PDF referral sheet (placeholder link) + fax/email placeholders.
+	•	Partner FAQ (acceptance criteria, typical visit cadence, documentation handoff).
+	5.	Contact & Service Areas (/contact)
+	•	Book a Home Visit form (Name, Phone, Email, City/ZIP, Care setting, Wound type, Message).
+	•	Compliance banner: “Do not submit PHI. For emergencies call 911.”
+	•	Service area map/list (placeholder) and hours.
+	•	General contact details placeholders; include a simple location coverage description (“We travel to… ”).
+
+Global Requirements
+	•	Rewrite everything in fresh language while preserving meaning; no sentence-level copying from the reference.
+	•	Avoid unverifiable clinical claims; no guarantees or exact healing rates.
+	•	Prominent sticky CTAs on all pages: “Book a Home Visit” and “Refer a Patient.”
+	•	Each page: meta title/description, OpenGraph, and appropriate Schema.org (Organization, MedicalBusiness, FAQPage where relevant).
+	•	Accessibility: WCAG AA contrast, keyboard nav, focus states, semantic HTML, descriptive alt text, skip-to-content.
+	•	Performance: optimized images, lazy loading, logical content order for screen readers.
+
+Motion & Interaction
+	•	Home hero: gentle parallax background; text fades on load; buttons with soft hover lift.
+	•	Section entrances: subtle fade-up on scroll; icon micro-motion for lists.
+	•	Respect prefers-reduced-motion to disable animations.
+
+Tech & Implementation
+	•	Next.js (App Router) + TypeScript, Tailwind, shadcn/ui; Radix primitives as needed.
+	•	Reusable components: Hero, BenefitCards, ServiceList, ConditionGrid, JourneySteps, FAQ, ReferralForm, ContactForm, ServiceAreaMap.
+	•	Content stored in /content/*.mdx or JSON for simple edits by non-devs.
+	•	Forms post to Next.js API routes with server-side validation; include visible success/error states. (Wire actions to placeholder endpoints.)
+	•	Add README.md with edit/deploy instructions and where to update service areas/CTAs.
+	•	Ready for one-click deploy to Vercel.
+
+Starter Copy Prompts (you generate)
+	•	Hero headline (~6–10 words) clearly stating mobile wound care.
+	•	Subhead: in-home convenience + advanced therapies (mention biologic/CTP grafts in plain language).
+	•	Benefits: 5 concise bullets as above.
+	•	3-step journey: 1–2 sentences per step.
+	•	FAQ: 6–8 items (visit length, who qualifies, insurance basics, infection control, what to have ready at home, coordination with current clinicians, how weekly visits work).
+
+Hard Constraints
+	•	Keep the site strictly to 5 pages as defined above (Home, Services, Conditions, Provider Referrals, Contact & Service Areas).
+	•	Use Advanced Wound Care & Solutions branding only; remove any “Rebirth” references.
+	•	No invented statistics, testimonials, or endorsements.
+	•	Ship clean, commented code; lint-clean; placeholder images/logos only.
+
+Deliverables
+	•	Running Next.js project with the 5 routes, responsive & accessible.
+	•	Original, brand-safe copy for AWCS emphasizing mobile/house-call care.
+	•	Metadata/SEO per page; sitemap and robots.
+	•	README.md describing content updates, service-area editing, and deployment.
+
+⸻
+
+If you’d like, I can also generate ready-to-paste copy for each page (mobile-focused, fully rewritten) so v0 just needs to slot it in.
