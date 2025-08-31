@@ -80,6 +80,10 @@ Design an Expert Advisor (EA) to pass the **FundingPips 1-step \$10,000** challe
 
 **RL Policy**: State space captures recent spread trajectory (l=4 periods, 4^4=256 states discretized by percentage change thresholds k=3%). Actions: enter/hold/exit bands. Reward: **r_{t+1} = A_t·(θ − Y_t) − c·|A_t|**, with **θ = 0** (mean) plus barrier penalties tied to the server-day floors and +10% target; includes news penalties per "News Compliance" (Master 10-minute window blocks actions; internal buffer applies penalties).
 
+**Q-Learning Implementation**: Uses standard Q-learning with Bellman update: `Q^new(S_t, A_t) ← Q(S_t, A_t) + α·[R_{t+1} + γ·max_a Q(S_{t+1}, a) − Q(S_t, A_t)]` where α is learning rate, γ is discount factor. Employs epsilon-greedy action selection: random action with probability ε during training (exploration), highest Q-value action with probability 1−ε; set ε=0 during live trading (pure exploitation).
+
+**Training Data Strategy**: Pre-train RL agent using simulated mean reversion spreads with varying parameters (μ, θ, σ) to generate extensive training paths across different market conditions. Simulate multiple OU processes and synthetic spread scenarios to build robust Q-table before live deployment. Training uses simulated environment where true long-term mean θ is known; live trading adapts to market reality where θ=0 (mean-centered) assumption.
+
 **Defaults**: MR RiskPct 0.8–1.0%; time-stop 60–90m; skip if symbol overlap with active BWISC position. Cross-reference: See News Compliance for Master 10-minute window and internal buffer handling.
 
 **Outputs to allocator**
@@ -511,6 +515,14 @@ Monte Carlo framework describing propagation gates: One-and-Done, NY gate, serve
 * `EMRT_VarCapMult` (default **2.5**) — variance cap: require S²(Y) ≤ `EMRT_VarCapMult` · Var(Y) over lookback
 * `EMRT_BetaGridMin` / `EMRT_BetaGridMax` (defaults **−2.0 / +2.0**) — bounds for β grid search when forming spreads
 
+**Q-Learning Training Parameters**
+
+* `QL_LearningRate` (default **0.10**) — α parameter for Q-learning update
+* `QL_DiscountFactor` (default **0.99**) — γ parameter for future reward discounting
+* `QL_EpsilonTrain` (default **0.10**) — ε for epsilon-greedy during training phase
+* `QL_TrainingEpisodes` (default **10000**) — number of simulated training episodes
+* `QL_SimulationPaths` (default **1000**) — number of OU/synthetic spread paths for training
+
 ---
 
 ## Implementation Roadmap
@@ -521,7 +533,7 @@ Monte Carlo framework describing propagation gates: One-and-Done, NY gate, serve
 * **M4 (Week 4)** – Compliance polish: calendar integration; CEST day tracking; min trade days; kill-switch floors; disable flags; persistence hardening.
 * **M5 (Week 5)** – Strategy Tester artifacts: `.set` for \$10k; optimization ranges; walk-forward scripts; CSV audit/reporting.
 * **M6 (Week 6)** – Hardening: market closure/req-reject paths; parameter validation; restart/idempotency; perf profiling; code review.
-* **M7 (Ensemble Integration)** – EMRT formation job; SignalMR module; Meta-Policy chooser; allocator updates; telemetry pipeline; forward-demo plan.
+* **M7 (Ensemble Integration)** – EMRT formation job; SignalMR module; Meta-Policy chooser; allocator updates; telemetry pipeline; RL agent pre-training with simulated spreads; Q-table initialization; forward-demo plan.
 
 ---
 
