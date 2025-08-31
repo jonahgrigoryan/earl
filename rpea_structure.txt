@@ -12,24 +12,31 @@ MQL5/
       timeutils.mqh                   # Server↔CEST mapping, time helpers
       sessions.mqh                    # Session predicates, OR windows
       indicators.mqh                  # ATR/RSI/MA handles and calc
+      regime.mqh                      # Regime detector (trend/range/volatile/illiquid)
+      liquidity.mqh                   # Spread/slippage monitor and gates
+      anomaly.mqh                     # Shock/anomaly detection & protective actions
       signals_bwisc.mqh               # BWISC signal engine
       signals_mr.mqh                  # MR engine (policy surface)
       emrt.mqh                        # EMRT formation (weekly job/cache IO)
       rl_agent.mqh                    # Q-learning table + action policy
+      bandit.mqh                      # Contextual bandit selector (BWISC/MR/Skip)
       meta_policy.mqh                 # BWISC↔MR chooser, tie-break, gating
       allocator.mqh                   # Proposal→risk budget→order plan
+      adaptive.mqh                    # Risk scaling by regime/efficiency/room
       risk.mqh                        # Sizing, margin guard, budget gate
       equity_guardian.mqh             # Baselines, floors, kill-switch
       order_engine.mqh                # OCO, market fallback, trailing, two-leg atomic ops
       synthetic.mqh                   # XAUEUR proxy/replication manager
       news.mqh                        # Calendar API + CSV fallback, window logic
+      learning.mqh                    # Online learning & calibration manager
       persistence.mqh                 # File-backed state, idempotent recovery
       logging.mqh                     # CSV audit rows, structured logs
       telemetry.mqh                   # KPIs/SLOs, auto-throttle hooks
   Files/
-    RPEA/
+    RPEA/   
       state/
         challenge_state.json          # Initial baseline, gDaysTraded, last_counted_date, flags
+        intents.json                   # Order intent/trailing queues for self-healing
       logs/
         audit_YYYYMMDD.csv
         decisions_YYYYMMDD.csv
@@ -40,6 +47,12 @@ MQL5/
         beta_grid.json
       qtable/
         mr_qtable.bin                 # Pre-trained Q table (optional seed)
+      bandit/
+        posterior.json                # Persisted bandit posterior/weights
+      liquidity/
+        spread_slippage_stats.json    # Rolling spread/slippage quantiles by symbol/session
+      calibration/
+        calibration.json              # Rolling percentile cuts for Bias/SDR/EMRT, etc.
       sets/
         RPEA_10k_default.set
         RPEA_optimization_ranges.txt
@@ -49,7 +62,7 @@ MQL5/
         audit_report.csv
 
 Repo-side helpers (outside MT5, recommended)
-- tools/: audit_report.py, make_zip.py, emrt_formation.py (weekly), optional rl_training/ for Q-table pretraining.
+- tools/: audit_report.py, make_zip.py, emrt_formation.py (weekly), calibration_update.py (weekly), liquidity_stats.py; optional rl_training/ for Q-table pretraining.
 - docs/: spec, PR summary, test checklist.
 - tests/: non-functional/backtest configs, barrier-aware sim harness.
 
