@@ -1,0 +1,62 @@
+### Required MT5 project layout (Data Folder)
+
+MQL5/
+  Experts/
+    FundingPips/
+      RPEA.mq5                       # EA entry point (scheduler + wiring)
+      README.md
+  Include/
+    RPEA/
+      config.mqh                      # Inputs, constants, defaults
+      state.mqh                       # Persisted challenge/session state
+      timeutils.mqh                   # Server↔CEST mapping, time helpers
+      sessions.mqh                    # Session predicates, OR windows
+      indicators.mqh                  # ATR/RSI/MA handles and calc
+      signals_bwisc.mqh               # BWISC signal engine
+      signals_mr.mqh                  # MR engine (policy surface)
+      emrt.mqh                        # EMRT formation (weekly job/cache IO)
+      rl_agent.mqh                    # Q-learning table + action policy
+      meta_policy.mqh                 # BWISC↔MR chooser, tie-break, gating
+      allocator.mqh                   # Proposal→risk budget→order plan
+      risk.mqh                        # Sizing, margin guard, budget gate
+      equity_guardian.mqh             # Baselines, floors, kill-switch
+      order_engine.mqh                # OCO, market fallback, trailing, two-leg atomic ops
+      synthetic.mqh                   # XAUEUR proxy/replication manager
+      news.mqh                        # Calendar API + CSV fallback, window logic
+      persistence.mqh                 # File-backed state, idempotent recovery
+      logging.mqh                     # CSV audit rows, structured logs
+      telemetry.mqh                   # KPIs/SLOs, auto-throttle hooks
+  Files/
+    RPEA/
+      state/
+        challenge_state.json          # Initial baseline, gDaysTraded, last_counted_date, flags
+      logs/
+        audit_YYYYMMDD.csv
+        decisions_YYYYMMDD.csv
+      news/
+        calendar_high_impact.csv      # CSV fallback (timestamp,impact,countries,symbols)
+      emrt/
+        emrt_cache.json               # EMRT ranks, β*, lookback stats
+        beta_grid.json
+      qtable/
+        mr_qtable.bin                 # Pre-trained Q table (optional seed)
+      sets/
+        RPEA_10k_default.set
+        RPEA_optimization_ranges.txt
+      strategy_tester/
+        RPEA_10k_tester.ini
+      reports/
+        audit_report.csv
+
+Repo-side helpers (outside MT5, recommended)
+- tools/: audit_report.py, make_zip.py, emrt_formation.py (weekly), optional rl_training/ for Q-table pretraining.
+- docs/: spec, PR summary, test checklist.
+- tests/: non-functional/backtest configs, barrier-aware sim harness.
+
+Notes:
+- Place CSV fallback for news in MQL5/Files/RPEA/news/.
+- EMRT and Q-table caches live under MQL5/Files/RPEA/{emrt,qtable} and are read on init.
+- Strategy Tester assets (.set, .ini) live under MQL5/Files/RPEA/{sets,strategy_tester}.
+- If you keep the existing earl/cosine layout, mirror Include/RPEA and Experts/FundingPips/RPEA.mq5 there identically.
+
+
