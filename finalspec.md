@@ -280,14 +280,17 @@ Focuses risk on **high-energy session bursts** or **measurable dislocations** fr
 
 * **Scheduler (OnTimer 30–60s):** session windows, server‑day rollover baseline, news blocks, cutoffs, governance.
 * **Symbol Controller:** per-symbol state (indicators, OR levels, last trade metadata).
+* **Regime Detector:** classifies per symbol/session market state (trend/range/volatile/illiquid) from ATR/σ, ADX, Hurst/ACF, ORE, spread quantiles.
+* **Liquidity Monitor:** rolling spread/slippage quantiles, symbol/session health; gates entries and feeds context.
+* **Anomaly Detector:** EWMA z‑scores for returns/tick gaps/spreads; triggers widen/cancel/flatten when shocks detected.
 * **Signal Engine (BWISC):** computes BTR/SDR/ORE/RSI → bias → BC/MSC/none with candidate SL/TP.
-* **Signal Engine (MR):** EMRT/RL mean-reversion engine.
-* **Meta-Policy Controller:** routes between BWISC and MR per ensemble rules.
-* **Risk Engine:** lot sizing from risk%, ATR-based SL distance; **budget gate** against daily/overall rooms; margin checks; **position caps**.
-* **Order Engine:** OCO pendings; market fallbacks; modify SL/TP; trailing; partial fills; atomic two-leg ops for replication.
+* **Signal Engine (MR):** EMRT/RL mean‑reversion engine with optional online updates.
+* **Meta-Policy Controller (Contextual Bandit):** selects BWISC/MR/Skip from context and regime; safe exploitation in live.
+* **Adaptive Risk Allocator:** scales risk and targets by regime, efficiency, and available room; enforces floor buffers.
+* **Order Engine:** OCO pendings; market fallbacks; modify SL/TP; trailing; partial fills; atomic two‑leg ops for replication.
 * **Equity Guardian:** daily baseline, initial baseline, floors; pauses/disable flags.
-* **News Filter:** calendar queries; per-symbol impact map; CSV parser fallback.
-* **Persistence/Logs:** file-backed state (challenge progress), CSV audit logs, restart recovery.
+* **News Filter:** calendar queries; per‑symbol impact map; CSV parser fallback and post‑news stabilization.
+* **Persistence/Logs & Learning Artifacts:** challenge state, CSV audits, restart recovery; plus `calibration.json`, bandit posterior, liquidity stats, Q‑table, and order intent journal.
 
 ### Component Diagram (PlantUML)
 
@@ -316,6 +319,32 @@ package "RPEA (MT5)" {
   [Meta-Policy Controller] --> [Signal Engine: MR]
   [Signal Engine: BWISC] --> [Risk Engine]
   [Signal Engine: MR] --> [Risk Engine]
+  [Risk Engine] --> [Order Engine]
+  [Order Engine] --> [Broker Server]
+}
+@enduml
+```
+
+### Adaptive Architecture (PlantUML)
+
+```plantuml
+@startuml
+package "RPEA (MT5)" {
+  [Scheduler (OnTimer)] --> [Regime Detector]
+  [Scheduler (OnTimer)] --> [Liquidity Monitor]
+  [Scheduler (OnTimer)] --> [Anomaly Detector]
+  [Scheduler (OnTimer)] --> [Meta-Policy (Bandit)]
+  [Scheduler (OnTimer)] --> [Equity Guardian]
+  [Scheduler (OnTimer)] --> [News Filter]
+
+  [Regime Detector] --> [Meta-Policy (Bandit)]
+  [Liquidity Monitor] --> [Meta-Policy (Bandit)]
+  [Anomaly Detector] --> [Meta-Policy (Bandit)]
+  [Meta-Policy (Bandit)] --> [Signal Engine: BWISC]
+  [Meta-Policy (Bandit)] --> [Signal Engine: MR]
+  [Signal Engine: BWISC] --> [Adaptive Risk]
+  [Signal Engine: MR] --> [Adaptive Risk]
+  [Adaptive Risk] --> [Risk Engine]
   [Risk Engine] --> [Order Engine]
   [Order Engine] --> [Broker Server]
 }
@@ -353,6 +382,45 @@ end
 Order-->Persistence/Logs: audit rows
 @enduml
 ```
+
+## Adaptive & Learning Enhancements
+
+### Market Regime Detection
+* Classify each symbol/session into trend/range/volatile/illiquid using ATR/σ bands, ADX, Hurst/ACF decay, Opening Range Energy, and rolling spread percentiles.
+* Adaptation hooks: enable/disable MR in strong trends; adjust `Rtarget`, `SLmult`, `EntryBufferPoints`, and trailing aggressiveness by regime.
+
+### Contextual Bandit Meta‑Policy
+* Choose BWISC, MR, or Skip from a context vector: regime features, ORE/SDR, EMRT rank, recent efficiency, spread/slippage quantiles, and news proximity.
+* Thompson/LinUCB‑style selection with exploration disabled in live; persist posterior/weights for continuity across restarts.
+
+### Adaptive Risk Allocator
+* Scale per‑trade risk by regime and predicted efficiency with strict room buffers against daily/overall caps.
+* Day planner selects at most 1–2 opportunities expected to keep a configured equity floor buffer after worst‑case.
+
+### Liquidity Intelligence
+* Maintain rolling spread and slippage quantiles per symbol/session; gate entries when above p75–p90 thresholds.
+* Auto‑pause symbols with repeated adverse slippage; resume after normalization.
+
+### Anomaly/Shock Detector
+* EWMA z‑scores on returns, spread spikes, and tick gap frequency; 5–6σ triggers will widen buffers, cancel pendings, or flatten positions.
+* Detect calendar/API drift; auto‑switch to CSV fallback and widen internal buffers during outages.
+
+### Post‑news Re‑engagement
+* After T+`NewsBufferS`, require stabilization (e.g., 3 consecutive bars with spread ≤ p60 and realized σ ≤ p70) before re‑enabling entries.
+
+### Online Learning & Calibration
+* MR: optional online Q‑table updates with capped step size and decay; freeze when SLOs breach.
+* BWISC: recalibrate Bias/SDR gates from rolling percentiles; write to `calibration.json` and load at runtime.
+* Persist artifacts: `qtable.bin`, `calibration.json`, and bandit posterior.
+
+### Symbol/Day Selector
+* Select the single best symbol per session based on bandit expected efficiency; avoid correlated concurrent exposure.
+
+### Self‑healing Order Intent Journal
+* Persist intents for pendings and queued trailing/SL‑TP changes; reconcile idempotently after restarts before any order actions.
+
+### Telemetry Additions
+* Log regime label, liquidity/anomaly flags, context vector, bandit choice and posterior snapshot, adaptive risk multiplier, and stabilization checks to the CSV audit.
 
 ---
 
