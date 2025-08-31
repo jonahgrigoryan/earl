@@ -22,6 +22,11 @@ Context files Pythagora must read before generation:
 - No non-MQL code, web servers, React/Node scaffolds.
 - No strategy logic (BWISC/MR) in M1.
 
+### If using Cosine to generate the structure
+- Use `cosine.txt` as the generation prompt.
+- Cosine must create only the file tree and empty files with header guards; no function bodies or trading calls.
+- Accept `.gitkeep` for empty directories and header-only `.mqh` files.
+
 ## M1 Definition of Done
 - Builds in MetaEditor with **0 errors**.
 - On attach: creates required `MQL5/Files/RPEA/*` subfolders & state files.

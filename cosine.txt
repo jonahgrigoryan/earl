@@ -1,0 +1,108 @@
+Cosine Prompt: RPEA M1 Project Structure Only (No Logic)
+
+Goal
+- Generate the exact MetaTrader 5 (MQL5) project structure and empty files for the RPEA (RapidPass Expert Advisor) M1 skeleton.
+- Create directories and files only. Do NOT implement any trading logic or function bodies. We will implement later with a different agent.
+
+Context
+- Platform: MetaTrader 5 (MT5) Expert Advisor, language: MQL5 (.mq5/.mqh).
+- Source references (do not copy content inline; these inform naming/paths):
+  - finalspec.md
+  - prd.md
+  - rpea_structure.txt (authoritative for paths)
+  - README.md (setup/CSV schemas)
+
+Strict Constraints (Follow Exactly)
+- Create the file/folder tree under MQL5/ exactly as specified below.
+- Generate empty files (or header-guard-only for .mqh). For .mq5, include only a top-of-file comment banner; no functions.
+- Do NOT add any trading/order calls, includes, or function bodies.
+- For empty directories, add a .gitkeep file to ensure they are committed.
+
+Target File/Folder Tree (must match exactly)
+
+MQL5/
+  Experts/
+    FundingPips/
+      RPEA.mq5                       # EA entry point (no functions; header comment only)
+      README.md
+  Include/
+    RPEA/
+      config.mqh                      # Inputs, constants (header guard only)
+      state.mqh                       # Persisted challenge/session state (header guard only)
+      timeutils.mqh                   # Time helpers (header guard only)
+      sessions.mqh                    # Session predicates (header guard only)
+      indicators.mqh                  # Indicator stubs (header guard only)
+      regime.mqh                      # (header guard only)
+      liquidity.mqh                   # (header guard only)
+      anomaly.mqh                     # (header guard only)
+      signals_bwisc.mqh               # (header guard only)
+      signals_mr.mqh                  # (header guard only)
+      emrt.mqh                        # (header guard only)
+      rl_agent.mqh                    # (header guard only)
+      bandit.mqh                      # (header guard only)
+      meta_policy.mqh                 # (header guard only)
+      allocator.mqh                   # (header guard only)
+      adaptive.mqh                    # (header guard only)
+      risk.mqh                        # (header guard only)
+      equity_guardian.mqh             # (header guard only)
+      order_engine.mqh                # (header guard only)
+      synthetic.mqh                   # (header guard only)
+      news.mqh                        # (header guard only)
+      learning.mqh                    # (header guard only)
+      persistence.mqh                 # (header guard only)
+      logging.mqh                     # (header guard only)
+      telemetry.mqh                   # (header guard only)
+  Files/
+    RPEA/
+      state/
+        .gitkeep
+        challenge_state.json          # empty JSON {}
+        intents.json                  # empty JSON {}
+      logs/
+        .gitkeep
+      news/
+        .gitkeep
+        calendar_high_impact.csv      # header only: timestamp,impact,countries,symbols
+      emrt/
+        .gitkeep
+      qtable/
+        .gitkeep
+      bandit/
+        .gitkeep
+      liquidity/
+        .gitkeep
+      calibration/
+        .gitkeep
+      sets/
+        .gitkeep
+      strategy_tester/
+        .gitkeep
+      reports/
+        .gitkeep
+
+File Templates
+- RPEA.mq5: Only a comment header like
+  // RPEA.mq5 — M1 skeleton entry file (no logic; implemented later)
+  // Do not add functions or trading calls in this phase.
+
+- All .mqh files: Header guards only, example:
+  #ifndef RPEA_CONFIG_MQH
+  #define RPEA_CONFIG_MQH
+  // Intentionally left blank — implemented in later milestones.
+  #endif
+
+- JSON files: create empty `{}` content.
+- CSV file: single header line `timestamp,impact,countries,symbols`.
+
+Deliverables
+- Create the above tree and files.
+- Output a summary listing of created paths.
+
+Do/Don’t Recap
+- Do: create files/dirs exactly, header guards, .gitkeep in empty dirs.
+- Don’t: write functions, includes, logic, or any trading/order/order-check code.
+
+Definition of Done
+- All paths created exactly as listed.
+- No code implementations beyond header guards.
+- No trading/order-related APIs present anywhere.
