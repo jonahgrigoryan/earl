@@ -37,7 +37,11 @@ RPEA implements a sophisticated **dual-engine architecture** combining complemen
 #### Meta-Policy Controller (Contextual Bandit)
 - **Strategy Selection**: Thompson/LinUCB bandit choosing BWISC vs MR vs Skip
 - **Context Vector**: Regime features, ORE/SDR, EMRT rank, efficiency, spread quantiles, news proximity
-- **Tie-breaker**: MR selected when BWISC_conf < 0.70 AND MR_conf > 0.80 AND efficiency(MR) ≥ efficiency(BWISC)
+- **Primary = BWISC**: Default strategy selection prioritizes Burst-Weighted Imbalance with Session Confluence
+- **Fallback = MR**: When BWISC yields no setup OR confidence tie-breaker triggers
+- **Confidence Tie-breaker**: MR selected when BWISC_conf < 0.70 AND MR_conf > 0.80 AND efficiency(MR) ≥ efficiency(BWISC)
+- **Conditional BWISC Replacement**: Replace BWISC for THIS session if ORE < p40 AND ATR_D1 < p50 AND EMRT ≤ H* (H*=p40 of EMRT lookback), session age <2h, no active/pending symbol overlaps, and no high-impact news ±15m; once switched, stay until session end (hysteresis)
+- **Efficiency Calculation**: E[R]/WorstCaseRisk where R is expected return and WorstCaseRisk is risk at SL distance
 
 ### Advanced Risk Management Framework
 
@@ -89,6 +93,44 @@ Compute signals on **XAUEUR = XAUUSD/EURUSD** with two execution modes:
 - EWMA z-scores for returns, spread spikes, tick gaps
 - 5-6σ triggers: widen buffers, cancel pendings, flatten positions
 - Auto-switch to CSV fallback during calendar API outages
+
+## 🔒 Decisions & Constraints (LOCKED)
+
+> These decisions are fixed to avoid mid-build refactors and ensure consistent implementation.
+
+### News Policy (Account-Specific)
+- **Evaluation (Student) accounts**: Provider imposes no news/weekend restrictions. Internal news buffer applied for safety.
+- **Master (funded) accounts**: Enforce high-impact news lock on affected symbols:
+  - Block opening and holding positions from **T−300s to T+300s** (5 minutes before/after)
+  - Profits from trades opened/closed inside window won't count unless opened ≥5 hours prior
+  - **Protective exits** (SL/TP/auto kill-switch/margin) **always allowed** inside window
+
+### Session Order & Governance
+- **London First**: Always evaluate London session (07:00 server time) before New York
+- **One-and-Done**: Global exit if London win ≥ 1.5R (disables NY trading across all symbols)
+- **NY Gate**: NY session allowed only if realized day loss ≤ 50% of daily cap (default 0.50 × DailyLossCapPct)
+
+### Position & Order Management
+- **Caps**: Max 2 total positions, 1 per symbol, 2 pending orders per symbol
+- **Trading-Day Counting**: Day counts on first DEAL_ENTRY_IN between server-day midnights
+- **State Persistence**: Initial baseline, gDaysTraded, last_counted_server_date persist across restarts
+
+### Kill-Switch Floor Protection
+- **Daily Floor**: baseline_today − DailyLossCapPct%
+- **Overall Floor**: initial_baseline − OverallLossCapPct%
+- **Breach Action**: Close ALL positions immediately, disable trading until next server day (daily) or permanently (overall)
+- **News Bypass**: Floor breaches may bypass news/min-hold restrictions for protective exits
+
+### Session Window Mechanics
+- **Opening Range**: InSession(t0, ORMinutes) := TimeCurrent() ∈ [t0, t0 + ORMinutes×60] (interval-based, no hour-equality check)
+- **Micro-Mode Scope**: Micro-trades run only in Micro-Mode (post-target) to meet MinTradeDays; never pre-target
+- **R Calculation**: Persist {entry, sl, type} on open; compute R and win/loss from persisted values (not inferred from closed positions)
+
+### Helper Surface Requirements
+- **Core Utilities**: IsNewsBlocked(symbol), EquityRoomAllowsNextTrade(), MathSign(), MarkTradeDayOnce(), SpreadOK(sym)
+- **DST Handling**: ServerToCEST_OffsetMinutes updated on DST flip (AutoCEST optional future enhancement)
+
+---
 
 ## 📋 Prerequisites
 
@@ -202,6 +244,7 @@ input bool UseXAUEURProxy = true;        // Use proxy mode for XAUEUR
 | `MR_RiskPct_Default` | 0.90 | Default MR risk percentage |
 | `MR_TimeStopMin` | 60 | Minimum MR time stop in minutes |
 | `MR_TimeStopMax` | 90 | Maximum MR time stop in minutes |
+| `MR_LongOnly` | false | Enable long-only mode for MR engine |
 | `GivebackCapDayPct` | 0.50 | Micro-mode giveback cap percentage |
 
 ## 📊 Monitoring & Logging
@@ -210,6 +253,11 @@ input bool UseXAUEURProxy = true;        // Use proxy mode for XAUEUR
 - **CSV Logs**: Every decision logged with timestamps, symbols, risk calculations
 - **Telemetry**: SLO monitoring (58-62% MR hit-rate, median hold ≤2.5h, efficiency ≥0.8)
 - **State Persistence**: Challenge progress, trading days, baselines maintained across restarts
+
+### Detailed SLOs & Auto-Actions
+- **SLO Targets**: 30-day MR hit-rate 58-62% (warn <55%); median hold ≤2.5h (80th ≤4h); median efficiency (realized R / WorstCaseRisk) ≥0.8; friction tax (realized - theoretical R) median ≤0.4R
+- **Auto-Actions**: If ≥2 SLOs breached for 3 consecutive weeks → reduce MR risk by 25% until recovery
+- **Extended Logging Fields**: `confidence`, `efficiency`, `ρ_est`, `hold_time`, `gating_reason`, `news_window_state`
 
 ### Key Metrics to Monitor
 - **Pass Criteria**: Net P/L ≥ +$1,000, 0 cap violations, trade days ≥ 3
@@ -264,6 +312,95 @@ MQL5/
         │   └── RPEA_optimization_ranges.txt
         └── reports/
             └── audit_report.csv        # Summary reports
+```
+
+## 🏗️ Architecture Diagrams
+
+### Component Architecture
+```plantuml
+@startuml
+package "RPEA (MT5)" {
+  [Scheduler (OnTimer)] --> [Symbol Controller]
+  [Scheduler (OnTimer)] --> [Equity Guardian]
+  [Scheduler (OnTimer)] --> [News Filter]
+  [Symbol Controller] --> [Signal Engine: BWISC]
+  [Signal Engine: BWISC] --> [Risk Engine]
+  [Risk Engine] --> [Order Engine]
+  [Order Engine] --> [Broker Server]
+  [Symbol Controller] <---> [Persistence/Logs]
+}
+@enduml
+```
+
+### Ensemble Architecture
+```plantuml
+@startuml
+package "RPEA (MT5)" {
+  [Scheduler (OnTimer)] --> [Meta-Policy Controller]
+  [Meta-Policy Controller] --> [Signal Engine: BWISC]
+  [Meta-Policy Controller] --> [Signal Engine: MR]
+  [Signal Engine: BWISC] --> [Risk Engine]
+  [Signal Engine: MR] --> [Risk Engine]
+  [Risk Engine] --> [Order Engine]
+  [Order Engine] --> [Broker Server]
+}
+@enduml
+```
+
+### Adaptive Architecture
+```plantuml
+@startuml
+package "RPEA (MT5)" {
+  [Scheduler (OnTimer)] --> [Regime Detector]
+  [Scheduler (OnTimer)] --> [Liquidity Monitor]
+  [Scheduler (OnTimer)] --> [Anomaly Detector]
+  [Scheduler (OnTimer)] --> [Meta-Policy (Bandit)]
+  [Scheduler (OnTimer)] --> [Equity Guardian]
+  [Scheduler (OnTimer)] --> [News Filter]
+
+  [Regime Detector] --> [Meta-Policy (Bandit)]
+  [Liquidity Monitor] --> [Meta-Policy (Bandit)]
+  [Anomaly Detector] --> [Meta-Policy (Bandit)]
+  [Meta-Policy (Bandit)] --> [Signal Engine: BWISC]
+  [Meta-Policy (Bandit)] --> [Signal Engine: MR]
+  [Signal Engine: BWISC] --> [Adaptive Risk]
+  [Signal Engine: MR] --> [Adaptive Risk]
+  [Adaptive Risk] --> [Risk Engine]
+  [Risk Engine] --> [Order Engine]
+  [Order Engine] --> [Broker Server]
+}
+@enduml
+```
+
+### Data Flow Sequence
+```plantuml
+@startuml
+actor Trader as U
+participant Scheduler
+participant News
+participant SymCtl
+participant Signal
+participant Risk
+participant Order
+participant Equity
+
+Scheduler->Equity: Check daily/overall room
+Equity-->Scheduler: OK / Pause
+Scheduler->News: IsBlockedNow(symbol)?
+News-->Scheduler: Yes/No
+alt Blocked or No Room
+  Scheduler->SymCtl: Skip window
+else Proceed
+  Scheduler->SymCtl: Build session stats (OR, MA20_H1)
+  SymCtl->Signal: Compute Bias (BTR, SDR, ORE, RSI)
+  Signal-->SymCtl: Proposal (BC/MSC/None) with SL/TP candidates
+  SymCtl->Risk: Calc volume within caps & margin (budget gate)
+  Risk-->SymCtl: volume, prices
+  SymCtl->Order: Place pending (OCO) with expiry; or market fallback
+  Order-->SymCtl: tickets/retcodes
+end
+Order-->Persistence/Logs: audit rows
+@enduml
 ```
 
 ## 🧪 Testing & Validation
@@ -383,15 +520,23 @@ else if (|Bias| >= 0.35 && SDR >= 0.35) → MSC: Limit toward MA20_H1, TP = SL �
 // Empirical Mean Reversion Time Calculation
 EMRT(Y) = Σ(τ_cross - τ_ext) / N_extremes
 where:
-  Y_t = P_t^(1) - β·P_t^(2)                                  // Spread formation
+  Y_t = P_t^(1) - β·P_t^(2)                                  // Spread formation (XAUEUR: P_t^(1)=XAUUSD, P_t^(2)=EURUSD)
   C = EMRT_ExtremeThresholdMult · σ_Y                        // Extrema threshold (default 2.0)
-  
+
+// Construction: Detect "important" extrema on Y_t using threshold C
+// For each extreme τ_ext, find first τ_cross > τ_ext where Y_τ_cross crosses Ȳ_t
+// Record Δt = τ_cross - τ_ext; EMRT = mean(Δt)
+
 // Variance Cap Constraint
 S²(Y) ≤ EMRT_VarCapMult · Var(Y)                            // Default 2.5 multiplier
 
-// Optimal β Selection
+// Optimal β Selection (Grid Search)
 β* = argmin_β EMRT(Y) subject to variance cap
 Grid search: β ∈ [EMRT_BetaGridMin, EMRT_BetaGridMax]       // Default [-2.0, +2.0]
+
+// Window & Cadence
+Lookback: 60-90 trading days, refresh weekly
+Universe: FX spreads (XAUEUR via synthetic series)
 ```
 
 ### Q-Learning Implementation
@@ -399,16 +544,27 @@ Grid search: β ∈ [EMRT_BetaGridMin, EMRT_BetaGridMax]       // Default [-2.0,
 // Bellman Update Equation
 Q^new(S_t, A_t) ← Q(S_t, A_t) + α·[R_{t+1} + γ·max_a Q(S_{t+1}, a) - Q(S_t, A_t)]
 
-// State Space: 256 states (4^4)
-// 4 periods × 4 bins using 3% thresholds for percentage changes
+// State Space: 256 states (4^4 discretization)
+// Recent spread trajectory: 4 periods × 4 bins using 3% percentage change thresholds
+// Actions: enter/hold/exit bands
 
-// Reward Function
+// Training Data Strategy
+// Pre-train on simulated mean reversion spreads with varying parameters:
+// - Ornstein-Uhlenbeck processes with μ, θ, σ parameters
+// - Synthetic spread scenarios across different market conditions
+// - Extensive training paths: 10,000 episodes, 1,000 OU/synthetic paths
+
+// Reward Function (Barrier-Aware)
 r_{t+1} = A_t·(θ - Y_t) - c·|A_t| + barrier_penalties
-where θ = 0 (mean-centered), barrier_penalties for floors/target
+where:
+  θ = 0 (mean-centered assumption)
+  barrier_penalties tied to server-day floors and +10% target
+  includes news penalties for Master 10-minute window blocks
 
 // Action Selection
-ε-greedy: random action with probability ε during training (0.1)
+ε-greedy: random action with probability ε during training (ε=0.10)
          highest Q-value action during live trading (ε=0)
+         optional online updates with capped step size and decay
 ```
 
 ### Risk Sizing & Budget Gate
