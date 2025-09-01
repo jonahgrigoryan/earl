@@ -50,6 +50,7 @@ Non-code assets (ensure exist; create empty placeholders only if missing)
 - MQL5/Files/RPEA/strategy_tester/RPEA_10k_tester.ini
 - MQL5/Files/RPEA/reports/audit_report.csv
 - MQL5/Files/RPEA/logs/ (directory; runtime CSVs)
+- MQL5/Files/RPEA/logs/decisions_YYYYMMDD.csv (runtime CSV; optional placeholder)
 
 Stub style & constraints
 - Keep everything compiling. Use simple placeholder returns and empty bodies where needed; no references to undefined symbols.
@@ -171,7 +172,7 @@ persistence.mqh
 - TODO[M4/M6]: idempotent recovery and TTL for queued actions.
 
 logging.mqh
-- CSV audit/log API: LogDecision, LogAuditRow with fields: confidence, efficiency, rho_est, hold_time, gating_reason, news_window_state.
+- CSV audit/log API: LogAuditRow → audit_YYYYMMDD.csv; LogDecision → decisions_YYYYMMDD.csv; fields: confidence, efficiency, rho_est, hold_time, gating_reason, news_window_state.
 - TODO[M5]: structured CSV headers and rotation.
 
 telemetry.mqh
@@ -194,7 +195,7 @@ Acceptance criteria
 - Each module has: header comment referencing finalspec sections, public API signatures, TODO[M*] items.
 - No trading side-effects yet; functions return placeholders.
 - Placeholders/files created under MQL5/Files/RPEA as empty JSON/bin/ini/txt where applicable; logs directory exists.
-- Boot/shutdown log lines and periodic scheduler tick entries written under MQL5/Files/RPEA/logs/audit_YYYYMMDD.csv.
+- Boot/shutdown log lines and periodic scheduler tick entries written under MQL5/Files/RPEA/logs/audit_YYYYMMDD.csv and decisions_YYYYMMDD.csv.
 - Server-day rollover resets baseline_today and writes a rollover log entry.
 - challenge_state.json is created/updated on first run; News_LoadCsvFallback tolerates empty CSV without errors.
 
