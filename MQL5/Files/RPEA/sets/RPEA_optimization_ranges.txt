@@ -1,0 +1,14 @@
+# RPEA optimization ranges (finalspec.md guidance)
+RiskPct: 0.8..2.0 step 0.1
+MicroRiskPct: 0.05..0.20 step 0.01
+SLmult: 0.7..1.3 step 0.05
+RtargetBC: 1.8..2.6 step 0.1
+RtargetMSC: 1.6..2.4 step 0.1
+ORMinutes: {30,45,60,75}
+TrailMult: 0.6..1.2 step 0.05
+BWISC_ConfCut: 0.50..0.70 step 0.05
+NYGatePctOfDailyCap: 0.30..0.70 step 0.05
+ServerToCEST_OffsetMinutes: -120..120 step 15
+StartHourLO: 6..9 step 1
+StartHourNY: 12..14 step 1
+CutoffHour: 15..18 step 1

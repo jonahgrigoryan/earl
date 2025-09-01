@@ -165,6 +165,8 @@ int OnInit()
 
    // 4) Ensure folders/logs exist and write boot line
    Persistence_EnsureFolders();
+   // Load news CSV fallback if present
+   News_LoadCsvFallback();
    LogAuditRow("BOOT", "RPEA", 1, "EA boot", "{}");
 
    // 5) Initialize timer (30s)

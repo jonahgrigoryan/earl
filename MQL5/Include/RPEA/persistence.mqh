@@ -31,7 +31,6 @@ void Persistence_LoadChallengeState()
    if(h == INVALID_HANDLE)
    {
       // initialize defaults and create file
-      FileClose(h);
       ChallengeState s = State_Get();
       s.initial_baseline = AccountInfoDouble(ACCOUNT_EQUITY);
       s.baseline_today = s.initial_baseline;
