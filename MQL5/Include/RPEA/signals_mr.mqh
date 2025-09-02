@@ -2,6 +2,8 @@
 // signals_mr.mqh - MR signal API (M1 stubs)
 // References: finalspec.md (Signal Engine: MR)
 
+struct AppContext;
+
 void SignalsMR_Propose(const AppContext& ctx, const string symbol,
                        bool &hasSetup, string &setupType,
                        int &slPoints, int &tpPoints,

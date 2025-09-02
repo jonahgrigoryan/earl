@@ -2,6 +2,8 @@
 // signals_bwisc.mqh - BWISC signal API (M1 stubs)
 // References: finalspec.md (Original Strategy: BWISC)
 
+struct AppContext;
+
 // Propose a BWISC setup for symbol
 // Params:
 //  - ctx: app context

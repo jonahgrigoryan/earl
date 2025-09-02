@@ -2,6 +2,7 @@
 // equity_guardian.mqh - Equity rooms and floors (M1 stubs)
 // References: finalspec.md (Equity & Risk Caps)
 
+struct AppContext;
 struct EquityRooms { double room_today; double room_overall; };
 
 EquityRooms Equity_ComputeRooms(const AppContext& ctx)

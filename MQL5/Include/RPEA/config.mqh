@@ -19,6 +19,19 @@
 #define RPEA_SETS_DIR            (RPEA_DIR"/sets")
 #define RPEA_TESTER_DIR          (RPEA_DIR"/strategy_tester")
 
+// Aliases (backwards-compat macros as per M1 acceptance wording)
+#define STATE_DIR       RPEA_STATE_DIR
+#define LOGS_DIR        RPEA_LOGS_DIR
+#define REPORTS_DIR     RPEA_REPORTS_DIR
+#define NEWS_DIR        RPEA_NEWS_DIR
+#define EMRT_DIR        RPEA_EMRT_DIR
+#define QTABLE_DIR      RPEA_QTABLE_DIR
+#define BANDIT_DIR      RPEA_BANDIT_DIR
+#define LIQUIDITY_DIR   RPEA_LIQUIDITY_DIR
+#define CALIBRATION_DIR RPEA_CALIBRATION_DIR
+#define SETS_DIR        RPEA_SETS_DIR
+#define TESTER_DIR      RPEA_TESTER_DIR
+
 // Files
 #define FILE_CHALLENGE_STATE     (RPEA_STATE_DIR"/challenge_state.json")
 #define FILE_INTENTS             (RPEA_STATE_DIR"/intents.json")
