@@ -1,1 +1,1 @@
-date,time,event,component,level,message,fields
+timestamp,symbol,action,result,details
