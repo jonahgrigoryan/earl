@@ -123,6 +123,9 @@ struct AppContext
    double   initial_baseline;
    double   baseline_today;
    double   equity_snapshot;
+   // anchors for the current day
+   double   baseline_today_e0; // equity at midnight
+   double   baseline_today_b0; // balance at midnight
    // governance flags
    bool     trading_paused;
    bool     permanently_disabled;
@@ -154,24 +157,29 @@ int OnInit()
    g_ctx.session_newyork = false;
    g_ctx.trading_paused = false;
    g_ctx.permanently_disabled = false;
-   g_ctx.server_midnight_ts = (datetime)0;
-   g_ctx.initial_baseline = AccountInfoDouble(ACCOUNT_EQUITY);
-   g_ctx.baseline_today = g_ctx.initial_baseline;
-   g_ctx.equity_snapshot = g_ctx.initial_baseline;
 
    // 2) Load persisted challenge state
    Persistence_LoadChallengeState();
+   ChallengeState s = State_Get();
 
-   // 3) Initialize indicators
+   // 3) Populate context from persisted state
+   g_ctx.initial_baseline = (s.initial_baseline>0.0? s.initial_baseline : AccountInfoDouble(ACCOUNT_EQUITY));
+   g_ctx.baseline_today   = (s.baseline_today>0.0? s.baseline_today : g_ctx.initial_baseline);
+   g_ctx.equity_snapshot  = AccountInfoDouble(ACCOUNT_EQUITY);
+   g_ctx.server_midnight_ts = s.server_midnight_ts;
+   g_ctx.baseline_today_e0 = s.baseline_today_e0;
+   g_ctx.baseline_today_b0 = s.baseline_today_b0;
+
+   // 4) Initialize indicators
    Indicators_Init(g_ctx);
 
-   // 4) Ensure folders/logs exist and write boot line
+   // 5) Ensure folders/logs exist and write boot line
    Persistence_EnsureFolders();
    // Load news CSV fallback if present
    News_LoadCsvFallback();
    LogAuditRow("BOOT", "RPEA", 1, "EA boot", "{}");
 
-   // 5) Initialize timer (30s)
+   // 6) Initialize timer (30s)
    EventSetTimer(30);
 
    return(INIT_SUCCEEDED);
@@ -196,10 +204,23 @@ void OnTimer()
    static datetime last_check = 0;
    if(TimeUtils_IsNewServerDay(last_check))
    {
-      State_ResetDailyBaseline();
-      // TODO[M1]: Wire server-day rollover hook to mark a new trading day once
-      State_MarkTradeDayOnce(); // placeholder marking per spec
+      // compute anchors and reset baselines in persisted state
+      ChallengeState st = State_Get();
+      st.server_midnight_ts = TimeUtils_ServerMidnight(g_ctx.current_server_time);
+      State_ResetDailyBaseline(st);
+      State_Set(st);
+      // mirror into context
+      g_ctx.server_midnight_ts = st.server_midnight_ts;
+      g_ctx.baseline_today     = st.baseline_today;
+      g_ctx.baseline_today_e0  = st.baseline_today_e0;
+      g_ctx.baseline_today_b0  = st.baseline_today_b0;
+
+      // Persist and log rollover
+      Persistence_Flush();
       LogAuditRow("ROLLOVER", "Scheduler", 1, "New server day baseline anchored", "{}");
+
+      // TODO[M1]: Wire server-day day-count hook to first DEAL_ENTRY_IN later milestones
+      State_MarkTradeDayOnce(); // placeholder marking per spec
    }
    last_check = g_ctx.current_server_time;
 

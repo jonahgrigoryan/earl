@@ -11,6 +11,11 @@ void LogAuditRow(const string event, const string component, const int level,
    string path = StringFormat("%s/audit_%s.csv", RPEA_LOGS_DIR, ymd);
    int h = FileOpen(path, FILE_READ|FILE_WRITE|FILE_COMMON|FILE_TXT|FILE_ANSI);
    if(h==INVALID_HANDLE) return;
+   // one-time header if new file
+   if(FileSize(h)==0)
+   {
+      FileWrite(h, "date,time,event,component,level,message,fields_json");
+   }
    FileSeek(h, 0, SEEK_END);
    string date = StringFormat("%04d-%02d-%02d", tm.year, tm.mon, tm.day);
    string time = StringFormat("%02d:%02d:%02d", tm.hour, tm.min, tm.sec);
@@ -27,6 +32,11 @@ void LogDecision(const string component, const string message, const string fiel
    string path = StringFormat("%s/decisions_%s.csv", RPEA_LOGS_DIR, ymd);
    int h = FileOpen(path, FILE_READ|FILE_WRITE|FILE_COMMON|FILE_TXT|FILE_ANSI);
    if(h==INVALID_HANDLE) return;
+   // one-time header if new file
+   if(FileSize(h)==0)
+   {
+      FileWrite(h, "date,time,event,component,level,message,fields_json");
+   }
    FileSeek(h, 0, SEEK_END);
    string date = StringFormat("%04d-%02d-%02d", tm.year, tm.mon, tm.day);
    string time = StringFormat("%02d:%02d:%02d", tm.hour, tm.min, tm.sec);

@@ -484,6 +484,17 @@ Order-->Persistence/Logs: audit rows
 - Meta-policy controller and bandit selection
 - Q-table initialization and telemetry pipeline
 
+## 🧩 M1 Compile & Run Notes
+
+- Open MetaEditor, load MQL5/Experts/FundingPips/RPEA.mq5, and compile (build 3500+ recommended).
+- On attach to a chart:
+  - The EA creates MQL5/Files/RPEA/* subfolders and initializes state files.
+  - Logs are written every 30s to MQL5/Files/RPEA/logs/audit_YYYYMMDD.csv and decisions_YYYYMMDD.csv.
+  - Boot, rollover, and shutdown are logged automatically.
+- No orders are placed in M1 (logging-only). All trading functions are stubs.
+- State anchors persisted: server_midnight_ts, baseline_today_e0, baseline_today_b0, baseline_today.
+- News fallback CSV: MQL5/Files/RPEA/news/calendar_high_impact.csv (tolerant reader; safe if empty).
+
 ## 🤝 Contributing
 
 ### Development Guidelines

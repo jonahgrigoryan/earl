@@ -37,6 +37,9 @@ void Persistence_LoadChallengeState()
       s.trading_enabled = true;
       s.micro_mode = false;
       s.day_peak_equity = s.baseline_today;
+      s.server_midnight_ts = (datetime)0;
+      s.baseline_today_e0 = s.baseline_today;
+      s.baseline_today_b0 = AccountInfoDouble(ACCOUNT_BALANCE);
       State_Set(s);
       int hw = FileOpen(FILE_CHALLENGE_STATE, FILE_WRITE|FILE_COMMON|FILE_TXT|FILE_ANSI);
       if(hw!=INVALID_HANDLE)
@@ -49,6 +52,9 @@ void Persistence_LoadChallengeState()
          FileWrite(hw, "disabled_permanent=0");
          FileWrite(hw, "micro_mode=0");
          FileWrite(hw, "day_peak_equity="+DoubleToString(s.day_peak_equity,2));
+         FileWrite(hw, "server_midnight_ts=0");
+         FileWrite(hw, "baseline_today_e0="+DoubleToString(s.baseline_today_e0,2));
+         FileWrite(hw, "baseline_today_b0="+DoubleToString(s.baseline_today_b0,2));
          FileClose(hw);
       }
       return;
@@ -72,6 +78,9 @@ void Persistence_LoadChallengeState()
          else if(k=="disabled_permanent") { s.disabled_permanent = (StringToInteger(v)!=0); parsed_any=true; }
          else if(k=="micro_mode") { s.micro_mode = (StringToInteger(v)!=0); parsed_any=true; }
          else if(k=="day_peak_equity") { s.day_peak_equity = StringToDouble(v); parsed_any=true; }
+         else if(k=="server_midnight_ts") { s.server_midnight_ts = (datetime)StringToInteger(v); parsed_any=true; }
+         else if(k=="baseline_today_e0") { s.baseline_today_e0 = StringToDouble(v); parsed_any=true; }
+         else if(k=="baseline_today_b0") { s.baseline_today_b0 = StringToDouble(v); parsed_any=true; }
       }
    }
    FileClose(h);
@@ -84,6 +93,9 @@ void Persistence_LoadChallengeState()
       s.disabled_permanent = false;
       s.micro_mode = false;
       s.day_peak_equity = s.baseline_today;
+      s.server_midnight_ts = (datetime)0;
+      s.baseline_today_e0 = s.baseline_today;
+      s.baseline_today_b0 = AccountInfoDouble(ACCOUNT_BALANCE);
       int hw = FileOpen(FILE_CHALLENGE_STATE, FILE_WRITE|FILE_COMMON|FILE_TXT|FILE_ANSI);
       if(hw!=INVALID_HANDLE)
       {
@@ -95,6 +107,9 @@ void Persistence_LoadChallengeState()
          FileWrite(hw, "disabled_permanent=0");
          FileWrite(hw, "micro_mode=0");
          FileWrite(hw, "day_peak_equity="+DoubleToString(s.day_peak_equity,2));
+         FileWrite(hw, "server_midnight_ts=0");
+         FileWrite(hw, "baseline_today_e0="+DoubleToString(s.baseline_today_e0,2));
+         FileWrite(hw, "baseline_today_b0="+DoubleToString(s.baseline_today_b0,2));
          FileClose(hw);
       }
    }
@@ -116,6 +131,9 @@ void Persistence_Flush()
       FileWrite(h, "disabled_permanent="+(s.disabled_permanent?"1":"0"));
       FileWrite(h, "micro_mode="+(s.micro_mode?"1":"0"));
       FileWrite(h, "day_peak_equity="+DoubleToString(s.day_peak_equity,2));
+      FileWrite(h, "server_midnight_ts="+(string)s.server_midnight_ts);
+      FileWrite(h, "baseline_today_e0="+DoubleToString(s.baseline_today_e0,2));
+      FileWrite(h, "baseline_today_b0="+DoubleToString(s.baseline_today_b0,2));
       FileClose(h);
    }
    // TODO[M4/M6]: idempotent recovery and TTL for queued actions
