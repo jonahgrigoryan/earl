@@ -20,12 +20,17 @@ void Scheduler_Tick(const AppContext& ctx)
       bool news_blocked = News_IsBlocked(sym);
       bool spread_ok = Liquidity_SpreadOK(sym);
 
-      // Placeholder session predicates (false in M1)
-      bool in_session = false;
+      // Session predicates (London/NY OR) and OR window
+      bool in_london = Sessions_InLondon(ctx, sym);
+      bool in_ny     = Sessions_InNewYork(ctx, sym);
+      bool in_session = (in_london || in_ny) && !Sessions_CutoffReached(ctx, sym);
+      bool in_or = Sessions_InORWindow(ctx, sym);
 
-      string note = StringFormat("{\"news\":%s,\"spread\":%s}",
-                                 news_blocked?"true":"false",
-                                 spread_ok?"true":"false");
+      string note = StringFormat("{\"news\":%s,\"spread\":%s,\"in_session\":%s,\"in_or\":%s}",
+                                 news_blocked?\"true\":\"false\",
+                                 spread_ok?\"true\":\"false\",
+                                 in_session?\"true\":\"false\",
+                                 in_or?\"true\":\"false\");
 
       if(!floors_ok || news_blocked || !spread_ok || !in_session)
       {

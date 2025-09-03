@@ -2,6 +2,7 @@
 // allocator.mqh - Risk allocator stubs (M1)
 // References: finalspec.md (Allocator Enhancements)
 
+struct AppContext;
 struct OrderPlan { bool hasPlan; double volume; double price; };
 
 OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,

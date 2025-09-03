@@ -2,6 +2,8 @@
 // indicators.mqh - Indicator handles and init (M1 stubs)
 // References: finalspec.md (Session Statistics)
 
+struct AppContext;
+
 struct IndicatorsContext
 {
    int handle_ATR_D1;

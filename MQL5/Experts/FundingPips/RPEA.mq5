@@ -12,7 +12,6 @@
 #include <RPEA/config.mqh>
 #include <RPEA/state.mqh>
 #include <RPEA/timeutils.mqh>
-#include <RPEA/sessions.mqh>
 #include <RPEA/indicators.mqh>
 #include <RPEA/regime.mqh>
 #include <RPEA/liquidity.mqh>
@@ -34,7 +33,7 @@
 #include <RPEA/persistence.mqh>
 #include <RPEA/logging.mqh>
 #include <RPEA/telemetry.mqh>
-#include <RPEA/scheduler.mqh>
+// sessions.mqh and scheduler.mqh are included after AppContext is defined
 
 //+------------------------------------------------------------------+
 // Inputs (consolidated) — names and defaults per finalspec.md
@@ -111,19 +110,25 @@ input int    QL_TrainingEpisodes        = 10000;
 input int    QL_SimulationPaths         = 1000;
 
 //+------------------------------------------------------------------+
-// Minimal AppContext
+// AppContext - runtime context for scheduler and modules
 struct AppContext
 {
-   datetime server_now;
-   string   symbols[16];
+   datetime current_server_time;
+   string   symbols[];
    int      symbols_count;
+   // session flags (updated by scheduler)
    bool     session_london;
    bool     session_newyork;
-   double   baseline_initial;
+   // baselines
+   double   initial_baseline;
    double   baseline_today;
    double   equity_snapshot;
-   bool     paused_today;
-   bool     disabled_permanent;
+   // anchors for the current day
+   double   baseline_today_e0; // equity at midnight
+   double   baseline_today_b0; // balance at midnight
+   // governance flags
+   bool     trading_paused;
+   bool     permanently_disabled;
    // persistence anchors
    datetime server_midnight_ts;
 };
@@ -131,13 +136,14 @@ struct AppContext
 // Global context
 static AppContext g_ctx;
 
+// Now that AppContext is defined, include session and scheduler modules
+#include <RPEA/sessions.mqh>
+#include <RPEA/scheduler.mqh>
+
 // Helper: split symbols
 int SplitSymbols(const string src, string &dst[])
 {
-   int n = 0;
-   int parts = StringSplit(src, ';', dst);
-   if(parts>0) n = parts;
-   return n;
+   return StringSplit(src, ';', dst);
 }
 
 //+------------------------------------------------------------------+
@@ -145,31 +151,35 @@ int SplitSymbols(const string src, string &dst[])
 int OnInit()
 {
    // 1) Prepare context
-   ArrayInitialize(g_ctx.symbols, "");
    g_ctx.symbols_count = SplitSymbols(InpSymbols, g_ctx.symbols);
-   g_ctx.server_now = TimeCurrent();
+   g_ctx.current_server_time = TimeCurrent();
    g_ctx.session_london = false;
    g_ctx.session_newyork = false;
-   g_ctx.paused_today = false;
-   g_ctx.disabled_permanent = false;
-   g_ctx.server_midnight_ts = (datetime)0;
-   g_ctx.baseline_initial = AccountInfoDouble(ACCOUNT_EQUITY);
-   g_ctx.baseline_today = g_ctx.baseline_initial;
-   g_ctx.equity_snapshot = g_ctx.baseline_initial;
+   g_ctx.trading_paused = false;
+   g_ctx.permanently_disabled = false;
 
    // 2) Load persisted challenge state
    Persistence_LoadChallengeState();
+   ChallengeState s = State_Get();
 
-   // 3) Initialize indicators
+   // 3) Populate context from persisted state
+   g_ctx.initial_baseline = (s.initial_baseline>0.0? s.initial_baseline : AccountInfoDouble(ACCOUNT_EQUITY));
+   g_ctx.baseline_today   = (s.baseline_today>0.0? s.baseline_today : g_ctx.initial_baseline);
+   g_ctx.equity_snapshot  = AccountInfoDouble(ACCOUNT_EQUITY);
+   g_ctx.server_midnight_ts = s.server_midnight_ts;
+   g_ctx.baseline_today_e0 = s.baseline_today_e0;
+   g_ctx.baseline_today_b0 = s.baseline_today_b0;
+
+   // 4) Initialize indicators
    Indicators_Init(g_ctx);
 
-   // 4) Ensure folders/logs exist and write boot line
+   // 5) Ensure folders/logs exist and write boot line
    Persistence_EnsureFolders();
    // Load news CSV fallback if present
    News_LoadCsvFallback();
    LogAuditRow("BOOT", "RPEA", 1, "EA boot", "{}");
 
-   // 5) Initialize timer (30s)
+   // 6) Initialize timer (30s)
    EventSetTimer(30);
 
    return(INIT_SUCCEEDED);
@@ -188,18 +198,31 @@ void OnDeinit(const int reason)
 // OnTimer: orchestration via Scheduler_Tick; server-day rollover
 void OnTimer()
 {
-   g_ctx.server_now = TimeCurrent();
+   g_ctx.current_server_time = TimeCurrent();
 
    // Server-day rollover handling
    static datetime last_check = 0;
    if(TimeUtils_IsNewServerDay(last_check))
    {
-      State_ResetDailyBaseline();
-      // TODO[M1]: Wire server-day rollover hook to mark a new trading day once
-      State_MarkTradeDayOnce(); // placeholder marking per spec
+      // compute anchors and reset baselines in persisted state
+      ChallengeState st = State_Get();
+      st.server_midnight_ts = TimeUtils_ServerMidnight(g_ctx.current_server_time);
+      State_ResetDailyBaseline(st);
+      State_Set(st);
+      // mirror into context
+      g_ctx.server_midnight_ts = st.server_midnight_ts;
+      g_ctx.baseline_today     = st.baseline_today;
+      g_ctx.baseline_today_e0  = st.baseline_today_e0;
+      g_ctx.baseline_today_b0  = st.baseline_today_b0;
+
+      // Persist and log rollover
+      Persistence_Flush();
       LogAuditRow("ROLLOVER", "Scheduler", 1, "New server day baseline anchored", "{}");
+
+      // TODO[M1]: Wire server-day day-count hook to first DEAL_ENTRY_IN later milestones
+      State_MarkTradeDayOnce(); // placeholder marking per spec
    }
-   last_check = g_ctx.server_now;
+   last_check = g_ctx.current_server_time;
 
    // Refresh indicators per symbol (lightweight in M1)
    for(int i=0;i<g_ctx.symbols_count;i++)
