@@ -1,4 +1,3 @@
-; RPEA_10k_default.set - All inputs with defaults per finalspec.md
 DailyLossCapPct=4.0
 OverallLossCapPct=6.0
 MinTradeDaysRequired=3
@@ -6,7 +5,6 @@ TradingEnabledDefault=true
 MinRiskDollar=10.0
 OneAndDoneR=1.5
 NYGatePctOfDailyCap=0.50
-
 UseLondonOnly=false
 StartHourLO=7
 StartHourNY=12
@@ -16,21 +14,17 @@ RiskPct=1.5
 MicroRiskPct=0.10
 MicroTimeStopMin=45
 GivebackCapDayPct=0.50
-
 NewsBufferS=300
 MaxSpreadPoints=40
 MaxSlippagePoints=10
 MinHoldSeconds=120
 QueuedActionTTLMin=5
-
 UseServerMidnightBaseline=true
 ServerToCEST_OffsetMinutes=0
-
-InpSymbols="EURUSD;XAUUSD"
+InpSymbols=EURUSD;XAUUSD
 UseXAUEURProxy=true
 LeverageOverrideFX=50
 LeverageOverrideMetals=20
-
 RtargetBC=2.2
 RtargetMSC=2.0
 SLmult=1.0
@@ -38,11 +32,9 @@ TrailMult=0.8
 EntryBufferPoints=3
 MinStopPoints=1
 MagicBase=990200
-
 MaxOpenPositionsTotal=2
 MaxOpenPerSymbol=1
 MaxPendingsPerSymbol=2
-
 BWISC_ConfCut=0.70
 MR_ConfCut=0.80
 EMRT_FastThresholdPct=40
@@ -55,7 +47,6 @@ EMRT_ExtremeThresholdMult=2.0
 EMRT_VarCapMult=2.5
 EMRT_BetaGridMin=-2.0
 EMRT_BetaGridMax=2.0
-
 QL_LearningRate=0.10
 QL_DiscountFactor=0.99
 QL_EpsilonTrain=0.10

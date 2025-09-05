@@ -1,5 +1,16 @@
 # RPEA (RapidPass Expert Advisor) - Production Implementation Guide
 
+## M1 Compile & Run Notes
+
+- Build: open `MQL5/Experts/FundingPips/RPEA.mq5` in MetaEditor and compile (requires `#property strict` which is set).
+- Attach to a chart to start the 30s scheduler. The EA auto-creates `MQL5/Files/RPEA/*` folders and placeholder files.
+- Logging: heartbeat/decisions to `MQL5/Files/RPEA/logs/decisions_YYYYMMDD.csv`, audit events to `MQL5/Files/RPEA/logs/audit_YYYYMMDD.csv`.
+- State: persisted at `MQL5/Files/RPEA/state/challenge_state.json` with anchors `{server_midnight_ts, baseline_today_e0, baseline_today_b0, baseline_today}`.
+- News: tolerant CSV fallback at `MQL5/Files/RPEA/news/calendar_high_impact.csv` (empty file is valid).
+- Placeholders for EMRT/Q‑table/bandit/liquidity/calibration/sets/tester are created on first run.
+- All headers start with `#pragma once` and contain TODO markers like `TODO[M1]..TODO[M7]` for roadmap items.
+- M1 has no broker side-effects; order functions are stubs and only log.
+
 ## Overview
 
 The **FundingPips 10K RapidPass EA (RPEA)** is a sophisticated MT5 Expert Advisor designed to pass the FundingPips 1-step $10,000 challenge by achieving +10% profit ($1,000) with zero drawdown violations in 3-5 trading days.

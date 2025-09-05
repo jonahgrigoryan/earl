@@ -15,7 +15,7 @@ bool News_IsBlocked(const string symbol)
 void News_LoadCsvFallback()
 {
    string path = FILE_NEWS_FALLBACK;
-   int h = FileOpen(path, FILE_READ|FILE_COMMON|FILE_TXT|FILE_ANSI);
+   int h = FileOpen(path, FILE_READ|FILE_TXT|FILE_ANSI);
    if(h==INVALID_HANDLE)
       return; // tolerate missing
    // Naive tolerant pass over lines

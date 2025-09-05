@@ -1,1 +1,1 @@
-timestamp,symbol,action,result,details
+date,time,event,component,level,message,fields_json

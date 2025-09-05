@@ -23,11 +23,144 @@ void Persistence_EnsureFolders()
    FolderCreate(RPEA_TESTER_DIR);
 }
 
+// Ensure placeholder files exist (tolerate if already present)
+void Persistence_EnsurePlaceholderFiles()
+{
+   // State files
+   int h;
+   h = FileOpen(FILE_INTENTS, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(h!=INVALID_HANDLE)
+   {
+      if(FileSize(h)==0) FileWrite(h, "{}");
+      FileClose(h);
+   }
+   // News CSV fallback
+   h = FileOpen(FILE_NEWS_FALLBACK, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(h!=INVALID_HANDLE)
+   {
+      if(FileSize(h)==0) FileWrite(h, "timestamp,impact,countries,symbols");
+      FileClose(h);
+   }
+   // EMRT, Q-table, bandit, liquidity, calibration
+   string files_to_touch[] = {
+      FILE_EMRT_CACHE, FILE_EMRT_BETA_GRID, FILE_QTABLE_BIN,
+      FILE_BANDIT_POSTERIOR, FILE_LIQUIDITY_STATS, FILE_CALIBRATION,
+      FILE_AUDIT_REPORT
+   };
+   for(int i=0;i<ArraySize(files_to_touch);i++)
+   {
+      h = FileOpen(files_to_touch[i], FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+      if(h!=INVALID_HANDLE)
+      {
+         if(FileSize(h)==0)
+         {
+            if(files_to_touch[i]==FILE_AUDIT_REPORT)
+               FileWrite(h, "date,time,event,component,level,message,fields_json");
+            else
+               FileWrite(h, "{}");
+         }
+         FileClose(h);
+      }
+   }
+   // Sets and tester artifacts
+   h = FileOpen(FILE_SET_DEFAULT, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(h!=INVALID_HANDLE)
+   {
+      if(FileSize(h)==0)
+      {
+         // Syntactically valid .set exposing all inputs
+         FileWrite(h, "DailyLossCapPct=4.0");
+         FileWrite(h, "OverallLossCapPct=6.0");
+         FileWrite(h, "MinTradeDaysRequired=3");
+         FileWrite(h, "TradingEnabledDefault=true");
+         FileWrite(h, "MinRiskDollar=10.0");
+         FileWrite(h, "OneAndDoneR=1.5");
+         FileWrite(h, "NYGatePctOfDailyCap=0.50");
+         FileWrite(h, "UseLondonOnly=false");
+         FileWrite(h, "StartHourLO=7");
+         FileWrite(h, "StartHourNY=12");
+         FileWrite(h, "ORMinutes=60");
+         FileWrite(h, "CutoffHour=16");
+         FileWrite(h, "RiskPct=1.5");
+         FileWrite(h, "MicroRiskPct=0.10");
+         FileWrite(h, "MicroTimeStopMin=45");
+         FileWrite(h, "GivebackCapDayPct=0.50");
+         FileWrite(h, "NewsBufferS=300");
+         FileWrite(h, "MaxSpreadPoints=40");
+         FileWrite(h, "MaxSlippagePoints=10");
+         FileWrite(h, "MinHoldSeconds=120");
+         FileWrite(h, "QueuedActionTTLMin=5");
+         FileWrite(h, "UseServerMidnightBaseline=true");
+         FileWrite(h, "ServerToCEST_OffsetMinutes=0");
+         FileWrite(h, "InpSymbols=EURUSD;XAUUSD");
+         FileWrite(h, "UseXAUEURProxy=true");
+         FileWrite(h, "LeverageOverrideFX=50");
+         FileWrite(h, "LeverageOverrideMetals=20");
+         FileWrite(h, "RtargetBC=2.2");
+         FileWrite(h, "RtargetMSC=2.0");
+         FileWrite(h, "SLmult=1.0");
+         FileWrite(h, "TrailMult=0.8");
+         FileWrite(h, "EntryBufferPoints=3");
+         FileWrite(h, "MinStopPoints=1");
+         FileWrite(h, "MagicBase=990200");
+         FileWrite(h, "MaxOpenPositionsTotal=2");
+         FileWrite(h, "MaxOpenPerSymbol=1");
+         FileWrite(h, "MaxPendingsPerSymbol=2");
+         FileWrite(h, "BWISC_ConfCut=0.70");
+         FileWrite(h, "MR_ConfCut=0.80");
+         FileWrite(h, "EMRT_FastThresholdPct=40");
+         FileWrite(h, "CorrelationFallbackRho=0.50");
+         FileWrite(h, "MR_RiskPct_Default=0.90");
+         FileWrite(h, "MR_TimeStopMin=60");
+         FileWrite(h, "MR_TimeStopMax=90");
+         FileWrite(h, "MR_LongOnly=false");
+         FileWrite(h, "EMRT_ExtremeThresholdMult=2.0");
+         FileWrite(h, "EMRT_VarCapMult=2.5");
+         FileWrite(h, "EMRT_BetaGridMin=-2.0");
+         FileWrite(h, "EMRT_BetaGridMax=2.0");
+         FileWrite(h, "QL_LearningRate=0.10");
+         FileWrite(h, "QL_DiscountFactor=0.99");
+         FileWrite(h, "QL_EpsilonTrain=0.10");
+         FileWrite(h, "QL_TrainingEpisodes=10000");
+         FileWrite(h, "QL_SimulationPaths=1000");
+      }
+      FileClose(h);
+   }
+   h = FileOpen(FILE_OPT_RANGES, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(h!=INVALID_HANDLE)
+   {
+      if(FileSize(h)==0)
+      {
+         FileWrite(h, "RiskPct: 0.8..2.0 step 0.1");
+         FileWrite(h, "SLmult: 0.7..1.3 step 0.1");
+         FileWrite(h, "RtargetBC: 1.8..2.6 step 0.1");
+         FileWrite(h, "RtargetMSC: 1.6..2.4 step 0.1");
+         FileWrite(h, "ORMinutes: {30,45,60,75}");
+         FileWrite(h, "TrailMult: 0.6..1.2 step 0.1");
+      }
+      FileClose(h);
+   }
+   h = FileOpen(FILE_TESTER_INI, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(h!=INVALID_HANDLE)
+   {
+      if(FileSize(h)==0)
+      {
+         FileWrite(h, "[Tester]");
+         FileWrite(h, "Deposit=10000");
+         FileWrite(h, "Currency=USD");
+         FileWrite(h, "Leverage=50");
+         FileWrite(h, "Model=4 ; Every tick based on real ticks");
+         FileWrite(h, "ExecutionMode=0");
+      }
+      FileClose(h);
+   }
+}
+
 // Load challenge state (tolerate missing)
 void Persistence_LoadChallengeState()
 {
    Persistence_EnsureFolders();
-   int h = FileOpen(FILE_CHALLENGE_STATE, FILE_READ|FILE_WRITE|FILE_COMMON|FILE_TXT|FILE_ANSI);
+   int h = FileOpen(FILE_CHALLENGE_STATE, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
    if(h == INVALID_HANDLE)
    {
       // initialize defaults and create file
@@ -41,7 +174,7 @@ void Persistence_LoadChallengeState()
       s.baseline_today_e0 = s.baseline_today;
       s.baseline_today_b0 = AccountInfoDouble(ACCOUNT_BALANCE);
       State_Set(s);
-      int hw = FileOpen(FILE_CHALLENGE_STATE, FILE_WRITE|FILE_COMMON|FILE_TXT|FILE_ANSI);
+      int hw = FileOpen(FILE_CHALLENGE_STATE, FILE_WRITE|FILE_TXT|FILE_ANSI);
       if(hw!=INVALID_HANDLE)
       {
          FileWrite(hw, "initial_baseline="+DoubleToString(s.initial_baseline,2));
@@ -96,7 +229,7 @@ void Persistence_LoadChallengeState()
       s.server_midnight_ts = (datetime)0;
       s.baseline_today_e0 = s.baseline_today;
       s.baseline_today_b0 = AccountInfoDouble(ACCOUNT_BALANCE);
-      int hw = FileOpen(FILE_CHALLENGE_STATE, FILE_WRITE|FILE_COMMON|FILE_TXT|FILE_ANSI);
+      int hw = FileOpen(FILE_CHALLENGE_STATE, FILE_WRITE|FILE_TXT|FILE_ANSI);
       if(hw!=INVALID_HANDLE)
       {
          FileWrite(hw, "initial_baseline="+DoubleToString(s.initial_baseline,2));
@@ -120,7 +253,7 @@ void Persistence_LoadChallengeState()
 void Persistence_Flush()
 {
    ChallengeState s = State_Get();
-   int h = FileOpen(FILE_CHALLENGE_STATE, FILE_WRITE|FILE_COMMON|FILE_TXT|FILE_ANSI);
+   int h = FileOpen(FILE_CHALLENGE_STATE, FILE_WRITE|FILE_TXT|FILE_ANSI);
    if(h!=INVALID_HANDLE)
    {
       FileWrite(h, "initial_baseline="+DoubleToString(s.initial_baseline,2));
