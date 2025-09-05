@@ -9,7 +9,7 @@ void LogAuditRow(const string event, const string component, const int level,
    MqlDateTime tm; TimeToStruct(TimeCurrent(), tm);
    string ymd = StringFormat("%04d%02d%02d", tm.year, tm.mon, tm.day);
    string path = StringFormat("%s/audit_%s.csv", RPEA_LOGS_DIR, ymd);
-   int h = FileOpen(path, FILE_READ|FILE_WRITE|FILE_COMMON|FILE_TXT|FILE_ANSI);
+   int h = FileOpen(path, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
    if(h==INVALID_HANDLE) return;
    // one-time header if new file
    if(FileSize(h)==0)
@@ -30,7 +30,7 @@ void LogDecision(const string component, const string message, const string fiel
    MqlDateTime tm; TimeToStruct(TimeCurrent(), tm);
    string ymd = StringFormat("%04d%02d%02d", tm.year, tm.mon, tm.day);
    string path = StringFormat("%s/decisions_%s.csv", RPEA_LOGS_DIR, ymd);
-   int h = FileOpen(path, FILE_READ|FILE_WRITE|FILE_COMMON|FILE_TXT|FILE_ANSI);
+   int h = FileOpen(path, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
    if(h==INVALID_HANDLE) return;
    // one-time header if new file
    if(FileSize(h)==0)

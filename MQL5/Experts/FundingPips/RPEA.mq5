@@ -175,6 +175,7 @@ int OnInit()
 
    // 5) Ensure folders/logs exist and write boot line
    Persistence_EnsureFolders();
+   Persistence_EnsurePlaceholderFiles();
    // Load news CSV fallback if present
    News_LoadCsvFallback();
    LogAuditRow("BOOT", "RPEA", 1, "EA boot", "{}");
