@@ -35,7 +35,8 @@ void State_ResetDailyBaseline()
    double bal = AccountInfoDouble(ACCOUNT_BALANCE);
    g_state.baseline_today_e0 = eq;
    g_state.baseline_today_b0 = bal;
-   g_state.baseline_today = eq;
+   // Spec: baseline_today = max(equity_midnight, balance_midnight)
+   g_state.baseline_today = (eq > bal ? eq : bal);
    if(eq > g_state.day_peak_equity) g_state.day_peak_equity = eq;
    g_state.trading_enabled = true; // re-enable for the new day unless permanently disabled
 }
@@ -47,7 +48,8 @@ void State_ResetDailyBaseline(ChallengeState &state)
    double bal = AccountInfoDouble(ACCOUNT_BALANCE);
    state.baseline_today_e0 = eq;
    state.baseline_today_b0 = bal;
-   state.baseline_today = eq;
+   // Spec: baseline_today = max(equity_midnight, balance_midnight)
+   state.baseline_today = (eq > bal ? eq : bal);
    if(eq > state.day_peak_equity) state.day_peak_equity = eq;
    state.trading_enabled = true;
    g_state = state;

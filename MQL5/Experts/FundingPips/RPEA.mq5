@@ -220,8 +220,7 @@ void OnTimer()
       Persistence_Flush();
       LogAuditRow("ROLLOVER", "Scheduler", 1, "New server day baseline anchored", "{}");
 
-      // TODO[M1]: Wire server-day day-count hook to first DEAL_ENTRY_IN later milestones
-      State_MarkTradeDayOnce(); // placeholder marking per spec
+      // Day-count handled in OnTradeTransaction on first DEAL_ENTRY_IN (per spec)
    }
    last_check = g_ctx.current_server_time;
 
@@ -243,5 +242,15 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                         const MqlTradeRequest& request,
                         const MqlTradeResult& result)
 {
+   // Count trading day on first DEAL_ENTRY_IN of the server day
+   if(trans.type == TRADE_TRANSACTION_DEAL_ADD && trans.deal > 0)
+   {
+      ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
+      if(entry == DEAL_ENTRY_IN)
+      {
+         State_MarkTradeDayOnce();
+      }
+   }
+   // Keep existing order engine hook
    OrderEngine_OnTradeTxn(trans, request, result);
 }
