@@ -1,0 +1,731 @@
+
+--- Page 1 ---
+Advanced Statistical Arbitrage with Reinforcement Learning
+Boming Ning†,∗ and Kiseop Lee†
+†Department of Statistics, Purdue University
+March 20, 2024
+Abstract
+Statisticalarbitrageisaprevalenttradingstrategywhichtakesadvantageofmeanreverseprop-
+erty of spread of paired stocks. Studies on this strategy often rely heavily on model assumption.
+In this study, we introduce an innovative model-free and reinforcement learning based framework
+forstatisticalarbitrage. Fortheconstructionofmeanreversionspreads,weestablishanempirical
+reversion time metric and optimize asset coefficients by minimizing this empirical mean reversion
+time. Inthetradingphase,weemployareinforcementlearningframeworktoidentifytheoptimal
+meanreversionstrategy. Divergingfromtraditionalmeanreversionstrategiesthatprimarilyfocus
+onpricedeviationsfromalong-termmean,ourmethodologycreativelyconstructsthestatespace
+toencapsulatetherecenttrendsinpricemovements. Additionally,therewardfunctioniscarefully
+tailored to reflect the unique characteristics of mean reversion trading.
+Keywords— Statistical Arbitrage, Mean Reversion Trading, Empirical Mean Reversion Time,
+Reinforcement Learning
+JEL: C14, C61
+1 Introduction
+Statistical arbitrage, also known as mean reversion trading or pairs trading, is an important trading
+strategy in the financial markets. The essence of statistical arbitrage lies in creating spreads or port-
+foliosfromthemarketthatexhibitmean-revertingcharacteristics,therebyunlockingopportunitiesfor
+profit. For instance, if the price of a spread falls below its long-term mean, a trader might take a long
+position and then wait until its price correction, aiming to profit from this adjustment.
+The approach to statistical arbitrage unfolds in three distinct steps: First, it entails the identi-
+fication of two or more securities that have shown a historical pattern of moving together. Next, a
+mean-reverting spread is formulated from these correlated securities. The final step involves taking
+a position when the spread deviates from its long-term mean, leveraging the anticipated return to
+equilibriumtogenerateprofits. Therefore,meanreversiontradingisdividedintothreemainelements:
+(1) the identification of securities with co-movements, (2) the construction of mean-reverting spreads,
+and (3) the development of a trading strategy based on these mean-reverting spreads. The first two
+components are referred to as the formation phase, while the third is considered the trading phase.
+Theinitialstepinstatisticalarbitragestrategyistheidentificationofsimilarsecurities. Traditional
+methodspredominantlyutilizedistancemetrics, ashighlightedbyGatevetal.(2006), wherepairsare
+formed by selecting the securities that minimizes the sum of squared deviations (SSD) between their
+normalized price series. This principle of pair selection can be extended to encompass pairs of rep-
+resentative stocks and ETFs within specific sectors (Gatev et al. (2006), Avellaneda and Lee (2010),
+Montana and Triantafyllopoulos (2011), Leung and Li (2016)), as well as physical commodities and
+theircorrespondingstocks/ETFs(Kanamuraetal.(2010))andentitieswithinthecryptocurrencymar-
+ket (Leung and Nguyen (2019)). These references highlight the adaptability and efficacy of statistical
+arbitrage strategies across a broad spectrum of markets. In our study, we select ten representative
+pairs from various sectors within the US market to construct the mean reversion portfolios.
+∗Correspondingauthor. Email: ningb@purdue.edu
+1
+4202
+raM
+81
+]TS.nif-q[
+1v08121.3042:viXra
+--- Page 2 ---
+Afteridentifyinggroupsofsimilarstocks,thenextstepinvolvesconstructinganstatisticalarbitrage
+portfolio or spread with mean-reverting property. A foundational approach, as suggested by Gatev
+etal.(2006),involvestakingalongpositioninonesecurityofthepairandashortpositionintheother,
+that is, trading on the spread S −S for two similar stocks S and S . Although straightforward,
+1 2 1 2
+thismethodoftencannotcreateanoptimalportfoliothatexhibitshighmean-revertingcharacteristics.
+A more sophisticated strategy frequently used is Ornstein–Uhlenbeck (OU) mean reversion trading
+(Leung and Li (2016)). For a pair of similar stocks S and S , the goal is to find a coefficient B such
+1 2
+that the spread S −B·S mimics an OU process as closely as possible, with B typically determined
+1 2
+throughmaximumlikelihoodestimationbasedontheOUprocessdistribution. However,thereal-world
+applicationofthisstrategyfaceschallengesduetothefactthatfinancialmarketsmaynotalwaysalign
+with the assumptions of the Ornstein–Uhlenbeck process, which can compromise the effectiveness of
+strategies based on this model.
+Toovercomethelimitationsinherentintheseassumption-dependentmethods,weintroduceanovel
+approach that utilizes the proposed empirical mean reversion time of any time series as a measure of
+reversion speed. This allows for the construction of a mean reversion spread without relying on any
+theoretical assumptions. By employing a grid search method, we can systematically explore different
+combinations to identify an optimal spread that possesses the least empirical mean reversion time.
+This technique offers a more flexible and potentially more robust framework for arbitrage portfolio
+construction.
+The final phase of statistical arbitrage involves formulating a trading strategy based on the con-
+structed mean-reverting spread. Traditional strategies heavily rely on model parameter estimations.
+For instance, Gatev et al.(2006) initiate a trade when a spread’s price deviation exceeds two historical
+standard deviations from the mean, calculated during the pair formation phase, and exit the trade
+uponthenextconvergenceofpricestothehistoricalmean. InthecontextofOrnstein-Uhlenbeck(OU)
+mean reversion trading, parameter estimations for the long-term mean and volatility of the OU model
+are typically employed to define trading criteria (Leung and Li (2015), Leung and Li (2016)). These
+estimations depend on historical data from the formation period, with an underlying assumption that
+parameters remain constant in the following trading phase—an assumption that may not hold due
+to market fluctuations. Additionally, the selection of hyper-parameters significantly impacts trading
+performance, yet a robust method for the optimal hyper-parameters selection remains absent. For
+example,thedeterminationofanappropriatethresholdforpricedeviationfromthemeanlacksaclear
+consensus.
+To address these challenges, we introduce a reinforcement learning (RL) algorithm designed to
+dynamically optimize trading decisions over time, replacing the need for predefined rules. This ap-
+proach models the task within a reinforcement learning framework, aimed at enabling agents to take
+actions that maximize cumulative rewards in an environment. We design the state space to capture
+the recent movements of the spread price, thus moving away from a dependence on historical mean
+and standard deviation estimates. This approach enables the agent to make informed decisions about
+future actions by leveraging insights into current market trends, rather than depending on parameter
+estimations from the formation period. We get the rid of the hyper-parameters choice at the same
+time. Simultaneously,weremovethenecessityforhyper-parameterselectionbynotincorporatinguni-
+versalhyper-parameters,suchasthresholds,whichcansignificantlyimpacttradingperformance. This
+approach streamlines the trading process, focusing on dynamic adaptation without the constraints of
+fixed parameters.
+Thestructureofthepaperisorganizedasfollows. Section2providesanoverviewofrelatedresearch
+in the field. Section 3 details the definition of empirical reversion time for spreads and outlines the
+methodology for identifying optimal asset coefficients by minimizing mean reversion time. Section 4
+presentsareinforcementlearningframeworkdesignedforthedevelopmentofoptimaltradingstrategies.
+Experimentalresults,basedonsimulateddataandreal-worldapplicationsintheUSstockmarket,are
+discussed in Section 5. Finally, Section 6 offers conclusions and outlines future research directions.
+2 Related Research
+The seminal work by Gatev et al. (2006) marks a cornerstone in the study of pairs trading, a strategy
+predicatedonthemeanreversionprinciple. ByemployingwhatisnowknownastheDistanceMethod
+(DM),theyanalyzedCRSPstocksfrom1962to2002,identifyingtradingopportunitieswhentheprice
+2
+--- Page 3 ---
+of asset pairs deviated beyond two historical standard deviations and closing positions upon price
+convergence. This approach yielded an excess return of 1.3 % for the top 5 pairs and 1.4% for the
+top 20 pairs. Building on this, Do and Faff (2012) further examined the viability of pairs trading
+considering transaction costs. Their findings enhance the understanding of pairs trading’s practical
+application, demonstrating its feasibility even when accounting for trading expenses.
+BeyondtheDistanceMethod,thestochasticspreadmethodemergesasasignificantalternativefor
+meanreversiontrading, utilizingstochasticprocessestoanalyzethemean-revertingnatureofspreads.
+Thisapproachinvolvesconstructingspreadsandgeneratingtradingsignalsbasedontheanalysisofpa-
+rameterswithinthechosenstochasticmodel. Elliottetal.(2005)werepioneersinthisarea,introducing
+a Gaussian Markov chain model to capture the mean-reverting dynamics of spreads. They leveraged
+model estimates against observed spread data for trading decisions, laying the groundwork for further
+exploration. Building on this, Do et al. (2006) expanded the concept with a generalized stochastic
+residualspreadmethod, aimedatmodelingrelative mispricingmorecomprehensively. Theirapproach
+broadened the stochastic spread methodology’s applicability in mean reversion trading. Further en-
+richingthisfield,theextensiveworkbyLeungandLi(2016)delvesintooptimalmeanreversiontrading
+strategies based on various stochastic models. Covering models such as the Ornstein-Uhlenbeck, Ex-
+ponential OU, and CIR, this research illuminates the versatility and effectiveness of stochastic models
+in optimizing trading strategies. This progression of work significantly advances our understanding of
+mean reversion trading by demonstrating the potential of diverse stochastic approaches.
+Cointegration tests stand as a critical alternative method for mean reversion trading strategies.
+Leveraging the foundational error correction model introduced by Engle and Granger (1987), Vidya-
+murthy (2004) outlines a cointegration framework that has become essential in pairs trading analysis.
+This methodology is advanced by Galenko et al. (2012), who develops active trading strategies for
+ETFs, utilizing cointegration to exploit trading opportunities within exchange-traded funds. Further-
+more, Huck and Afawubo (2015) conducts a comparative analysis, examining the performance of the
+Distance Method against cointegration-based strategies within the S&P 500, clarifying the relative
+merits of these methodologies in the context of mean reversion trading. Demonstrating the method’s
+extensive applicability, Leung and Nguyen (2019) crafts cointegrated cryptocurrency portfolios using
+both the Engle-Granger two-step approach and the Johansen cointegration test, highlighting cointe-
+gration’s adaptability across different asset classes.
+Inrecentyears,thelandscapeofmeanreversiontradinghasbeenenrichedbyavarietyofinnovative
+methods. Amongthese,theuseofcopulashasgainedattentionforitsabilitytomodelthedependence
+between asset pairs, as evidenced by the work of Liew and Wu (2013) and Xie et al. (2016). Addition-
+ally, an optimization approach has been explored by Zhang et al. (2020), who seek to construct sparse
+portfolioswithmean-revertingpricebehaviorsfrommultipleassets. Machinelearningtechniqueshave
+also emerged as a powerful tool in this domain. With contributions from Guijarro-Ordonez et al.
+(2021), Sarmento and Horta (2020), and Chang et al. (2021), machine learning algorithms have been
+demonstratedtobeabletouncovercomplexstatisticalpatternsandrelationshipsamongassets. These
+developments signal a period of significant innovation in statistical arbitrage, providing traders and
+researchers with an expanded toolkit for strategy development and implementation.
+3 Empirical Mean Reversion Time: Spread Construction
+Once we identify groups of similar stocks, we need to form an arbitrage portfolio with mean reversion
+property. InthetraditionalOUpairstrading, fortwosimilarstocksS andS , wechooseB suchthat
+1 2
+the spread S −BS follows an OU process as closely as possible. A reasonable way to find B is to
+1 2
+use the maximum likelihood estimator, using the distribution of the OU process. However, since we
+do not have a model assumption, we cannot use MLE anymore.
+We extend paired trading to a multi-asset portfolio. In other words, given n similar stocks S ,i=
+i
+1,2,...,n, we form a spread X =
+(cid:80)n
+a S . Our goal is to find a portfolio (a ,a ,...,a ) such that the
+i=1 i i 1 2 n
+spread Y has a mean reverting property as much as possible.
+Let us consider a popular OU process
+dX =µ(θ−X )dt+σdW ,
+t t t
+where W is a standard Brownian motion. An empirical result shows that µ has the biggest impact on
+t
+the profit among three parameters µ,θ and σ. In general, a larger µ gives higher return. Intuitively,
+3
+--- Page 4 ---
+it should be the case, since a larger µ implies a faster mean reversion. Therefore, a trader can make a
+quick profit by taking advantage of the deviation from the mean.
+Therefore, we want to make the spread X =
+(cid:80)n
+a S to have a faster mean reversion property.
+i=1 i i
+Consider a trading strategy to buy at X = θ −a and sell later at X = θ for a > 0 and a given
+t t
+long-term mean θ. Define the stopping time
+τ =inf{s>t:X =θ | X =θ−a}. (1)
+t s t
+A faster mean reversion corresponds to a smaller τ . Based on this logic, it is natural to define our
+t
+arbitrage portfolio selection problem as follows.
+At time t, consider the training time interval [t−h,t]. Find the optimal portfolio (a ,a ,...,a )
+1 2 n
+which minimizes the sample mean of τ’s in this interval, given Y¯ =θ and S2(Y)<M for a constant
+M.
+The reason we impose the upper bound M on the sample variance is because of the constraint of
+the initial wealth and to prevent a large leverage, which makes the portfolio unstable.
+3.1 Empirical Mean Reversion Time
+In this part, we introduce the conception of empirical mean reversion time based on the idea above.
+Inspired by Fink and Gandhi (2007), we firstly define the important extremes of time series. Let
+s be the sample standard deviation of a time series X , where t ∈ [0,T]. In real market, we can only
+t
+get the discrete data points. So we assume a time series (X ,··· ,X ). Let C be a positive constant.
+1 n
+A point X is an important minimum of the time series if there are indices i and j, where i≤m≤j,
+m
+such that
+• X is the minimum among X ,··· ,X ;
+m i j
+• X −X ≥C·s and X −X ≥C·s.
+i m j m
+Intuitively, X is the minimal value of some segment X ,··· ,X , and the endpoint values of this
+m i j
+segment are much larger than X . Similarly, X is an important maximum if there are indices i and
+m m
+j, where i≤m≤j, such that
+• X is the maximum among X ,··· ,X ;
+m i j
+• X −X ≥C·s and X −X ≥C·s.
+m i m j
+Drawing on the conceptual framework introduced by Equation (1), our objective is to propose an
+empirical mean reversion time that quantifies the duration required for the spread to revert to its
+long-term mean, starting from the maximum deviation observed. It enables us to infer the optimal
+coefficients for securities by minimizing the spread’s empirical reversion time.
+We now proceed to construct a sequence of time moments {τ }N , derived recursively from the
+i i=0
+significant local extremes within the actual asset price process. More precisely, we define the initial
+time moment as
+τ =inf{u∈[0,T]:X is a local extreme}.
+1 u
+Subsequently, τ is identified as the first instance when the series crosses the sample mean θˆ, defined
+2
+by
+τ =inf{u∈[τ ,T]:X =θˆ}.
+2 1 u
+Recursively, τ isthe firstlocalextremefollowingτ , andτ isthe firstcrossingof thelong-termmean
+3 2 4
+afterτ , andsoon. Thus, allodd-numberedtimemoments{τ } correspondtolocalextremes
+3 n n=1,3,5,···
+and are defined as
+τ =inf{u∈[τ ,T]:X is a local maximum}.
+n n−1 u
+Conversely, all even-numbered time moments {τ } are associated with the crossings of the
+n n=2,4,6,···
+long-term mean, specified by
+τ =inf{u∈[τ ,T]:X =θˆ}.
+n n−1 u
+The complete sequence {τ }N is constructed in an inductive manner.
+n n=1
+4
+--- Page 5 ---
+Oncewegetthetimestampsofiteratedtimestamps{τ },theempiricalreversiontimer isdefined
+n
+as the average of the time interval from local extremes to crossing times. That is,
+N
+2 (cid:88)
+r = (τ −τ )
+N n n−1
+i=2
+ieven
+Next, we briefly introduce a grid search algorithm that can help us find the optimal coefficients
+basedontheempiricalmeanreversiontime. Assumethepriceprocessesofnsimilarassetsaredenoted
+by S ,S ,...,S . Our aim is to find the optimal coefficients (a ,a ,...,a ) such that the portfolio
+1 2 n 1 2 n
+X =
+(cid:80)n
+a S exhibits the minimal empirical mean reversion time. Without loss of generality, we
+i=1 i i
+set the first coefficient to a = 1. We then evaluate the empirical mean-reversion time of Y for each
+1
+coefficient a , where a ∈ [−3.00,−2.99,−0.98,...,2.99,3.00] for 2 ≤ i ≤ N. The optimal coefficients
+i i
+are determined by selecting the set that minimizes the empirical mean reversion time of Y.
+4 Reinforcement Learning: Advanced Trading Strategies
+Thefinalstageofstatisticalarbitrageinvolvesdevelopingatradingstrategybasedonamean-reverting
+spread. Traditional approaches assume parameters’ stability from formation phase to trading phase,
+which market changes can challenge. Moreover, the choice of hyper-parameters, such as the deviation
+threshold, critically affects performance, yet a standard method for their optimal selection is lacking.
+Our motivation is to leverage reinforcement learning algorithms to help us decide the optimal
+trading actions dynamically over time, other than design some preset rules manually. Reinforcement
+learning framework is a machine learning method concerned with how intelligent agents ought to take
+optimal actions in an environment in order to maximize the cumulative reward.
+4.1 Preliminaries of Reinforcement Learning
+In RL, the sequential decision-making problem is modeled as Markov decision process (MDP), which
+isanaugmentedstructureofMarkov process. Inadditionto aMarkovprocess, onehasthepossibility
+of choosing an action from an available action space and get some reward that tells us how good our
+choices were at each step.
+The “environment” is defined as the part of the system outside of the RL agent’s control. At each
+timestept,weobservethecurrentstateoftheenvironmentS ∈S andthenchoosesanactionA ∈A.
+t t
+The choice of action influences both the transition to the next state, as well as the reward received,
+R . Thus, we will get a sequence in MDP as:
+t
+S ,A ,R ,S ,A ,R ,S ,A ,R ,···
+0 0 1 1 1 2 2 2 3
+Every MDP is uniquely determined by a multivariate conditional probability distribution p(s′,r|s,a),
+which is the joint probability of transitioning to state s′ and receiving reward r, conditional on the
+previous state being s and taking action a.
+A policy π is a mapping from states to probability distributions over the action space. If the RL
+agent is following policy π, then in state s it will choose action a with probability π(a|s). To find the
+optimal policy, one must specify a goal function. A wide-used discounted goal function is defined as
+G =R +γR +γ2R +···
+t t+1 t+2 t+3
+(2)
+=R +γG ,
+t+1 t+1
+where R is the instant reward at time t and γ ∈ (0,1) is a discount factor expressing that rewards
+t
+further in the future are worth less than rewards which are closer in time. Our goal is to search for
+the optimal policy that maximizes the expectation of the goal function, namely
+maxE[G ]
+t
+π
+Next we introduce related concepts of Q-learning. The action-value function for policy π is the
+expectation of goal function, assuming we start in state s, take action a and then follow the policy π
+from then on
+q (s,a):=E[G |S =s,A =a].
+π t t t
+5
+--- Page 6 ---
+The optimal action-value function is then defined as
+q (s,a)=maxq (s,a).
+∗ π
+π
+If we knew the optimal action-value function, we would know the optimal policy itself easily, that is,
+choose a ∈ A to maximize q (s,a). Hence we can reduce the problem to finding q , which is solved
+∗ ∗
+iteratively based on the Bellman equations. It is straightforward to establish the Bellman equation of
+action-value function:
+(cid:88)
+q (s,a)= p(s′,r|s,a)[r+γmaxq (s′,a′)]. (3)
+∗ ∗
+a′
+s′,r
+The core of the Q-learning is to leverage Bellman equation as a simple value iteration update, using
+the weighted average of the old value and the new information.
+Beforelearningbegins,theapproximateaction-valuefunctionQisinitializedtoapossiblyarbitrary
+value. Then, the corresponding sample update for q-function of S ,A , given a sample next state and
+t t
+instant reward, S and R (from the model), is the Q-learning update:
+t+1 t+1
+(cid:16) (cid:17)
+Qnew(S ,A )←Q(S ,A )+α· R +γ·maxQ(S ,a)−Q(S ,A ) , (4)
+t t t t t+1 t+1 t t
+a
+where α is the learning rate, γ is the discount factor, R is the reward received after taking action
+t+1
+A in state S , and S is the next state. Note that Qnew(S ,A ) is the sum of three factors:
+t t t+1 t t
+1. (1−α)Q(S ,A ): the current value weighted by the learning rate.
+t t
+2. α·R : the weighted instant reward to obtain if action A is taken when in state S .
+t+1 t t
+3. α·γ·max Q(S ,a): the maximum cumulative reward that can be obtained from next state
+a t+1
+S (weighted by learning rate and discount factor)
+t+1
+Generally, R +γ ·max Q(S ,a) is referred as target Y . Thus, the iteration (4) updates the
+t+1 a t+1 t
+current value Q(S ,A ) towards a target value Y .
+t t t
+An epsilon-greedy strategy is employed for action selection. In the training phase, actions are
+chosen at random with a probability of ϵ, whereas the action with the highest Q-value is selected
+with a probability of 1−ϵ. This approach facilitates a balance between exploration of new actions
+and exploitation of known values. In the testing phase, when the trained agent is assessed using new
+incoming data, ϵ is adjusted to 0. This modification ensures that action selection is solely based on
+thehighestQ-value, therebyfocusingentirelyonexploitationbasedontheacquiredknowledge. Thus,
+the model incorporates both exploration and exploitation during training, while adopting a strategy
+of pure exploitation during testing.
+4.2 RL Model for Mean Reversion Trading
+Nowwecanintroduceourreinforcementlearningmodelforanoptimalmeanreversiontradingstrategy.
+The state space is constructed based on the trajectory of price movements over a recent sequence
+of time points. At any particular moment t, the state, denoted S , is encapsulated by the vector
+t
+S =[d ,d ,...,d ],
+t t−l+1 t−l+2 t
+whereeachd characterizesthedirectionandmagnitudeofpricechangesattimei. Apositivevalueof
+i
+d signifies a price increase relative to time i−1, and conversely, a negative value indicates a decline.
+i
+The magnitude of d quantifies the extent of this change. Formally, for each i within the interval
+i
+(cid:16) (cid:17)
+t−l+1≤i≤t, let π = Pi−Pi−1 ×100 represent the percentage price change from i−1 to i. The
+i Pi−1
+definition of states is given by
+
++2 if π >k,
++1
+if 0
+i
+<π <k,
+d = i
+i
+ −
+−
+1
+2
+i
+i
+f
+f π
+−
+<
+k <
+−k
+π
+.
+i <0,
+i
+Here, ’+2’ indicates a significant increase, ’+1’ a moderate increase, ’-2’ a significant decrease, and
+’-1’ a moderate decrease. The choice of threshold k, such as 3%, is adjustable to accommodate
+6
+--- Page 7 ---
+differentsensitivitylevels. Thisapproachresultsinastatespacecomprising4luniquestates,effectively
+capturing a wide spectrum of recent price movement scenarios.
+The action space is composed of three possible actions: selling one share is represented by −1,
+takingnoactionisdenotedby0,andbuyingoneshareisindicatedby+1. Thesetofavailableactions
+at any given time is contingent upon the agent’s current position. Specifically, when the agent does
+not hold any position, the permissible actions include buying (+1) or holding (0). Conversely, if the
+agent is currently in a long position, the options are limited to selling (−1) or holding (0). Note that
+our model does not account for initially entering a short position.
+The immediate reward, R , earned by the agent for taking action A under prevailing environ-
+t+1 t
+mental conditions, is mathematically defined as:
+R =A ·(θ−X )−c·|A |, (5)
+t+1 t t t
+where X denotes the current price of the spread, and θ represents the true global mean of X . The
+t t
+formulation is designed such that a buy action (A =+1) is rewarded positively when X is below its
+t t
+long-termmean,θ,encouragingpurchasesatlowerprices. Conversely,asellaction(A =−1)incursa
+t
+negative reward under the same conditions. If X exceeds the long-term mean, resulting in a negative
+t
+value for θ−X , the rewards for buy and sell actions are adjusted accordingly to discourage buying
+t
+at high prices and encourage selling. The term c represents the transaction cost per trade.
+The cumulative return from time t to the terminal time T is expressed as:
+T
+(cid:88)
+G = e−r·(s−t)·R +I ·X , (6)
+t s T T
+s=t+1
+where r denotes the interest rate, reflecting the time value of money, and I signifies the position held
+T
+at the terminal time. This formulation accounts for the exponential decay of rewards over time due
+to the discounting effect of the interest rate, emphasizing the importance of immediate gains and the
+impact of holding a position until the end of the considered period.
+To accurately fit the optimal Q-table, ample training data is essential. However, the real market
+offersonlyalimitedobservationpathofspreads,presentingasignificantchallengeforeffectivetraining.
+Additionally, our reward function, as defined in Equation (5), incorporates the true long-term mean
+of the spread—a value that remains elusive in actual market scenarios.
+Toovercometheseobstacles,ourstrategyinvolvesinitiallysimulatingamultitudeofmeanreversion
+spreads with different parameters to train the reinforcement learning (RL) agent. This step allows for
+extensive exposure to various market conditions, enhancing the agent’s learning and decision-making
+capabilities. Subsequently, the model, now adept from the simulation training, is applied to execute
+tradesintherealmarket. InthelanguageofRL,thismethodentailsutilizingasimulatedenvironment
+for the agent’s training phase.
+5 Experiments
+In this chapter, the performance of the proposed method is thoroughly evaluated. Initially, tests are
+conducted onsimulated datato assess theefficacyof theproposed empiricalmean reversion time, and
+the reinforcement learning (RL) model. Subsequently, mean reversion trading experiments are carried
+out on the S&P 500 using the proposed model-free framework, with outcomes compared against those
+achieved with other classical statistical arbitrage methods.
+5.1 Empirical Mean Reversion Time
+In this section, we investigate the empirical mean reversion time by conducting simulations of the
+Ornstein-Uhlenbeck(OU)process. Wefixtheparametersθ =0andσ =1, andvaryµfrom2to20in
+incrementsof2. Foreachparametercombination, wesimulate100pathsoftheOUprocess, eachwith
+aterminaltimeofT =1.0andn=1000datapoints. Subsequently,wecalculatetheaverageempirical
+mean reversion time using a threshold of C =2 for these paths. The primary objective is to compute
+the average empirical mean reversion time for these paths using a threshold value of C = 2, thereby
+examining the impact of the mean reversion parameter µ on the empirical mean reversion time.
+7
+--- Page 8 ---
+Figure 1: Local extremes calculated on a simulated OU spread with θ =10, θ =0 and σ =1.
+Parameter µ Average EMRT Parameter µ Average EMRT
+2.0 98.79 12.0 49.22
+4.0 83.45 14.0 45.10
+6.0 78.09 16.0 38.04
+8.0 59.22 18.0 35.63
+10.0 58.51 20.0 31.15
+Table1: Variationofaverageempiricalmeanreversiontime(EMRT)withparameterµintheOrnstein-
+Uhlenbeck Process.
+Figure 1 presents the identified local extremes on a simulated Ornstein-Uhlenbeck (OU) path
+characterized by parameters µ = 10, θ = 0, and σ = 1. The analysis reveals that the defined criteria
+forextremepointsarehighlyeffectiveinpinpointingnearlyeveryinstancewherethetimeseriesreaches
+a local maximum or minimum. This capability underscores the precision of our approach in capturing
+significant turning points within the simulated path, providing a robust method for analyzing mean
+reversion characteristics. The accurate identification of these extremes is critical for the development
+of mean reversion time.
+The results of the impact of the mean reversion parameter µ on the empirical mean reversion time
+are succinctly presented in Table 1, which supports our initial hypothesis by demonstrating a clear
+inverse relationship between the mean reversion speed, µ, and the empirical mean reversion time. As
+µ increases, the mean reversion time decreases, indicating a faster adjustment of the process back to
+its mean level. This finding confirms our hypothesis that the empirical mean reversion time reflects
+the mean-reverting speed of financial time series.
+5.2 RL Trading on Simulated Data
+In this part, we introduce a preliminary simulated experiment into the effectiveness of the proposed
+reinforcement learning strategy tailored for mean reversion trading. With the parameters fixed at
+µ = 1, θ = 1, and σ = 0.1, we simulate 10,000 paths of the Ornstein-Uhlenbeck process. Each
+path is designed to reach a terminal time of T = 252 and includes n = 252 data points, effectively
+simulating one year of data for use as training samples in our study. This process was chosen due
+to its relevance in modeling mean-reverting financial instruments, thereby providing a realistic and
+challenging environment for training our reinforcement learning model.
+Our reinforcement learning (RL) model configuration employs a lookback window size of l = 4,
+generating 16 distinct states. Hyper-parameters are set with a learning rate of 0.1, a discount factor
+of 0.99, an epsilon of 0.1 for the epsilon-greedy strategy and 10 training episodes.
+Following the training phase, we apply the trained model to a new, distinct OU sample path to
+evaluate its decision-making power. This simulated trading are visually presented in Figure 2, where
+8
+--- Page 9 ---
+Figure 2: Simulated trading on OU process based on reinforment learning framework.
+buy and sell actions executed by the RL agent are denoted by green and red points, respectively. The
+outcome demonstrates that the trained agent is capable of executing a series of strategic buy and sell
+decisions.
+Subsequently,weevaluatethetrainedreinforcementlearningmodelon100newsamples,calculating
+the average accumulated profits across these samples. An initial investment of 100 dollars is allocated
+to each new OU sample. At each purchase point recommended by the RL agent, the entire available
+cashisusedtotakealongpositiononthespread. Thesepositionsarethenclosedatthesellingpoints
+suggested by the agent. The simulation results in an average profit exceeding 600% across these 100
+paths,underscoringthemodel’sadeptnessatidentifyingandleveragingtradingopportunitiesfollowing
+its training period.
+5.3 Real World Experiments
+In this section, we conduct real-world experiments on S&P500 to evaluate the performance of our
+proposed strategy, comparing it against established benchmarks such as the classic distance method
+(DM) [9] and the Ornstein-Uhlenbeck (OU) mean reversion trading strategy [1, 14].
+5.3.1 Benchmarks
+We begin by introducing the details of the implementation of these benchmark strategies.
+For the distance method [9], the initial step involves calculating the sum of squared deviations
+among all potential pairs’ normalized price series. This is followed by the identification and selection
+ofpairsofsecuritiesthatyieldtheminimumsumofsquareddeviations. Subsequently,amean-reverting
+spread is constructed, denoted as X = S −S , where S and S represent two analogous stocks. In
+1 2 1 2
+this context, a long position is assumed in one security of the pair, while a short position is taken
+in the other. Additionally, estimates of the long-term mean and standard deviations are determined
+during the formation period.
+Transitioning to the trading phase of distance method, the strategy prescribes initiating a long
+position when the spread’s price deviation falls below multiples of estimated standard deviations from
+the long-term mean. The trade is then exited upon the subsequent reversion of prices. To be more
+clear, we clarify the trading criterion that we use in our experiment:
+• buy to open if X −x¯<−k·s
+t
+• close long position if X −x¯>k·s
+t
+where x¯ and s are the sample mean and standard deviance estimated from the formation period.
+The threshold parameter k is set to 1 in our experiment, Note that we solely focuses on the initial
+engagement in a long position within the portfolio.
+9
+--- Page 10 ---
+For the OU mean reversion trading strategy [1, 14], we also select the pairs of securities that yield
+theminimumsumofsquareddeviations. Thenextstepconsistsofconstructingmean-revertingspreads
+for the pairs, denoted as X = S −B·S , where S and S represent two analogous stocks and B is
+1 2 1 2
+determined by maximizing the likelihood score of fitting the spread to an OU process. Furthermore,
+the parameters of the spreads are estimated as an OU process, including the mean reversion speed µˆ,
+the long-term mean θˆ, and the volatility σˆ.
+In the OU trading phase, the equilibrium variance is calculated as σˆ
+eq
+= √σˆ
+2µˆ
+, according to Avel-
+laneda and Lee (2010). The basic trading signals are based on the estimations of the OU parameters:
+• buy to open if X −θˆ<−k·σˆ
+t eq
+• close long position if X −θˆ>k·σˆ
+t eq
+where k represents the cutoff value and we set it to 0.5 in our experiment. The trading remains
+exclusively on initially entering a long position in the portfolio.
+5.3.2 Data
+Our experimental framework is designed to encompass a one-year formation period, subsequently fol-
+lowed by a trading period spanning the subsequent year. We utilize the daily adjusted closing prices
+of representative stocks from different sectors within the U.S. market to construct mean reversion
+spreads. OurselectionincludespairssuchasMSFT-GOOGLfromTechnology,CVS-JNJfromHealth-
+care, CL-KMB from Consumer Goods, V-MA from Financials, GE-BA from Industrials, OXY-XOM
+fromEnergy, WELL-VTRfromRealEstate, PPG-SHWfromMaterials, VZ-TMUSfromTelecommu-
+nication, and CSX-NSC from Transportation. Data on the daily closing prices for these stocks was
+collectedovertheperiodfromJanuary1, 2022, toDecember31, 2023. Thedatawassourcedfromthe
+Yahoo! Finance API1.
+Following the completion of the annual trading, we will collate and analyze the data to calculate
+the trading performance across various sectors. This process is designed to rigorously evaluate the
+efficacy of our strategy across different market segments, thereby demonstrating its consistency and
+adaptability in the face of financial market uncertainties.
+5.3.3 Experimental Results
+In the forthcoming part, we delve into a detailed analysis of a one-year study, with 2022 designated
+as the formation period and 2023 as the trading period. During the formation phase, we construct
+mean reversion portfolios denoted as X =S −B·S , where S and S symbolize the first and second
+1 2 1 2
+stocks, respectively, as listed above. Here, B represents a positive coefficient tailored to each trading
+strategy. Specifically, fortheDistanceMethod, thiscoefficientisuniformlysetto1acrossallpairs. In
+contrast, for OU pairs trading, B is determined by optimizing the likelihood score of the pair’s fit to
+anOrnstein-Uhlenbeck(OU)process. Withinourproposedmethodology,B iscalibratedbyaimingto
+minimizetheempiricalmeanreversiontimeofthespread. Table2compilesthepairstradingcoefficient
+B foreachselectedpair’smeanreversionportfolio,comparingthebenchmarkswithournovelmethod.
+Figure3presentstheevolutionoftotalwealththroughouttheyear2023,offeringaninitialcompari-
+sonoftradingperformancebetweentheproposedmethodandestablishedbaselines. Thisvisualization
+provides a preliminary insight into the efficacy of our strategy relative to conventional benchmarks.
+The trading performance of our proposed method in comparison to established benchmarks is
+detailed in Tables 3 and 4. We present a comprehensive set of performance metrics including daily
+returns (DailyRet), daily standard deviation (DailyStd), daily Sharpe Ratio (DailySR), maximum
+drawdown (MaxDD), and the annual cumulative profit and loss (CumulPnL).
+Our experimental results demonstrate that the proposed reinforcement learning approach signif-
+icantly outperforms traditional benchmarks in terms of daily Sharpe Ratio and cumulative returns,
+therebyevidencingitseffectivenessandrobustnessinexecutingmeanreversiontradingstrategiesacross
+diverse market sectors. This distinct out-performance underscores the potential benefits of incorpo-
+rating reinforcement learning techniques into mean reversion trading frameworks. A pivotal factor in
+1https://pypi.org/project/yfinance/
+10
+--- Page 11 ---
+Pairs Trading Coefficient B
+Pairs Index DM OU EMRT
+MSFT-GOOGL 1.0 0.99 0.89
+CVS-JNJ 1.0 0.43 -0.24
+CL-KMB 1.0 0.39 0.46
+V-MA 1.0 0.53 0.33
+GE-BA 1.0 0.20 0.34
+OXY-XOM 1.0 0.77 0.22
+WELL-VTR 1.0 0.99 0.98
+PPG-SHW 1.0 0.33 0.12
+VZ-TMUS 1.0 0.10 0.01
+CSX-NSC 1.0 0.12 0.14
+Table 2: Comparison of pairs coefficients derived from various methods.
+achieving such success is the careful design of the reinforcement learning framework, tailored to align
+with the specific nuances and challenges of the financial applications.
+(a) MSFT-GOOGL (b) CVS-JNJ (c) CL-KMB (d) V-MA
+(e) GE-BA (f) OXY-XOM (g) WELL-VTR (h) PPG-SHW
+(i) VZ-TMUS (j) CSX-NSC
+Figure 3: 2023 total wealth growth for trading mean-reverting portfolios based on benchmarks and
+the proposed RL method. The initial investment is $100.
+6 Conclusions and Future plan
+Thisstudyhaspresentedanovelapproachtostatisticalarbitragebyintegratingamodel-freeframework
+with reinforcement learning techniques. By establishing an empirical mean reversion time metric
+and optimizing asset coefficients to minimize this duration, our work has substantially refined the
+process of constructing mean reversion spreads. Furthermore, we have formulated a reinforcement
+11
+--- Page 12 ---
+Index MSFT-GOOGL CVS-JNJ CL-KMB V-MA GE-BA
+DM Method
+DailyRet (%) 0.0446 0.0440 0.0659 -0.0244 0.2771
+DailyStd (%) 0.4670 2.0692 1.2314 1.1796 3.9356
+DailySR 0.0955 0.0213 0.0535 -0.0207 0.0704
+MaxDD (%) -2.1344 -24.6778 -13.6791 -10.7238 -18.1823
+CumulPnL (%) 11.4443 5.7581 15.6385 -7.4888 64.2387
+OU Method
+DailyRet (%) 0.0327 -0.0073 0.0198 0.0342 0.0392
+DailyStd (%) 0.4285 1.4950 0.7589 0.3475 0.3890
+DailySR 0.0764 -0.0049 0.0261 0.0985 0.1007
+MaxDD (%) -2.1427 -25.6665 -5.7253 -1.0185 0.000
+CumulPnL (%) 8.2443 -4.5179 4.298 8.7348 10.046
+RL Method
+DailyRet (%) 0.1344 0.0585 0.0826 0.0330 0.1679
+DailyStd (%) 1.0754 0.7506 0.6000 0.3144 1.2803
+DailySR 0.1250 0.0780 0.1377 0.1049 0.1312
+MaxDD (%) 0.0000 0.0000 -1.9476 -0.6211 0.0000
+CumulPnL (%) 37.7555 14.8895 22.2879 8.4248 48.8196
+Table 3: Performance summary for trading mean reversion portfolios by baselines and the proposed
+RL method.
+Index OXY-XOM WELL-VTR PPG-SHW VZ-TMUS CSX-NSC
+DM Method
+DailyRet (%) 0.0373 0.0694 -0.0772 -0.112 0.0000
+DailyStd (%) 2.0950 0.6555 1.0113 3.7311 0.0000
+DailySR 0.0178 0.1058 -0.0764 -0.0300 0.0000
+MaxDD (%) -19.1535 -1.4004 -19.1196 -37.4779 0.0000
+CumulPnL (%) 3.9194 18.2114 -18.5547 -36.1756 0.0000
+OU Method
+DailyRet (%) 0.0238 0.0539 0.0000 -0.0123 0.0199
+DailyStd (%) 1.6012 0.5480 0.0000 1.3241 0.2879
+DailySR 0.0149 0.0983 0.0000 -0.0093 0.0693
+MaxDD (%) -14.5001 -1.3798 0.0000 -18.652 0.0000
+CumulPnL (%) 2.7812 13.9245 0.0000 -5.0869 4.9825
+RL Method
+DailyRet (%) 0.0609 0.0745 0.1124 0.0412 0.0496
+DailyStd (%) 0.9446 0.6794 1.0600 0.8037 0.7101
+DailySR 0.0861 0.1097 0.1061 0.0513 0.0698
+MaxDD (%) -2.0008 -3.2895 0.0000 -3.7306 0.0000
+CumulPnL (%) 15.0791 19.6910 30.4559 9.9163 12.4263
+Table 4: Performance summary for trading mean reversion portfolios by baselines and the proposed
+RL method.
+12
+--- Page 13 ---
+learningframeworkforthetradingphase, carefullydesigningthestatespacetoencapsulatetherecent
+trends in price movements and the reward functions to align with the distinct attributes of mean
+reversiontrading. TheempiricalanalysisconductedovertheseveralsectorswithintheUSmarkethas
+underscored the proposed method’s effectiveness and consistency.
+Forfuturework,weaimtoexploremoresophisticatedreinforcementlearningalgorithmstofurther
+optimize trading strategies. This will include the application of deep reinforcement learning and
+exploration of various reward structures to enhance strategy performance.
+References
+[1] Marco Avellaneda and Jeong-Hyun Lee. Statistical arbitrage in the us equities market. Quanti-
+tative Finance, 10(7):761–782, 2010.
+[2] Victor Chang, Xiaowen Man, Qianwen Xu, and Ching-Hsien Hsu. Pairs trading on different
+portfolios based on machine learning. Expert Systems, 38(3):e12649, 2021.
+[3] Binh Do and Robert Faff. Are pairs trading profits robust to trading costs? Journal of Financial
+Research, 35(2):261–287, 2012.
+[4] Binh Do, Robert Faff, and Kais Hamza. A new approach to modeling and estimation for pairs
+trading. InProceedings of 2006 financial management association European conference,volume1,
+pages 87–99. Citeseer, 2006.
+[5] R.J. Elliott, J. Van Der Hoek, and W.P. Malcolm. Pairs trading. Quantitative Finance, 5(3):
+271–276, 2005.
+[6] Robert F Engle and Clive WJ Granger. Co-integration and error correction: representation,
+estimation, and testing. Econometrica, 55(2):251–276, 1987.
+[7] Eugene Fink and Harith Suman Gandhi. Important extrema of time series. 2007.
+[8] AlexanderGalenko, ElmiraPopova, andIvilinaPopova. Tradinginthepresenceofcointegration.
+The Journal of Alternative Investments, 15(1):85–97, 2012.
+[9] Evan Gatev, William N Goetzmann, and K Geert Rouwenhorst. Pairs trading: Performance of a
+relative-value arbitrage rule. Review of Financial Studies, 19(3):797–827, 2006.
+[10] Jorge Guijarro-Ordonez, Markus Pelger, and Greg Zanotti. Deep learning statistical arbitrage.
+Available at SSRN 3862004, 2021.
+[11] Nicolas Huck and Komivi Afawubo. Pairs trading and selection methods: is cointegration supe-
+rior? Applied Economics, 47(6):599–613, 2015.
+[12] T. Kanamura, S.T. Rachev, and F.J. Fabozzi. A profit model for spread trading with an applica-
+tion to energy futures. The Journal of Trading, 5(1):48–62, 2010.
+[13] TimLeungandXinLi. Optimalmeanreversiontradingwithtransactioncostsandstop-lossexit.
+International Journal of Theoretical and Applied Finance, 18(03):1550020, 2015.
+[14] Tim Leung and Xin Li. Optimal Mean Reversion Trading: Mathematical Analysis and Practical
+Applications. Modern Trends in Financial Engineering. World Scientific Publishing Company,
+2016.
+[15] TimLeungandHungNguyen. Constructingcointegratedcryptocurrencyportfoliosforstatistical
+arbitrage. Studies in Economics and Finance, 2019.
+[16] Rong Qi Liew and Yuan Wu. Pairs trading: A copula approach. Journal of Derivatives & Hedge
+Funds, 19(1):12–30, 2013.
+[17] G.MontanaandK.Triantafyllopoulos.Dynamicmodelingofmeanrevertingspreadsforstatistical
+arbitrage. Computational Management Science, 8:23–49, 2011.
+13
+--- Page 14 ---
+[18] Sim˜aoMoraesSarmentoandNunoHorta. Enhancingapairstradingstrategywiththeapplication
+of machine learning. Expert Systems with Applications, 158:113490, 2020.
+[19] Ganapathy Vidyamurthy. Pairs Trading: quantitative methods and analysis, volume 217. John
+Wiley & Sons, 2004.
+[20] Wenjun Xie, Rong Qi Liew, Yuan Wu, and Xi Zou. Pairs trading with copulas. The Journal of
+Trading, 11(3):41–52, 2016.
+[21] Jize Zhang, Tim Leung, and Aleksandr Aravkin. Sparse mean-reverting portfolios via penalized
+likelihood optimization. Automatica, 111:108651, 2020.
+14

@@ -1,0 +1,223 @@
+Goal
+Initialize a compiling MQL5 skeleton for the RPEA Expert Advisor per finalspec.md, with clear TODOs mapped to milestones (M1–M7). Do NOT implement business logic yet—only stubs, inputs, data structures, minimal scheduler wiring, and placeholder returns so everything compiles cleanly in MetaEditor/MT5.
+
+Context files to read
+- finalspec.md
+- rpea_structure.txt
+- README.md
+- prd.md (if present)
+
+Scope (files to create/edit)
+- MQL5/Experts/FundingPips/RPEA.mq5
+- MQL5/Include/RPEA/config.mqh
+- MQL5/Include/RPEA/state.mqh
+- MQL5/Include/RPEA/timeutils.mqh
+- MQL5/Include/RPEA/sessions.mqh
+- MQL5/Include/RPEA/indicators.mqh
+- MQL5/Include/RPEA/regime.mqh
+- MQL5/Include/RPEA/liquidity.mqh
+- MQL5/Include/RPEA/anomaly.mqh
+- MQL5/Include/RPEA/signals_bwisc.mqh
+- MQL5/Include/RPEA/signals_mr.mqh
+- MQL5/Include/RPEA/emrt.mqh
+- MQL5/Include/RPEA/rl_agent.mqh
+- MQL5/Include/RPEA/bandit.mqh
+- MQL5/Include/RPEA/meta_policy.mqh
+- MQL5/Include/RPEA/allocator.mqh
+- MQL5/Include/RPEA/adaptive.mqh
+- MQL5/Include/RPEA/risk.mqh
+- MQL5/Include/RPEA/equity_guardian.mqh
+- MQL5/Include/RPEA/order_engine.mqh
+- MQL5/Include/RPEA/synthetic.mqh
+- MQL5/Include/RPEA/news.mqh
+- MQL5/Include/RPEA/learning.mqh
+- MQL5/Include/RPEA/persistence.mqh
+- MQL5/Include/RPEA/logging.mqh
+- MQL5/Include/RPEA/telemetry.mqh
+
+Non-code assets (ensure exist; create empty placeholders only if missing)
+- MQL5/Files/RPEA/state/challenge_state.json
+- MQL5/Files/RPEA/state/intents.json
+- MQL5/Files/RPEA/news/calendar_high_impact.csv
+- MQL5/Files/RPEA/emrt/emrt_cache.json
+- MQL5/Files/RPEA/emrt/beta_grid.json
+- MQL5/Files/RPEA/qtable/mr_qtable.bin
+- MQL5/Files/RPEA/bandit/posterior.json
+- MQL5/Files/RPEA/liquidity/spread_slippage_stats.json
+- MQL5/Files/RPEA/calibration/calibration.json
+- MQL5/Files/RPEA/sets/RPEA_10k_default.set (syntactically valid with all input parameters)
+- MQL5/Files/RPEA/sets/RPEA_optimization_ranges.txt
+- MQL5/Files/RPEA/strategy_tester/RPEA_10k_tester.ini (minimal but valid INI format)
+- MQL5/Files/RPEA/reports/audit_report.csv
+- MQL5/Files/RPEA/logs/ (directory; runtime CSVs)
+- MQL5/Files/RPEA/logs/decisions_YYYYMMDD.csv (runtime CSV; optional placeholder)
+
+Stub style & constraints
+- Keep everything compiling. Use simple placeholder returns and empty bodies where needed; no references to undefined symbols.
+- Put all input parameters in RPEA.mq5 with defaults from finalspec.md.
+- Module functions should be free functions with clear prefixes, e.g., Equity_*, Risk_*, News_*, SignalsBWISC_*, SignalsMR_*.
+- Add top-of-file comment blocks referencing finalspec sections relevant to that module.
+- Add TODO tags with milestone taxonomy: TODO[M1]..TODO[M7] and a short, actionable sentence.
+- Provide doc-comments on public functions: purpose, params, return.
+- Do not place trading code, order sends, or broker calls yet—only APIs and placeholders.
+
+RPEA.mq5 (entry point)
+- #property strict
+- Inputs per "Inputs (consolidated)" in finalspec.md (use names exactly; defaults from spec).
+- Input types: percentages→double, durations→int, times→int, booleans→bool, lists→string, multipliers→double.
+- Explicitly #include each Include/RPEA/*.mqh (no wildcards in MQL5).
+- Define a minimal AppContext struct holding: current server date, session flags, symbol list, baseline/equity snapshot, pause/disable flags.
+- OnInit: load state (Persistence_LoadChallengeState), init timer (EventSetTimer(30)), initialize indicators (Indicators_Init), ensure logs dir exists and open today's audit CSV, write a boot log line.
+- OnDeinit: EventKillTimer(), Persistence_Flush(), write a shutdown log line.
+- OnTimer: call Scheduler_Tick(ctx) which orchestrates: Equity/News gates, Session checks, and placeholder calls into Signals/Risk/Allocator/OrderEngine. Only log steps; do not place orders.
+- Handle server-day rollover: if TimeUtils_IsNewServerDay → State_ResetDailyBaseline and log rollover.
+- Server-day rollover: use TimeCurrent() as source, persist server_midnight_ts, baseline_today_e0, baseline_today_b0 to avoid re-anchoring after restart.
+- Provide stub OnTradeTransaction that forwards to OrderEngine_OnTradeTxn for future OCO reconciliation (no-op now).
+- TODO[M1]: Wire server-day rollover hook (TimeUtils_IsNewServerDay) to mark a new trading day via State_MarkTradeDayOnce.
+
+config.mqh
+- Public constants, enums, and type aliases. Keep trading constants (e.g., MagicBase) and CSV/Files paths.
+- Stub constants: RPEA_DIR="RPEA", subpaths for state/, logs/, qtable/, etc., VERSION string.
+- Helper macros for LOG levels and a unified TODO tag format comment.
+- TODO[M1]: validate input ranges (to be implemented in M6).
+
+state.mqh
+- Define ChallengeState with: initial_baseline, baseline_today, gDaysTraded, last_counted_server_date, trading_enabled, disabled_permanent.
+- Functions: State_Get/Set, State_ResetDailyBaseline, State_MarkTradeDayOnce, State_DisableForDay, State_DisablePermanent.
+- TODO[M4]: enforce min trade days and micro-mode flags.
+
+timeutils.mqh
+- Time conversion helpers including ServerToCEST_OffsetMinutes.
+- TimeUtils_IsNewServerDay(dt_prev) stub.
+- TODO[M4]: DST handling and mapping for reporting.
+
+sessions.mqh
+- Session predicates: Sessions_InLondon, Sessions_InNewYork, Sessions_InORWindow, Sessions_CutoffReached.
+- Implements InSession(t0, ORMinutes) predicate signature (return false placeholder).
+- TODO[M2]: proper window math per spec and server-day anchoring.
+
+indicators.mqh
+- Handles and init stubs for ATR_D1, MA20_H1, RSI_H1, Opening Range computation on M5.
+- Indicators_Init(ctx), Indicators_Refresh(ctx, symbol).
+- TODO[M2]: compute OR, ATR, RSI; error handling for handle creation.
+
+regime.mqh
+- Regime detection API: Regime_Label(symbol), Regime_Features(symbol).
+- TODO[M6]: implement ATR/σ bands, ADX, Hurst/ACF, ORE.
+
+liquidity.mqh
+- Spread/slippage gates: Liquidity_SpreadOK(symbol), Liquidity_UpdateStats(symbol).
+- TODO[M6]: rolling quantiles, auto-pause thresholds.
+
+anomaly.mqh
+- Anomaly detection stubs and flags.
+- TODO[M6]: EWMA z-scores, shock handling.
+
+signals_bwisc.mqh
+- API: SignalsBWISC_Propose(ctx, symbol, out params: hasSetup, setupType, slPoints, tpPoints, bias, confidence).
+- TODO[M2]: implement BTR/SDR/ORE/RSI → Bias → BC/MSC gating and target calc.
+
+signals_mr.mqh
+- API: SignalsMR_Propose(ctx, symbol, out params similar to BWISC) respecting News and floors.
+- TODO[M7]: wire EMRT rank, RL confidence, time-stop bounds.
+
+emrt.mqh
+- EMRT cache IO stubs; EMRT_RefreshWeekly().
+- TODO[M7]: formation on synthetic spreads and β grid.
+
+rl_agent.mqh
+- Q-table load/save stubs; RL_ActionForState(state) with placeholder.
+- TODO[M7]: training params and online updates with caps.
+
+bandit.mqh
+- Bandit_SelectPolicy(ctx, symbol) → {BWISC, MR, Skip}, placeholder returns Skip.
+- TODO[M7]: Thompson/LinUCB with posterior persistence.
+
+meta_policy.mqh
+- MetaPolicy_Choose(ctx, symbol) applying tie-breakers and replacement rules.
+- TODO[M7]: implement rules per finalspec.
+
+allocator.mqh
+- Allocator_BuildOrderPlan(ctx, proposal) enforcing budget gate and caps (placeholder returns a no-op plan).
+- TODO[M2]: budget gate math and second-trade rule.
+
+adaptive.mqh
+- Adaptive_RiskMultiplier(ctx, regime, efficiency).
+- TODO[M7]: scale risk by regime/efficiency/room.
+
+risk.mqh
+- Risk_SizingByATRDistance(entry, stop, equity, riskPct) with placeholder math.
+- TODO[M2]: full sizing and margin guard per spec.
+
+equity_guardian.mqh
+- Equity_ComputeRooms(ctx), Equity_CheckFloors(ctx), Equity_RoomAllowsNextTrade().
+- TODO[M4]: daily/overall floors, kill-switch behavior.
+
+order_engine.mqh
+- OrderEngine_PlacePending/Market, Trailing, OCO scaffolding (no broker calls, just signatures and logging).
+- OrderEngine_OnTradeTxn(txn) placeholder.
+- TODO[M3]: full order lifecycle, slippage caps, trailing, partial fills.
+
+synthetic.mqh
+- Synthetic_XAUEUR_Prices(), Synthetic_MapRiskProxy(), Synthetic_ReplicationSizing() stubs.
+- TODO[M3/M7]: proxy and replication logic with delta mapping.
+
+news.mqh
+- News_IsBlocked(symbol), News_LoadCsvFallback(), News_PostNewsStabilization() stubs.
+- TODO[M4]: Master 10-minute window logic and queueing rules.
+
+learning.mqh
+- Learning_LoadCalibration(), Learning_Update() stubs.
+- TODO[M7]: calibration and freeze on SLO breaches.
+
+persistence.mqh
+- Persistence_Load/Save for state, intents, caches; safe file IO.
+- Folder creation: FolderCreate() parent paths in MQL5/Files/RPEA/** (logs, reports, qtable, etc.) before file ops.
+- Tolerate missing files: open with FILE_COMMON|FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI.
+- TODO[M4/M6]: idempotent recovery and TTL for queued actions.
+
+logging.mqh
+- CSV audit/log API: LogAuditRow → audit_YYYYMMDD.csv; LogDecision → decisions_YYYYMMDD.csv; fields: confidence, efficiency, rho_est, hold_time, gating_reason, news_window_state.
+- CSV format: header date,time,event,component,level,message,fields_json; daily rotation with one-time header write for new files.
+- TODO[M5]: structured CSV headers and rotation.
+
+telemetry.mqh
+- Telemetry_UpdateKpis(), Telemetry_AutoThrottle() stubs.
+- TODO[M7]: SLO thresholds and auto-risk reduction.
+
+Scheduler wiring
+- Create dedicated scheduler.mqh with Scheduler_Tick(ctx); keep session predicates in sessions.mqh.
+- Flow:
+  1) Equity_ComputeRooms → News_IsBlocked → session predicates;
+  2) if proceed, call SignalsBWISC_Propose and SignalsMR_Propose;
+  3) MetaPolicy_Choose;
+  4) Allocator_BuildOrderPlan;
+  5) OrderEngine (no-ops);
+  6) LogDecision.
+- Only log the decisions; no orders.
+
+Compile hygiene (all modules)
+- #pragma once at top of all include files.
+- No broker-dependent globals that require broker context.
+- GetLastError()-safe error handling paths.
+- All functions return placeholder values and set safe error states.
+
+Strategy Tester compatibility
+- Create syntactically valid .set/.ini placeholders (even if minimal/empty).
+- Prevents Strategy Tester choking on missing files.
+- Ensure .set files have proper parameter declarations.
+
+Acceptance criteria
+- Project compiles in MT5 (no unresolved references).
+- Inputs declared with defaults from finalspec.md.
+- Each module has: header comment referencing finalspec sections, public API signatures, TODO[M*] items.
+- No trading side-effects yet; functions return placeholders.
+- Placeholders/files created under MQL5/Files/RPEA as empty JSON/bin/ini/txt where applicable; logs directory exists.
+- Boot/shutdown log lines and periodic scheduler tick entries written under MQL5/Files/RPEA/logs/audit_YYYYMMDD.csv and decisions_YYYYMMDD.csv.
+- Server-day rollover resets baseline_today and writes a rollover log entry.
+- challenge_state.json is created/updated on first run; News_LoadCsvFallback tolerates empty CSV without errors.
+
+Deliverables
+- All listed files created/edited with compiling stubs and TODOs.
+- A short note in README.md describing how to open/compile RPEA.mq5 and where TODOs are organized.
+- Commit with message: "RPEA M1 scaffolding: compiling stubs, inputs, scheduler wiring, TODO roadmap."
