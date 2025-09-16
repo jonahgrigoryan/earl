@@ -1,4 +1,5 @@
-#pragma once
+#ifndef RPEA_META_POLICY_MQH
+#define RPEA_META_POLICY_MQH
 // meta_policy.mqh - Meta-Policy chooser (M1 stubs)
 // References: finalspec.md (Meta-Policy (BWISC + MR Ensemble))
 
@@ -10,3 +11,4 @@ string MetaPolicy_Choose(const bool bw_has, const double bw_conf,
    if(mr_has) return "MR";
    return "Skip";
 }
+#endif // RPEA_META_POLICY_MQH

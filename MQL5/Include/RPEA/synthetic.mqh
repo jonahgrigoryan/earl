@@ -1,4 +1,5 @@
-#pragma once
+#ifndef RPEA_SYNTHETIC_MQH
+#define RPEA_SYNTHETIC_MQH
 // synthetic.mqh - Synthetic XAUEUR stubs (M1)
 // References: finalspec.md (Synthetic Cross Support)
 
@@ -19,3 +20,4 @@ double Synthetic_ReplicationSizing()
    // TODO[M3/M7]: replication sizing math
    return 0.0;
 }
+#endif // RPEA_SYNTHETIC_MQH
