@@ -3,7 +3,6 @@
 // persistence.mqh - Persistence & folder creation (M1 stubs)
 // References: finalspec.md (Persistence/Logs & Learning Artifacts)
 
-#include <Files\\File.mqh>
 #include <RPEA/config.mqh>
 #include <RPEA/state.mqh>
 
