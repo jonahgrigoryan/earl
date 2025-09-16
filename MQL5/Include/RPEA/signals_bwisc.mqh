@@ -1,4 +1,5 @@
-#pragma once
+#ifndef SIGNALS_BWISC_MQH
+#define SIGNALS_BWISC_MQH
 // signals_bwisc.mqh - BWISC signal API (M1 stubs)
 // References: finalspec.md (Original Strategy: BWISC)
 
@@ -26,3 +27,5 @@ void SignalsBWISC_Propose(const AppContext& ctx, const string symbol,
    bias = 0.0;
    confidence = 0.0;
 }
+
+#endif // SIGNALS_BWISC_MQH
