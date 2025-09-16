@@ -1,6 +1,7 @@
 // scheduler.mqh - RPEA Scheduler Module
 // References: finalspec.md sections on "Scheduler (OnTimer 30–60s)" and "Data Flow & Sequence (per trading window)"
-#pragma once
+#ifndef SCHEDULER_MQH
+#define SCHEDULER_MQH
 
 struct AppContext;
 
@@ -27,10 +28,10 @@ void Scheduler_Tick(const AppContext& ctx)
       bool in_or = Sessions_InORWindow(ctx, sym);
 
       string note = StringFormat("{\"news\":%s,\"spread\":%s,\"in_session\":%s,\"in_or\":%s}",
-                                 news_blocked?\"true\":\"false\",
-                                 spread_ok?\"true\":\"false\",
-                                 in_session?\"true\":\"false\",
-                                 in_or?\"true\":\"false\");
+                                 news_blocked?"true":"false",
+                                 spread_ok?"true":"false",
+                                 in_session?"true":"false",
+                                 in_or?"true":"false");
 
       if(!floors_ok || news_blocked || !spread_ok || !in_session)
       {
@@ -62,3 +63,5 @@ void Scheduler_Tick(const AppContext& ctx)
    // Heartbeat audit
    LogAuditRow("SCHED_TICK", "Scheduler", 1, "heartbeat", "{}");
 }
+
+#endif // SCHEDULER_MQH

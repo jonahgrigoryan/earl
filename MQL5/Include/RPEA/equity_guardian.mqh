@@ -1,4 +1,5 @@
-#pragma once
+#ifndef EQUITY_GUARDIAN_MQH
+#define EQUITY_GUARDIAN_MQH
 // equity_guardian.mqh - Equity rooms and floors (M1 stubs)
 // References: finalspec.md (Equity & Risk Caps)
 
@@ -23,3 +24,5 @@ bool Equity_RoomAllowsNextTrade()
    // TODO[M4]: compute from rooms and pending/open risk
    return true;
 }
+
+#endif // EQUITY_GUARDIAN_MQH

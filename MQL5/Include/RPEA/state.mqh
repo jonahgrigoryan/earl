@@ -1,4 +1,5 @@
-#pragma once
+#ifndef STATE_MQH
+#define STATE_MQH
 // state.mqh - Challenge state & helpers (M1 stubs)
 // References: finalspec.md (Trading-day counting & persistence)
 
@@ -112,3 +113,5 @@ void State_DisablePermanent(ChallengeState &state)
 }
 
 // TODO[M4]: enforce min trade days and micro-mode flags
+
+#endif // STATE_MQH

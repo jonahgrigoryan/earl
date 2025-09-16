@@ -1,4 +1,5 @@
-#pragma once
+#ifndef TIMEUTILS_MQH
+#define TIMEUTILS_MQH
 // timeutils.mqh - Time helpers (M1 stubs)
 // References: finalspec.md (Timezone, DST handling)
 
@@ -22,9 +23,11 @@ bool TimeUtils_IsNewServerDay(const datetime dt_prev)
 }
 
 // Alias stub mirroring prompt naming (no namespaces in MQL5)
-static bool IsNewServerDay(datetime previousTimestamp)
+bool IsNewServerDay(datetime previousTimestamp)
 {
    return TimeUtils_IsNewServerDay(previousTimestamp);
 }
 
 // TODO[M4]: DST handling and CEST mapping helpers
+
+#endif // TIMEUTILS_MQH

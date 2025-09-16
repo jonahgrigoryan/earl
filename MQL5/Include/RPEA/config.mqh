@@ -1,4 +1,5 @@
-#pragma once
+#ifndef CONFIG_MQH
+#define CONFIG_MQH
 // config.mqh - Public constants, enums, and type aliases
 // References: finalspec.md (Inputs, News Compliance, Files & Folders)
 
@@ -54,3 +55,5 @@
 #define LOG_ERROR 3
 
 // TODO[M1]: input range validation to be implemented in M6 (see finalspec.md)
+
+#endif // CONFIG_MQH

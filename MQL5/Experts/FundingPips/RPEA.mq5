@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 // property & compilation
 #property copyright "RPEA - FundingPips RapidPass EA"
-#property version   "0.1.0"
+#property version   "1.00"
 #property strict
 
 // Includes (explicit, no wildcards)

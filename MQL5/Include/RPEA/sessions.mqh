@@ -1,24 +1,25 @@
-#pragma once
+#ifndef SESSIONS_MQH
+#define SESSIONS_MQH
 // sessions.mqh - Session predicates (M1 stubs)
 // References: finalspec.md (Session Governance, Session window predicate)
 
 struct AppContext;
 
 // Placeholder predicates using server time and input parameters
-static bool Sessions_InLondon(const AppContext& ctx, const string symbol)
+bool Sessions_InLondon(const AppContext& ctx, const string symbol)
 {
    int hr = TimeHour(ctx.current_server_time);
    return (hr >= StartHourLO && hr < CutoffHour);
 }
 
-static bool Sessions_InNewYork(const AppContext& ctx, const string symbol)
+bool Sessions_InNewYork(const AppContext& ctx, const string symbol)
 {
    if(UseLondonOnly) return false;
    int hr = TimeHour(ctx.current_server_time);
    return (hr >= StartHourNY && hr < CutoffHour);
 }
 
-static bool Sessions_InORWindow(const AppContext& ctx, const string symbol)
+bool Sessions_InORWindow(const AppContext& ctx, const string symbol)
 {
    MqlDateTime tm; TimeToStruct(ctx.current_server_time, tm);
    tm.min = 0; tm.sec = 0;
@@ -28,7 +29,7 @@ static bool Sessions_InORWindow(const AppContext& ctx, const string symbol)
    return InSession(t0, ORMinutes);
 }
 
-static bool Sessions_CutoffReached(const AppContext& ctx, const string symbol)
+bool Sessions_CutoffReached(const AppContext& ctx, const string symbol)
 {
    int hr = TimeHour(ctx.current_server_time);
    return (hr >= CutoffHour);
@@ -40,3 +41,5 @@ bool InSession(const datetime t0, const int ORMinutes)
    datetime now = TimeCurrent();
    return (now >= t0 && now <= (t0 + ORMinutes*60));
 }
+
+#endif // SESSIONS_MQH

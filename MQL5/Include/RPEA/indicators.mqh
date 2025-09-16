@@ -1,4 +1,5 @@
-#pragma once
+#ifndef INDICATORS_MQH
+#define INDICATORS_MQH
 // indicators.mqh - Indicator handles and init (M1 stubs)
 // References: finalspec.md (Session Statistics)
 
@@ -22,3 +23,5 @@ void Indicators_Refresh(const AppContext& ctx, const string symbol)
 {
    // TODO[M2]: compute OR, ATR, RSI; handle errors
 }
+
+#endif // INDICATORS_MQH
