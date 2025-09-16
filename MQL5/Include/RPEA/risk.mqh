@@ -1,4 +1,5 @@
-#pragma once
+#ifndef RPEA_RISK_MQH
+#define RPEA_RISK_MQH
 // risk.mqh - Risk sizing helpers (M1 stubs)
 // References: finalspec.md (Sizing by ATR distance)
 
@@ -18,3 +19,4 @@ double Risk_SizingByATRDistance(const double entry, const double stop,
    return raw_volume;
    // TODO[M2]: full sizing and margin guard per spec
 }
+#endif // RPEA_RISK_MQH

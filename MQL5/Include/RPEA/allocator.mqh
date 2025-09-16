@@ -1,4 +1,5 @@
-#pragma once
+#ifndef RPEA_ALLOCATOR_MQH
+#define RPEA_ALLOCATOR_MQH
 // allocator.mqh - Risk allocator stubs (M1)
 // References: finalspec.md (Allocator Enhancements)
 
@@ -16,3 +17,4 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
    OrderPlan p; p.hasPlan=false; p.volume=0.0; p.price=0.0;
    return p;
 }
+#endif // RPEA_ALLOCATOR_MQH

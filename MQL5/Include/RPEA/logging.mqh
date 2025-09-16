@@ -1,4 +1,5 @@
-#pragma once
+#ifndef RPEA_LOGGING_MQH
+#define RPEA_LOGGING_MQH
 // logging.mqh - CSV audit/log API (M1)
 // References: finalspec.md (Logging)
 
@@ -46,3 +47,4 @@ void LogDecision(const string component, const string message, const string fiel
 }
 
 // TODO[M5]: structured CSV headers and rotation
+#endif // RPEA_LOGGING_MQH
