@@ -5,17 +5,25 @@
 
 struct AppContext;
 
+// Helper: extract hour component without relying on TimeHour()
+int Sessions_ServerHour(const datetime value)
+{
+   MqlDateTime tm;
+   TimeToStruct(value, tm);
+   return tm.hour;
+}
+
 // Placeholder predicates using server time and input parameters
 bool Sessions_InLondon(const AppContext& ctx, const string symbol)
 {
-   int hr = TimeHour(ctx.current_server_time);
+   int hr = Sessions_ServerHour(ctx.current_server_time);
    return (hr >= StartHourLO && hr < CutoffHour);
 }
 
 bool Sessions_InNewYork(const AppContext& ctx, const string symbol)
 {
    if(UseLondonOnly) return false;
-   int hr = TimeHour(ctx.current_server_time);
+   int hr = Sessions_ServerHour(ctx.current_server_time);
    return (hr >= StartHourNY && hr < CutoffHour);
 }
 
@@ -31,15 +39,15 @@ bool Sessions_InORWindow(const AppContext& ctx, const string symbol)
 
 bool Sessions_CutoffReached(const AppContext& ctx, const string symbol)
 {
-   int hr = TimeHour(ctx.current_server_time);
+   int hr = Sessions_ServerHour(ctx.current_server_time);
    return (hr >= CutoffHour);
 }
 
 // InSession signature per spec; interval-based
-bool InSession(const datetime t0, const int ORMinutes)
+bool InSession(const datetime t0, const int window_minutes)
 {
    datetime now = TimeCurrent();
-   return (now >= t0 && now <= (t0 + ORMinutes*60));
+   return (now >= t0 && now <= (t0 + window_minutes*60));
 }
 
 #endif // SESSIONS_MQH

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef RPEA_ORDER_ENGINE_MQH
+#define RPEA_ORDER_ENGINE_MQH
 // order_engine.mqh - Order engine scaffolding (M1)
 // References: finalspec.md (Order Engine)
 
@@ -20,3 +21,4 @@ void OrderEngine_OnTradeTxn(const MqlTradeTransaction& trans,
 {
    // TODO[M3]: reconciliation and OCO pairing
 }
+#endif // RPEA_ORDER_ENGINE_MQH

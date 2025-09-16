@@ -1,4 +1,5 @@
-#pragma once
+#ifndef RPEA_BANDIT_MQH
+#define RPEA_BANDIT_MQH
 // bandit.mqh - Contextual bandit stubs (M1)
 // References: finalspec.md (Contextual Bandit Meta‑Policy)
 
@@ -10,3 +11,4 @@ BanditPolicy Bandit_SelectPolicy(const AppContext& ctx, const string symbol)
    // TODO[M7]: Thompson/LinUCB with posterior persistence
    return Bandit_Skip;
 }
+#endif // RPEA_BANDIT_MQH
