@@ -1,4 +1,5 @@
-#pragma once
+#ifndef RPEA_NEWS_MQH
+#define RPEA_NEWS_MQH
 // news.mqh - News filter stubs (M1)
 // References: finalspec.md (News Compliance)
 
@@ -31,3 +32,4 @@ void News_PostNewsStabilization()
 {
    // TODO[M4]: post-news stabilization checks
 }
+#endif // RPEA_NEWS_MQH

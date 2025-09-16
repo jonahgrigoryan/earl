@@ -1,4 +1,5 @@
-#pragma once
+#ifndef RPEA_PERSISTENCE_MQH
+#define RPEA_PERSISTENCE_MQH
 // persistence.mqh - Persistence & folder creation (M1 stubs)
 // References: finalspec.md (Persistence/Logs & Learning Artifacts)
 
@@ -271,3 +272,4 @@ void Persistence_Flush()
    }
    // TODO[M4/M6]: idempotent recovery and TTL for queued actions
 }
+#endif // RPEA_PERSISTENCE_MQH
