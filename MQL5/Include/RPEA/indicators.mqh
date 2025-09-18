@@ -44,30 +44,33 @@ struct IndicatorSymbolSlot
 };
 
 // Static storage sized by Symbols list during init
-static IndicatorSymbolSlot g_indicator_slots[];
+IndicatorSymbolSlot g_indicator_slots[];
 
 // Helper: release indicator handles for a slot
-static void Indicators_ReleaseSlot(IndicatorSymbolSlot &slot)
+void Indicators_ReleaseSlot(IndicatorSymbolSlot *slot)
 {
-   if(slot.handle_ATR_D1 != INVALID_HANDLE)
+   if(slot == NULL)
+      return;
+
+   if(slot->handle_ATR_D1 != INVALID_HANDLE)
    {
-      IndicatorRelease(slot.handle_ATR_D1);
-      slot.handle_ATR_D1 = INVALID_HANDLE;
+      IndicatorRelease(slot->handle_ATR_D1);
+      slot->handle_ATR_D1 = INVALID_HANDLE;
    }
-   if(slot.handle_MA20_H1 != INVALID_HANDLE)
+   if(slot->handle_MA20_H1 != INVALID_HANDLE)
    {
-      IndicatorRelease(slot.handle_MA20_H1);
-      slot.handle_MA20_H1 = INVALID_HANDLE;
+      IndicatorRelease(slot->handle_MA20_H1);
+      slot->handle_MA20_H1 = INVALID_HANDLE;
    }
-   if(slot.handle_RSI_H1 != INVALID_HANDLE)
+   if(slot->handle_RSI_H1 != INVALID_HANDLE)
    {
-      IndicatorRelease(slot.handle_RSI_H1);
-      slot.handle_RSI_H1 = INVALID_HANDLE;
+      IndicatorRelease(slot->handle_RSI_H1);
+      slot->handle_RSI_H1 = INVALID_HANDLE;
    }
 }
 
 // Helper: find slot index for symbol
-static int Indicators_FindSlot(const string symbol)
+int Indicators_FindSlot(const string symbol)
 {
    int total = ArraySize(g_indicator_slots);
    for(int i=0;i<total;i++)
@@ -79,7 +82,7 @@ static int Indicators_FindSlot(const string symbol)
 }
 
 // Helper: copy latest buffer value if available
-static bool Indicators_CopyLatestValue(const int handle, double &out_value)
+bool Indicators_CopyLatestValue(const int handle, double &out_value)
 {
    out_value = 0.0;
    if(handle == INVALID_HANDLE)
@@ -106,56 +109,55 @@ void Indicators_Init(const AppContext& ctx)
    int existing = ArraySize(g_indicator_slots);
    for(int i=0;i<existing;i++)
    {
-      Indicators_ReleaseSlot(g_indicator_slots[i]);
+      Indicators_ReleaseSlot(&g_indicator_slots[i]);
    }
 
    ArrayResize(g_indicator_slots, ctx.symbols_count);
 
    for(int i=0;i<ctx.symbols_count;i++)
    {
-      IndicatorSymbolSlot &slot = g_indicator_slots[i];
-      slot.symbol = ctx.symbols[i];
-      slot.handle_ATR_D1 = INVALID_HANDLE;
-      slot.handle_MA20_H1 = INVALID_HANDLE;
-      slot.handle_RSI_H1 = INVALID_HANDLE;
-      slot.atr_d1 = 0.0;
-      slot.ma20_h1 = 0.0;
-      slot.rsi_h1 = 0.0;
-      slot.open_d1_prev = 0.0;
-      slot.high_d1_prev = 0.0;
-      slot.low_d1_prev = 0.0;
-      slot.close_d1_prev = 0.0;
-      slot.last_refresh = 0;
-      slot.has_atr = false;
-      slot.has_ma = false;
-      slot.has_rsi = false;
-      slot.has_ohlc = false;
+      g_indicator_slots[i].symbol = ctx.symbols[i];
+      g_indicator_slots[i].handle_ATR_D1 = INVALID_HANDLE;
+      g_indicator_slots[i].handle_MA20_H1 = INVALID_HANDLE;
+      g_indicator_slots[i].handle_RSI_H1 = INVALID_HANDLE;
+      g_indicator_slots[i].atr_d1 = 0.0;
+      g_indicator_slots[i].ma20_h1 = 0.0;
+      g_indicator_slots[i].rsi_h1 = 0.0;
+      g_indicator_slots[i].open_d1_prev = 0.0;
+      g_indicator_slots[i].high_d1_prev = 0.0;
+      g_indicator_slots[i].low_d1_prev = 0.0;
+      g_indicator_slots[i].close_d1_prev = 0.0;
+      g_indicator_slots[i].last_refresh = 0;
+      g_indicator_slots[i].has_atr = false;
+      g_indicator_slots[i].has_ma = false;
+      g_indicator_slots[i].has_rsi = false;
+      g_indicator_slots[i].has_ohlc = false;
 
-      if(slot.symbol == "")
+      if(g_indicator_slots[i].symbol == "")
          continue;
 
       ResetLastError();
-      slot.handle_ATR_D1 = iATR(slot.symbol, PERIOD_D1, 14);
-      if(slot.handle_ATR_D1 == INVALID_HANDLE)
+      g_indicator_slots[i].handle_ATR_D1 = iATR(g_indicator_slots[i].symbol, PERIOD_D1, 14);
+      if(g_indicator_slots[i].handle_ATR_D1 == INVALID_HANDLE)
       {
          PrintFormat("RPEA Indicators_Init: failed to create ATR(D1) handle for %s (err=%d)",
-                    slot.symbol, GetLastError());
+                    g_indicator_slots[i].symbol, GetLastError());
       }
 
       ResetLastError();
-      slot.handle_MA20_H1 = iMA(slot.symbol, PERIOD_H1, 20, 0, MODE_EMA, PRICE_CLOSE);
-      if(slot.handle_MA20_H1 == INVALID_HANDLE)
+      g_indicator_slots[i].handle_MA20_H1 = iMA(g_indicator_slots[i].symbol, PERIOD_H1, 20, 0, MODE_EMA, PRICE_CLOSE);
+      if(g_indicator_slots[i].handle_MA20_H1 == INVALID_HANDLE)
       {
          PrintFormat("RPEA Indicators_Init: failed to create EMA20(H1) handle for %s (err=%d)",
-                    slot.symbol, GetLastError());
+                    g_indicator_slots[i].symbol, GetLastError());
       }
 
       ResetLastError();
-      slot.handle_RSI_H1 = iRSI(slot.symbol, PERIOD_H1, 14, PRICE_CLOSE);
-      if(slot.handle_RSI_H1 == INVALID_HANDLE)
+      g_indicator_slots[i].handle_RSI_H1 = iRSI(g_indicator_slots[i].symbol, PERIOD_H1, 14, PRICE_CLOSE);
+      if(g_indicator_slots[i].handle_RSI_H1 == INVALID_HANDLE)
       {
          PrintFormat("RPEA Indicators_Init: failed to create RSI14(H1) handle for %s (err=%d)",
-                    slot.symbol, GetLastError());
+                    g_indicator_slots[i].symbol, GetLastError());
       }
    }
 }
@@ -167,40 +169,38 @@ void Indicators_Refresh(const AppContext& ctx, const string symbol)
    if(idx < 0)
       return;
 
-   IndicatorSymbolSlot &slot = g_indicator_slots[idx];
-
    double value = 0.0;
-   if(Indicators_CopyLatestValue(slot.handle_ATR_D1, value))
+   if(Indicators_CopyLatestValue(g_indicator_slots[idx].handle_ATR_D1, value))
    {
-      slot.atr_d1 = value;
-      slot.has_atr = true;
+      g_indicator_slots[idx].atr_d1 = value;
+      g_indicator_slots[idx].has_atr = true;
    }
-   else if(!slot.has_atr)
+   else if(!g_indicator_slots[idx].has_atr)
    {
-      slot.atr_d1 = 0.0;
-      slot.has_atr = false;
-   }
-
-   if(Indicators_CopyLatestValue(slot.handle_MA20_H1, value))
-   {
-      slot.ma20_h1 = value;
-      slot.has_ma = true;
-   }
-   else if(!slot.has_ma)
-   {
-      slot.ma20_h1 = 0.0;
-      slot.has_ma = false;
+      g_indicator_slots[idx].atr_d1 = 0.0;
+      g_indicator_slots[idx].has_atr = false;
    }
 
-   if(Indicators_CopyLatestValue(slot.handle_RSI_H1, value))
+   if(Indicators_CopyLatestValue(g_indicator_slots[idx].handle_MA20_H1, value))
    {
-      slot.rsi_h1 = value;
-      slot.has_rsi = true;
+      g_indicator_slots[idx].ma20_h1 = value;
+      g_indicator_slots[idx].has_ma = true;
    }
-   else if(!slot.has_rsi)
+   else if(!g_indicator_slots[idx].has_ma)
    {
-      slot.rsi_h1 = 0.0;
-      slot.has_rsi = false;
+      g_indicator_slots[idx].ma20_h1 = 0.0;
+      g_indicator_slots[idx].has_ma = false;
+   }
+
+   if(Indicators_CopyLatestValue(g_indicator_slots[idx].handle_RSI_H1, value))
+   {
+      g_indicator_slots[idx].rsi_h1 = value;
+      g_indicator_slots[idx].has_rsi = true;
+   }
+   else if(!g_indicator_slots[idx].has_rsi)
+   {
+      g_indicator_slots[idx].rsi_h1 = 0.0;
+      g_indicator_slots[idx].has_rsi = false;
    }
 
    // Copy yesterday's D1 OHLC (shift = 1)
@@ -209,22 +209,22 @@ void Indicators_Refresh(const AppContext& ctx, const string symbol)
    int copied = CopyRates(symbol, PERIOD_D1, 0, 3, rates);
    if(copied >= 2)
    {
-      slot.open_d1_prev = rates[1].open;
-      slot.high_d1_prev = rates[1].high;
-      slot.low_d1_prev  = rates[1].low;
-      slot.close_d1_prev = rates[1].close;
-      slot.has_ohlc = true;
+      g_indicator_slots[idx].open_d1_prev = rates[1].open;
+      g_indicator_slots[idx].high_d1_prev = rates[1].high;
+      g_indicator_slots[idx].low_d1_prev  = rates[1].low;
+      g_indicator_slots[idx].close_d1_prev = rates[1].close;
+      g_indicator_slots[idx].has_ohlc = true;
    }
-   else if(!slot.has_ohlc)
+   else if(!g_indicator_slots[idx].has_ohlc)
    {
-      slot.open_d1_prev = 0.0;
-      slot.high_d1_prev = 0.0;
-      slot.low_d1_prev  = 0.0;
-      slot.close_d1_prev = 0.0;
-      slot.has_ohlc = false;
+      g_indicator_slots[idx].open_d1_prev = 0.0;
+      g_indicator_slots[idx].high_d1_prev = 0.0;
+      g_indicator_slots[idx].low_d1_prev  = 0.0;
+      g_indicator_slots[idx].close_d1_prev = 0.0;
+      g_indicator_slots[idx].has_ohlc = false;
    }
 
-   slot.last_refresh = TimeCurrent();
+   g_indicator_slots[idx].last_refresh = TimeCurrent();
 }
 
 // Retrieve cached snapshot for consumers; returns true if slot exists
@@ -248,19 +248,18 @@ bool Indicators_GetSnapshot(const string symbol, IndicatorSnapshot &out_snapshot
       return false;
    }
 
-   const IndicatorSymbolSlot &slot = g_indicator_slots[idx];
-   out_snapshot.atr_d1 = slot.atr_d1;
-   out_snapshot.ma20_h1 = slot.ma20_h1;
-   out_snapshot.rsi_h1 = slot.rsi_h1;
-   out_snapshot.open_d1_prev = slot.open_d1_prev;
-   out_snapshot.high_d1_prev = slot.high_d1_prev;
-   out_snapshot.low_d1_prev = slot.low_d1_prev;
-   out_snapshot.close_d1_prev = slot.close_d1_prev;
-   out_snapshot.last_refresh = slot.last_refresh;
-   out_snapshot.has_atr = slot.has_atr;
-   out_snapshot.has_ma = slot.has_ma;
-   out_snapshot.has_rsi = slot.has_rsi;
-   out_snapshot.has_ohlc = slot.has_ohlc;
+   out_snapshot.atr_d1 = g_indicator_slots[idx].atr_d1;
+   out_snapshot.ma20_h1 = g_indicator_slots[idx].ma20_h1;
+   out_snapshot.rsi_h1 = g_indicator_slots[idx].rsi_h1;
+   out_snapshot.open_d1_prev = g_indicator_slots[idx].open_d1_prev;
+   out_snapshot.high_d1_prev = g_indicator_slots[idx].high_d1_prev;
+   out_snapshot.low_d1_prev = g_indicator_slots[idx].low_d1_prev;
+   out_snapshot.close_d1_prev = g_indicator_slots[idx].close_d1_prev;
+   out_snapshot.last_refresh = g_indicator_slots[idx].last_refresh;
+   out_snapshot.has_atr = g_indicator_slots[idx].has_atr;
+   out_snapshot.has_ma = g_indicator_slots[idx].has_ma;
+   out_snapshot.has_rsi = g_indicator_slots[idx].has_rsi;
+   out_snapshot.has_ohlc = g_indicator_slots[idx].has_ohlc;
    return true;
 }
 
