@@ -18,6 +18,20 @@ void Scheduler_Tick(const AppContext& ctx)
       string sym = ctx.symbols[i];
       if(sym=="") continue;
 
+      IndicatorSnapshot ind_snap;
+      Indicators_GetSnapshot(sym, ind_snap);
+      string ind_note = StringFormat(
+         "{\"symbol\":\"%s\",\"atr\":%.6f,\"ma20_h1\":%.6f,\"rsi_h1\":%.2f,\"has_atr\":%s,\"has_ma\":%s,\"has_rsi\":%s,\"has_ohlc\":%s}",
+         sym,
+         ind_snap.atr_d1,
+         ind_snap.ma20_h1,
+         ind_snap.rsi_h1,
+         ind_snap.has_atr?"true":"false",
+         ind_snap.has_ma?"true":"false",
+         ind_snap.has_rsi?"true":"false",
+         ind_snap.has_ohlc?"true":"false");
+      LogDecision("Indicators", "REFRESH", ind_note);
+
       bool news_blocked = News_IsBlocked(sym);
       bool spread_ok = Liquidity_SpreadOK(sym);
 
