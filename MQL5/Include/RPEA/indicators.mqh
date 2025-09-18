@@ -46,26 +46,26 @@ struct IndicatorSymbolSlot
 // Static storage sized by Symbols list during init
 IndicatorSymbolSlot g_indicator_slots[];
 
-// Helper: release indicator handles for a slot
-void Indicators_ReleaseSlot(IndicatorSymbolSlot *slot)
+// Helper: release indicator handles for a slot index
+void Indicators_ReleaseSlot(const int idx)
 {
-   if(slot == NULL)
+   if(idx < 0 || idx >= ArraySize(g_indicator_slots))
       return;
 
-   if(slot->handle_ATR_D1 != INVALID_HANDLE)
+   if(g_indicator_slots[idx].handle_ATR_D1 != INVALID_HANDLE)
    {
-      IndicatorRelease(slot->handle_ATR_D1);
-      slot->handle_ATR_D1 = INVALID_HANDLE;
+      IndicatorRelease(g_indicator_slots[idx].handle_ATR_D1);
+      g_indicator_slots[idx].handle_ATR_D1 = INVALID_HANDLE;
    }
-   if(slot->handle_MA20_H1 != INVALID_HANDLE)
+   if(g_indicator_slots[idx].handle_MA20_H1 != INVALID_HANDLE)
    {
-      IndicatorRelease(slot->handle_MA20_H1);
-      slot->handle_MA20_H1 = INVALID_HANDLE;
+      IndicatorRelease(g_indicator_slots[idx].handle_MA20_H1);
+      g_indicator_slots[idx].handle_MA20_H1 = INVALID_HANDLE;
    }
-   if(slot->handle_RSI_H1 != INVALID_HANDLE)
+   if(g_indicator_slots[idx].handle_RSI_H1 != INVALID_HANDLE)
    {
-      IndicatorRelease(slot->handle_RSI_H1);
-      slot->handle_RSI_H1 = INVALID_HANDLE;
+      IndicatorRelease(g_indicator_slots[idx].handle_RSI_H1);
+      g_indicator_slots[idx].handle_RSI_H1 = INVALID_HANDLE;
    }
 }
 
@@ -109,7 +109,7 @@ void Indicators_Init(const AppContext& ctx)
    int existing = ArraySize(g_indicator_slots);
    for(int i=0;i<existing;i++)
    {
-      Indicators_ReleaseSlot(&g_indicator_slots[i]);
+      Indicators_ReleaseSlot(i);
    }
 
    ArrayResize(g_indicator_slots, ctx.symbols_count);
