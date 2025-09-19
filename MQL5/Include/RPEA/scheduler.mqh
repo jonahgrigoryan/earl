@@ -18,6 +18,8 @@ void Scheduler_Tick(const AppContext& ctx)
       string sym = ctx.symbols[i];
       if(sym=="") continue;
 
+      Indicators_Refresh(ctx, sym);
+
       IndicatorSnapshot ind_snap;
       Indicators_GetSnapshot(sym, ind_snap);
       string ind_note = StringFormat(
@@ -30,7 +32,7 @@ void Scheduler_Tick(const AppContext& ctx)
          ind_snap.has_ma?"true":"false",
          ind_snap.has_rsi?"true":"false",
          ind_snap.has_ohlc?"true":"false");
-      LogDecision("Indicators", "REFRESH", ind_note);
+      LogDecision("Indicators", "SNAPSHOT", ind_note);
 
       bool news_blocked = News_IsBlocked(sym);
       bool spread_ok = Liquidity_SpreadOK(sym);
@@ -40,6 +42,27 @@ void Scheduler_Tick(const AppContext& ctx)
       bool in_ny     = Sessions_InNewYork(ctx, sym);
       bool in_session = (in_london || in_ny) && !Sessions_CutoffReached(ctx, sym);
       bool in_or = Sessions_InORWindow(ctx, sym);
+
+      SessionORSnapshot or_snap;
+      bool have_or = false;
+      if(in_london)
+         have_or = Sessions_GetLondonORSnapshot(ctx, sym, or_snap);
+      else if(in_ny)
+         have_or = Sessions_GetNewYorkORSnapshot(ctx, sym, or_snap);
+
+      if(have_or && (or_snap.session_active || or_snap.or_complete))
+      {
+         string or_note = StringFormat(
+            "{\"symbol\":\"%s\",\"session\":\"%s\",\"session_open\":%.5f,\"or_high\":%.5f,\"or_low\":%.5f,\"or_complete\":%s,\"has_or\":%s}",
+            sym,
+            or_snap.session,
+            or_snap.session_open_price,
+            or_snap.or_high,
+            or_snap.or_low,
+            or_snap.or_complete?"true":"false",
+            or_snap.has_or_values?"true":"false");
+         LogDecision("Sessions", "OR_STATE", or_note);
+      }
 
       string note = StringFormat("{\"news\":%s,\"spread\":%s,\"in_session\":%s,\"in_or\":%s}",
                                  news_blocked?"true":"false",
