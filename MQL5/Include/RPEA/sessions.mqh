@@ -3,14 +3,12 @@
 // sessions.mqh - Session predicates (M1 stubs)
 // References: finalspec.md (Session Governance, Session window predicate)
 
+#include <RPEA/logging.mqh>
+
 struct AppContext;
 
-// Input parameters (extern declarations for EA inputs)
-extern int StartHourLO = 8;        // London session start hour (server time)
-extern int StartHourNY = 13;       // New York session start hour (server time)  
-extern int CutoffHour = 16;        // Session cutoff hour (server time)
-extern int ORMinutes = 30;         // Opening Range duration in minutes
-extern bool UseLondonOnly = false; // Use only London session
+// Note: Input parameters are declared in RPEA.mq5 as input variables
+// and are automatically available to all included files
 
 // Session identifiers (string constants for logging)
 #define SESSION_LABEL_LONDON "LO"
