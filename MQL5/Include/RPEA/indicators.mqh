@@ -1,13 +1,24 @@
 #ifndef INDICATORS_MQH
 #define INDICATORS_MQH
-// indicators.mqh - Indicator handles and init (M2 implementation)
+// indicators.mqh - Indicator handles and init (M1 stubs)
 // References: finalspec.md (Session Statistics)
 
 struct AppContext;
 
-// Snapshot exposed to other modules (BWISC, sessions, risk)
-struct IndicatorSnapshot
+struct IndicatorsContext
 {
+   int handle_ATR_D1;
+   int handle_MA20_H1;
+   int handle_RSI_H1;
+};
+
+// Storage structure for per-symbol indicator data
+struct IndicatorSymbolSlot
+{
+   string   symbol;
+   int      handle_ATR_D1;
+   int      handle_MA20_H1;
+   int      handle_RSI_H1;
    double   atr_d1;
    double   ma20_h1;
    double   rsi_h1;
@@ -22,13 +33,9 @@ struct IndicatorSnapshot
    bool     has_ohlc;
 };
 
-// Internal per-symbol slot storing handles and last values
-struct IndicatorSymbolSlot
+// Snapshot structure for consumers
+struct IndicatorSnapshot
 {
-   string   symbol;
-   int      handle_ATR_D1;
-   int      handle_MA20_H1;
-   int      handle_RSI_H1;
    double   atr_d1;
    double   ma20_h1;
    double   rsi_h1;
@@ -103,7 +110,7 @@ bool Indicators_CopyLatestValue(const int handle, double &out_value)
 }
 
 // Initialize indicator handles and per-symbol cache
-void Indicators_Init(const AppContext& ctx)
+void Indicators_Init(const AppContext &ctx)
 {
    // Release any existing handles before reinitializing
    int existing = ArraySize(g_indicator_slots);
@@ -163,8 +170,10 @@ void Indicators_Init(const AppContext& ctx)
 }
 
 // Refresh per-symbol derived stats and cache latest values
-void Indicators_Refresh(const AppContext& ctx, const string symbol)
+void Indicators_Refresh(const AppContext &ctx, const string symbol)
 {
+   if(ctx.symbols_count <= 0)
+      return;
    int idx = Indicators_FindSlot(symbol);
    if(idx < 0)
       return;
@@ -175,7 +184,7 @@ void Indicators_Refresh(const AppContext& ctx, const string symbol)
       g_indicator_slots[idx].atr_d1 = value;
       g_indicator_slots[idx].has_atr = true;
    }
-   else if(!g_indicator_slots[idx].has_atr)
+   else
    {
       g_indicator_slots[idx].atr_d1 = 0.0;
       g_indicator_slots[idx].has_atr = false;
@@ -186,7 +195,7 @@ void Indicators_Refresh(const AppContext& ctx, const string symbol)
       g_indicator_slots[idx].ma20_h1 = value;
       g_indicator_slots[idx].has_ma = true;
    }
-   else if(!g_indicator_slots[idx].has_ma)
+   else
    {
       g_indicator_slots[idx].ma20_h1 = 0.0;
       g_indicator_slots[idx].has_ma = false;
@@ -197,7 +206,7 @@ void Indicators_Refresh(const AppContext& ctx, const string symbol)
       g_indicator_slots[idx].rsi_h1 = value;
       g_indicator_slots[idx].has_rsi = true;
    }
-   else if(!g_indicator_slots[idx].has_rsi)
+   else
    {
       g_indicator_slots[idx].rsi_h1 = 0.0;
       g_indicator_slots[idx].has_rsi = false;
@@ -215,7 +224,7 @@ void Indicators_Refresh(const AppContext& ctx, const string symbol)
       g_indicator_slots[idx].close_d1_prev = rates[1].close;
       g_indicator_slots[idx].has_ohlc = true;
    }
-   else if(!g_indicator_slots[idx].has_ohlc)
+   else
    {
       g_indicator_slots[idx].open_d1_prev = 0.0;
       g_indicator_slots[idx].high_d1_prev = 0.0;

@@ -18,6 +18,8 @@ void Scheduler_Tick(const AppContext& ctx)
       string sym = ctx.symbols[i];
       if(sym=="") continue;
 
+      Indicators_Refresh(ctx, sym);
+
       IndicatorSnapshot ind_snap;
       Indicators_GetSnapshot(sym, ind_snap);
       string ind_note = StringFormat(
@@ -30,8 +32,7 @@ void Scheduler_Tick(const AppContext& ctx)
          ind_snap.has_ma?"true":"false",
          ind_snap.has_rsi?"true":"false",
          ind_snap.has_ohlc?"true":"false");
-      LogDecision("Indicators", "REFRESH", ind_note);
-
+      LogDecision("Indicators", "SNAPSHOT", ind_note);
       bool news_blocked = News_IsBlocked(sym);
       bool spread_ok = Liquidity_SpreadOK(sym);
 
