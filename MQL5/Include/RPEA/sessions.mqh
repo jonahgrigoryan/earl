@@ -1,14 +1,22 @@
 #ifndef SESSIONS_MQH
 #define SESSIONS_MQH
-// sessions.mqh - Session predicates and OR tracking (M2 implementation)
-// References: finalspec.md (Session Governance), m2.md (§5.2)
+// sessions.mqh - Session predicates (M1 stubs)
+// References: finalspec.md (Session Governance, Session window predicate)
 
 struct AppContext;
 
-// Session identifiers (labels reused in logs and downstream modules)
+// Input parameters (extern declarations for EA inputs)
+extern int StartHourLO = 8;        // London session start hour (server time)
+extern int StartHourNY = 13;       // New York session start hour (server time)  
+extern int CutoffHour = 16;        // Session cutoff hour (server time)
+extern int ORMinutes = 30;         // Opening Range duration in minutes
+extern bool UseLondonOnly = false; // Use only London session
+
+// Session identifiers (string constants for logging)
 #define SESSION_LABEL_LONDON "LO"
 #define SESSION_LABEL_NEWYORK "NY"
 
+// Session enumeration (MQL5 2024 compliant enum)
 enum SessionKind
 {
    SESSION_KIND_LONDON = 0,
@@ -17,45 +25,46 @@ enum SessionKind
 
 #define SESSION_KIND_COUNT 2
 
-// Per-session OR tracking state for a symbol
+// Per-session window state structure (MQL5 2024 compliant struct)
 struct SessionWindowState
 {
-   datetime session_start;
-   datetime or_start;
-   datetime or_end;
-   double   session_open_price;
-   double   or_high;
-   double   or_low;
-   bool     or_complete;
-   bool     session_active;
-   bool     warned_no_bars;
-   bool     has_or_values;
-   datetime last_update;
+   datetime session_start;      // Session start time
+   datetime or_start;          // Opening Range start time  
+   datetime or_end;            // Opening Range end time
+   double   session_open_price; // Session opening price
+   double   or_high;           // Opening Range high
+   double   or_low;            // Opening Range low
+   bool     or_complete;       // Opening Range completion flag
+   bool     session_active;    // Session active flag
+   bool     warned_no_bars;    // Warning flag for missing bars
+   bool     has_or_values;     // Flag indicating valid OR values
+   datetime last_update;       // Last update timestamp
 };
 
-// Aggregate state per symbol
+// Per-symbol session state container (MQL5 2024 compliant struct)
 struct SessionSymbolState
 {
-   string symbol;
-   SessionWindowState windows[SESSION_KIND_COUNT];
+   string symbol;                              // Symbol name
+   SessionWindowState windows[SESSION_KIND_COUNT]; // Array of session windows
 };
 
-// Snapshot exposed to downstream modules (BWISC)
+// Snapshot structure for downstream modules (MQL5 2024 compliant)
 struct SessionORSnapshot
 {
-   string   symbol;
-   string   session;
-   double   session_open_price;
-   double   or_high;
-   double   or_low;
-   datetime session_start;
-   datetime or_start;
-   datetime or_end;
-   bool     or_complete;
-   bool     session_active;
-   bool     has_or_values;
+   string   symbol;              // Symbol name
+   string   session;             // Session label ("LO" or "NY")
+   double   session_open_price;  // Session opening price
+   double   or_high;            // Opening Range high
+   double   or_low;             // Opening Range low  
+   datetime session_start;       // Session start time
+   datetime or_start;           // Opening Range start time
+   datetime or_end;             // Opening Range end time
+   bool     or_complete;        // Opening Range completion flag
+   bool     session_active;     // Session active flag
+   bool     has_or_values;      // Valid OR values flag
 };
 
+// Global storage array (MQL5 2024 compliant global declaration)
 SessionSymbolState g_session_slots[];
 
 // Helper: extract hour component without relying on TimeHour()
@@ -66,14 +75,14 @@ int Sessions_ServerHour(const datetime value)
    return tm.hour;
 }
 
-static string Sessions_Label(const SessionKind kind)
+string Sessions_Label(const SessionKind kind)
 {
    if(kind == SESSION_KIND_NEWYORK)
       return SESSION_LABEL_NEWYORK;
    return SESSION_LABEL_LONDON;
 }
 
-static void Sessions_ResetWindow(SessionWindowState &win)
+void Sessions_ResetWindow(SessionWindowState &win)
 {
    win.session_start = 0;
    win.or_start = 0;
@@ -88,7 +97,7 @@ static void Sessions_ResetWindow(SessionWindowState &win)
    win.last_update = 0;
 }
 
-static void Sessions_EnsureSlots(const AppContext &ctx)
+void Sessions_EnsureSlots(const AppContext &ctx)
 {
    int required = ctx.symbols_count;
    if(required <= 0)
@@ -124,7 +133,7 @@ static void Sessions_EnsureSlots(const AppContext &ctx)
    }
 }
 
-static int Sessions_FindSlot(const string symbol)
+int Sessions_FindSlot(const string symbol)
 {
    int total = ArraySize(g_session_slots);
    for(int i=0;i<total;i++)
@@ -135,7 +144,7 @@ static int Sessions_FindSlot(const string symbol)
    return -1;
 }
 
-static datetime Sessions_AnchorForHour(const datetime now, const int hour)
+datetime Sessions_AnchorForHour(const datetime now, const int hour)
 {
    MqlDateTime tm;
    TimeToStruct(now, tm);
@@ -145,14 +154,14 @@ static datetime Sessions_AnchorForHour(const datetime now, const int hour)
    return StructToTime(tm);
 }
 
-static int Sessions_ORMinutesValue()
+int Sessions_ORMinutesValue()
 {
    if(ORMinutes <= 0)
       return 1;
    return ORMinutes;
 }
 
-static void Sessions_BeginSession(const string symbol, SessionWindowState &win, const SessionKind kind, const datetime start_time)
+void Sessions_BeginSession(const string symbol, SessionWindowState &win, const SessionKind kind, const datetime start_time)
 {
    Sessions_ResetWindow(win);
    win.session_start = start_time;
@@ -182,7 +191,7 @@ static void Sessions_BeginSession(const string symbol, SessionWindowState &win, 
    LogDecision("Sessions", "SESSION_START", note);
 }
 
-static void Sessions_LogWarnOnce(SessionWindowState &win, const string symbol, const SessionKind kind, const string reason)
+void Sessions_LogWarnOnce(SessionWindowState &win, const string symbol, const SessionKind kind, const string reason)
 {
    if(win.warned_no_bars)
       return;
@@ -192,7 +201,7 @@ static void Sessions_LogWarnOnce(SessionWindowState &win, const string symbol, c
    win.warned_no_bars = true;
 }
 
-static void Sessions_UpdateOR(const string symbol, SessionWindowState &win, const SessionKind kind, const datetime now)
+void Sessions_UpdateOR(const string symbol, SessionWindowState &win, const SessionKind kind, const datetime now)
 {
    if(now < win.or_start)
       return;
@@ -257,9 +266,8 @@ static void Sessions_UpdateOR(const string symbol, SessionWindowState &win, cons
    }
 }
 
-static void Sessions_UpdateSession(const AppContext &ctx, const string symbol, const int slot_idx, const SessionKind kind, const int start_hour)
+void Sessions_UpdateSession(const AppContext &ctx, const string symbol, SessionWindowState &win, const SessionKind kind, const int start_hour)
 {
-   SessionWindowState &win = g_session_slots[slot_idx].windows[kind];
    datetime now = ctx.current_server_time;
    if(win.last_update == now)
       return;
@@ -287,7 +295,7 @@ static void Sessions_UpdateSession(const AppContext &ctx, const string symbol, c
    win.last_update = now;
 }
 
-static void Sessions_UpdateSymbol(const AppContext &ctx, const string symbol)
+void Sessions_UpdateSymbol(const AppContext &ctx, const string symbol)
 {
    if(symbol == "")
       return;
@@ -296,16 +304,17 @@ static void Sessions_UpdateSymbol(const AppContext &ctx, const string symbol)
    if(idx < 0)
       return;
 
-   Sessions_UpdateSession(ctx, symbol, idx, SESSION_KIND_LONDON, StartHourLO);
+   Sessions_UpdateSession(ctx, symbol, g_session_slots[idx].windows[SESSION_KIND_LONDON], SESSION_KIND_LONDON, StartHourLO);
    if(!UseLondonOnly)
-      Sessions_UpdateSession(ctx, symbol, idx, SESSION_KIND_NEWYORK, StartHourNY);
+      Sessions_UpdateSession(ctx, symbol, g_session_slots[idx].windows[SESSION_KIND_NEWYORK], SESSION_KIND_NEWYORK, StartHourNY);
    else
       g_session_slots[idx].windows[SESSION_KIND_NEWYORK].session_active = false;
 }
 
-static int Sessions_SessionFromLabel(const string label)
+int Sessions_SessionFromLabel(const string label)
 {
-   string up = StringToUpper(label);
+   string up = label;
+   StringToUpper(up);
    if(up == SESSION_LABEL_LONDON)
       return (int)SESSION_KIND_LONDON;
    if(up == SESSION_LABEL_NEWYORK)
@@ -316,26 +325,17 @@ static int Sessions_SessionFromLabel(const string label)
 // Predicate: currently inside London session window
 bool Sessions_InLondon(const AppContext& ctx, const string symbol)
 {
-   Sessions_UpdateSymbol(ctx, symbol);
-   int idx = Sessions_FindSlot(symbol);
-   if(idx < 0)
-      return false;
-   return g_session_slots[idx].windows[SESSION_KIND_LONDON].session_active;
+   int hr = Sessions_ServerHour(ctx.current_server_time);
+   return (hr >= StartHourLO && hr < CutoffHour);
 }
 
-// Predicate: currently inside New York session window
 bool Sessions_InNewYork(const AppContext& ctx, const string symbol)
 {
-   if(UseLondonOnly)
-      return false;
-   Sessions_UpdateSymbol(ctx, symbol);
-   int idx = Sessions_FindSlot(symbol);
-   if(idx < 0)
-      return false;
-   return g_session_slots[idx].windows[SESSION_KIND_NEWYORK].session_active;
+   if(UseLondonOnly) return false;
+   int hr = Sessions_ServerHour(ctx.current_server_time);
+   return (hr >= StartHourNY && hr < CutoffHour);
 }
 
-// Predicate: within the active session's OR window
 bool Sessions_InORWindow(const AppContext& ctx, const string symbol)
 {
    Sessions_UpdateSymbol(ctx, symbol);
@@ -344,13 +344,13 @@ bool Sessions_InORWindow(const AppContext& ctx, const string symbol)
       return false;
 
    datetime now = ctx.current_server_time;
-   SessionWindowState &lo = g_session_slots[idx].windows[SESSION_KIND_LONDON];
+   SessionWindowState lo = g_session_slots[idx].windows[SESSION_KIND_LONDON];
    if(lo.session_active && !lo.or_complete && now >= lo.or_start && now < lo.or_end)
       return true;
 
    if(!UseLondonOnly)
    {
-      SessionWindowState &ny = g_session_slots[idx].windows[SESSION_KIND_NEWYORK];
+      SessionWindowState ny = g_session_slots[idx].windows[SESSION_KIND_NEWYORK];
       if(ny.session_active && !ny.or_complete && now >= ny.or_start && now < ny.or_end)
          return true;
    }
@@ -359,7 +359,10 @@ bool Sessions_InORWindow(const AppContext& ctx, const string symbol)
 
 bool Sessions_CutoffReached(const AppContext& ctx, const string symbol)
 {
-   (void)symbol;
+   if(symbol == "")
+   {
+      // symbol unused guard (no-op)
+   }
    datetime now = ctx.current_server_time;
    datetime cutoff = Sessions_AnchorForHour(now, CutoffHour);
    if(cutoff <= Sessions_AnchorForHour(now, StartHourLO))
@@ -379,7 +382,7 @@ bool Sessions_GetORSnapshot(const AppContext& ctx, const string symbol, const st
    if(slot < 0)
       return false;
 
-   SessionWindowState &win = g_session_slots[slot].windows[kind_idx];
+   SessionWindowState win = g_session_slots[slot].windows[kind_idx];
    out_snapshot.symbol = symbol;
    out_snapshot.session = Sessions_Label((SessionKind)kind_idx);
    out_snapshot.session_open_price = win.session_open_price;
@@ -399,11 +402,11 @@ bool Sessions_GetLondonORSnapshot(const AppContext& ctx, const string symbol, Se
    return Sessions_GetORSnapshot(ctx, symbol, SESSION_LABEL_LONDON, out_snapshot);
 }
 
-bool Sessions_GetNewYorkORSnapshot(const AppContext& ctx, const string symbol, SessionORSnapshot &out_snapshot)
+// InSession signature per spec; interval-based
+bool InSession(const datetime t0, const int window_minutes)
 {
-   if(UseLondonOnly)
-      return false;
-   return Sessions_GetORSnapshot(ctx, symbol, SESSION_LABEL_NEWYORK, out_snapshot);
+   datetime now = TimeCurrent();
+   return (now >= t0 && now <= (t0 + window_minutes*60));
 }
 
 #endif // SESSIONS_MQH

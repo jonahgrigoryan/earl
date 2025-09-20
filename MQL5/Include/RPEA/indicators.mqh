@@ -1,13 +1,24 @@
 #ifndef INDICATORS_MQH
 #define INDICATORS_MQH
-// indicators.mqh - Indicator handles and init (M2 implementation)
+// indicators.mqh - Indicator handles and init (M1 stubs)
 // References: finalspec.md (Session Statistics)
 
 struct AppContext;
 
-// Snapshot exposed to other modules (BWISC, sessions, risk)
-struct IndicatorSnapshot
+struct IndicatorsContext
 {
+   int handle_ATR_D1;
+   int handle_MA20_H1;
+   int handle_RSI_H1;
+};
+
+// Storage structure for per-symbol indicator data
+struct IndicatorSymbolSlot
+{
+   string   symbol;
+   int      handle_ATR_D1;
+   int      handle_MA20_H1;
+   int      handle_RSI_H1;
    double   atr_d1;
    double   ma20_h1;
    double   rsi_h1;
@@ -22,13 +33,9 @@ struct IndicatorSnapshot
    bool     has_ohlc;
 };
 
-// Internal per-symbol slot storing handles and last values
-struct IndicatorSymbolSlot
+// Snapshot structure for consumers
+struct IndicatorSnapshot
 {
-   string   symbol;
-   int      handle_ATR_D1;
-   int      handle_MA20_H1;
-   int      handle_RSI_H1;
    double   atr_d1;
    double   ma20_h1;
    double   rsi_h1;
