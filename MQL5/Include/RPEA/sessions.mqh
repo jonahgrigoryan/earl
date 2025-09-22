@@ -4,6 +4,7 @@
 // References: finalspec.md (Session Governance, Session window predicate)
 
 #include <RPEA/logging.mqh>
+#include <RPEA/equity_guardian.mqh>
 
 struct AppContext;
 
@@ -27,16 +28,19 @@ enum SessionKind
 struct SessionWindowState
 {
    datetime session_start;      // Session start time
-   datetime or_start;          // Opening Range start time  
-   datetime or_end;            // Opening Range end time
+   datetime or_start;           // Opening Range start time
+   datetime or_end;             // Opening Range end time
    double   session_open_price; // Session opening price
-   double   or_high;           // Opening Range high
-   double   or_low;            // Opening Range low
+   double   or_high;            // Opening Range high
+   double   or_low;             // Opening Range low
    bool     or_complete;       // Opening Range completion flag
    bool     session_active;    // Session active flag
+   bool     session_enabled;   // Governance flag (true when session allowed)
    bool     warned_no_bars;    // Warning flag for missing bars
    bool     has_or_values;     // Flag indicating valid OR values
+   bool     blocked_logged;    // Governance log guard for current anchor
    datetime last_update;       // Last update timestamp
+   datetime governance_anchor; // Anchor used to scope governance logging per day
 };
 
 // Per-symbol session state container (MQL5 2024 compliant struct)
@@ -52,14 +56,15 @@ struct SessionORSnapshot
    string   symbol;              // Symbol name
    string   session;             // Session label ("LO" or "NY")
    double   session_open_price;  // Session opening price
-   double   or_high;            // Opening Range high
-   double   or_low;             // Opening Range low  
+   double   or_high;             // Opening Range high
+   double   or_low;              // Opening Range low
    datetime session_start;       // Session start time
-   datetime or_start;           // Opening Range start time
-   datetime or_end;             // Opening Range end time
-   bool     or_complete;        // Opening Range completion flag
-   bool     session_active;     // Session active flag
-   bool     has_or_values;      // Valid OR values flag
+   datetime or_start;            // Opening Range start time
+   datetime or_end;              // Opening Range end time
+   bool     or_complete;         // Opening Range completion flag
+   bool     session_active;      // Session active flag
+   bool     session_enabled;     // Governance flag (true when session allowed)
+   bool     has_or_values;       // Valid OR values flag
 };
 
 // Global storage array (MQL5 2024 compliant global declaration)
@@ -90,10 +95,45 @@ void Sessions_ResetWindow(SessionWindowState &win)
    win.or_low = 0.0;
    win.or_complete = false;
    win.session_active = false;
+   win.session_enabled = true;
    win.warned_no_bars = false;
    win.has_or_values = false;
+   win.blocked_logged = false;
    win.last_update = 0;
+   win.governance_anchor = 0;
 }
+
+// Governance hooks backed by Equity Guardian state.
+bool Sessions_IsOneAndDoneAllowed(const AppContext &ctx, const string symbol, const SessionKind kind)
+{
+   if(symbol == "")
+   {
+      // symbol unused guard
+   }
+   if((int)kind < 0)
+   {
+      // enum unused guard
+   }
+   if(ctx.symbols_count < 0)
+   {
+      // ctx unused guard
+   }
+   return !Equity_IsOneAndDoneAchieved(ctx);
+}
+
+bool Sessions_IsNYGateAllowed(const AppContext &ctx, const string symbol)
+{
+   if(symbol == "")
+   {
+      // symbol unused guard
+   }
+   if(ctx.symbols_count < 0)
+   {
+      // ctx unused guard
+   }
+   return Equity_IsNYGateAllowed(ctx);
+}
+
 
 void Sessions_EnsureSlots(const AppContext &ctx)
 {
@@ -264,6 +304,42 @@ void Sessions_UpdateOR(const string symbol, SessionWindowState &win, const Sessi
    }
 }
 
+void Sessions_UpdateGovernanceState(const AppContext &ctx, const string symbol, SessionWindowState &win, const SessionKind kind, const datetime session_anchor)
+{
+   if(win.governance_anchor != session_anchor)
+   {
+      win.governance_anchor = session_anchor;
+      win.blocked_logged = false;
+   }
+
+   string block_reason = "";
+
+   if(!Sessions_IsOneAndDoneAllowed(ctx, symbol, kind))
+      block_reason = "one_and_done";
+
+   if(block_reason == "" && kind == SESSION_KIND_NEWYORK)
+   {
+      if(!Sessions_IsNYGateAllowed(ctx, symbol))
+         block_reason = "ny_gate";
+      else if(UseLondonOnly)
+         block_reason = "use_london_only";
+   }
+
+   bool enabled = (block_reason == "");
+   win.session_enabled = enabled;
+   if(!enabled)
+   {
+      win.session_active = false;
+      if(!win.blocked_logged)
+      {
+         string note = StringFormat("{\"symbol\":\"%s\",\"session\":\"%s\",\"reason\":\"%s\"}",
+                                    symbol, Sessions_Label(kind), block_reason);
+         LogDecision("Sessions", "SESSION_BLOCKED", note);
+         win.blocked_logged = true;
+      }
+   }
+}
+
 void Sessions_UpdateSession(const AppContext &ctx, const string symbol, SessionWindowState &win, const SessionKind kind, const int start_hour)
 {
    datetime now = ctx.current_server_time;
@@ -271,6 +347,15 @@ void Sessions_UpdateSession(const AppContext &ctx, const string symbol, SessionW
       return;
 
    datetime session_start = Sessions_AnchorForHour(now, start_hour);
+   Sessions_UpdateGovernanceState(ctx, symbol, win, kind, session_start);
+
+   if(!win.session_enabled)
+   {
+      win.session_active = false;
+      win.last_update = now;
+      return;
+   }
+
    datetime cutoff = Sessions_AnchorForHour(now, CutoffHour);
    if(cutoff <= session_start)
       cutoff += 24*60*60;
@@ -302,11 +387,11 @@ void Sessions_UpdateSymbol(const AppContext &ctx, const string symbol)
    if(idx < 0)
       return;
 
-   Sessions_UpdateSession(ctx, symbol, g_session_slots[idx].windows[SESSION_KIND_LONDON], SESSION_KIND_LONDON, StartHourLO);
-   if(!UseLondonOnly)
-      Sessions_UpdateSession(ctx, symbol, g_session_slots[idx].windows[SESSION_KIND_NEWYORK], SESSION_KIND_NEWYORK, StartHourNY);
-   else
-      g_session_slots[idx].windows[SESSION_KIND_NEWYORK].session_active = false;
+   SessionWindowState &lo_win = g_session_slots[idx].windows[SESSION_KIND_LONDON];
+   SessionWindowState &ny_win = g_session_slots[idx].windows[SESSION_KIND_NEWYORK];
+
+   Sessions_UpdateSession(ctx, symbol, lo_win, SESSION_KIND_LONDON, StartHourLO);
+   Sessions_UpdateSession(ctx, symbol, ny_win, SESSION_KIND_NEWYORK, StartHourNY);
 }
 
 int Sessions_SessionFromLabel(const string label)
@@ -391,6 +476,7 @@ bool Sessions_GetORSnapshot(const AppContext& ctx, const string symbol, const st
    out_snapshot.or_end = win.or_end;
    out_snapshot.or_complete = win.or_complete;
    out_snapshot.session_active = win.session_active;
+   out_snapshot.session_enabled = win.session_enabled;
    out_snapshot.has_or_values = win.has_or_values;
    return true;
 }
@@ -408,3 +494,4 @@ bool InSession(const datetime t0, const int window_minutes)
 }
 
 #endif // SESSIONS_MQH
+

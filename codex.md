@@ -76,16 +76,20 @@ Task: Correct only what’s necessary to resolve these errors. Keep behavior wit
 - Normalize to broker limits (min/max/step). Add ≤60% free‑margin guard using `OrderCalcMargin()` for estimation only.
 - Return 0 volume if constraints fail.
 
-5) Equity rooms (`Include/RPEA/equity_guardian.mqh`)
+5) Equity rooms & budget gate (`Include/RPEA/equity_guardian.mqh`)
 - Implement real room formulas (spec):
   - Room today = `(DailyLossCapPct/100)*baseline_today − (baseline_today − current_equity)`
   - Room overall = `(OverallLossCapPct/100)*initial_baseline − (initial_baseline − current_equity)`
+- Budget gate: `open_risk + pending_risk + next_trade_WC ≤ 0.9 * min(room_today, room_overall)`
+- Surface session governance helpers: compute One-and-Done achieved, NY gate eligibility, floor breach flags
+- Position/order caps: enforce total/per-symbol limits by counting actual MT5 positions/orders
+- Small-room guard: pause if room_today < MinRiskDollar
 - Keep kill‑switch floors to M4; M2 uses rooms for clamps only.
 
-6) Budget gate & caps (`Include/RPEA/allocator.mqh` and caps checks)
-- Budget gate (M2 scope): `open_risk + pending_risk + next_trade_WC ≤ 0.9 * min(room_today, room_overall)`.
-- Enforce caps before planning: total positions, per‑symbol positions, per‑symbol pendings.
-- For M2: build an `OrderPlan` structure but do not send orders; it’s OK to return `hasPlan=false` pending M3.
+6) Order planning & caps integration (`Include/RPEA/allocator.mqh`)
+- Build `OrderPlan` structure with volume from risk sizing, entry prices from BWISC, validation against budget gate and caps
+- Caps enforcement: total positions, per‑symbol positions, per‑symbol pendings (using equity_guardian helpers)
+- For M2: build plans but do not send orders; it’s OK to return `hasPlan=false` pending M3.
 
 7) Scheduler integration (logging‑only)
 - Keep `Scheduler_Tick(...)` unchanged except to log BWISC proposals and allocator outcomes.
