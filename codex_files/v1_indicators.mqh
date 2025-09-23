@@ -1,8 +1,8 @@
 diff --git a/MQL5/Include/RPEA/indicators.mqh b/MQL5/Include/RPEA/indicators.mqh
-index eb8cb346169224e43deb6e08ef8c4ea24a578139..5bbd656d66a547506d2795f0c14b54ad97cd5822 100644
+index eb8cb346169224e43deb6e08ef8c4ea24a578139..3f3a6856c94f415bf63a8809eb6c19684e1a59f2 100644
 --- a/MQL5/Include/RPEA/indicators.mqh
 +++ b/MQL5/Include/RPEA/indicators.mqh
-@@ -1,27 +1,331 @@
+@@ -1,27 +1,266 @@
  #ifndef INDICATORS_MQH
  #define INDICATORS_MQH
 -// indicators.mqh - Indicator handles and init (M1 stubs)
@@ -12,333 +12,268 @@ index eb8cb346169224e43deb6e08ef8c4ea24a578139..5bbd656d66a547506d2795f0c14b54ad
  struct AppContext;
  
 -struct IndicatorsContext
-+// Snapshot of indicator values available to downstream modules
++// Snapshot exposed to other modules (BWISC, sessions, risk)
 +struct IndicatorSnapshot
  {
 -   int handle_ATR_D1;
 -   int handle_MA20_H1;
 -   int handle_RSI_H1;
-+   double atr_d1;
-+   double ma20_h1;
-+   double rsi_h1;
-+   double open_d1_prev;
-+   double high_d1_prev;
-+   double low_d1_prev;
-+   double close_d1_prev;
-+   bool   has_atr;
-+   bool   has_ma;
-+   bool   has_rsi;
-+   bool   has_d1;
++   double   atr_d1;
++   double   ma20_h1;
++   double   rsi_h1;
++   double   open_d1_prev;
++   double   high_d1_prev;
++   double   low_d1_prev;
++   double   close_d1_prev;
++   datetime last_refresh;
++   bool     has_atr;
++   bool     has_ma;
++   bool     has_rsi;
++   bool     has_ohlc;
  };
  
 -// Initialize indicator handles (placeholders)
-+// Internal per-symbol context
-+struct IndicatorSymbolContext
++// Internal per-symbol slot storing handles and last values
++struct IndicatorSymbolSlot
 +{
-+   string symbol;
-+   int    handle_atr_d1;
-+   int    handle_ma20_h1;
-+   int    handle_rsi_h1;
-+   double atr_d1;
-+   double ma20_h1;
-+   double rsi_h1;
-+   double open_d1_prev;
-+   double high_d1_prev;
-+   double low_d1_prev;
-+   double close_d1_prev;
-+   bool   has_atr;
-+   bool   has_ma;
-+   bool   has_rsi;
-+   bool   has_d1;
++   string   symbol;
++   int      handle_ATR_D1;
++   int      handle_MA20_H1;
++   int      handle_RSI_H1;
++   double   atr_d1;
++   double   ma20_h1;
++   double   rsi_h1;
++   double   open_d1_prev;
++   double   high_d1_prev;
++   double   low_d1_prev;
++   double   close_d1_prev;
++   datetime last_refresh;
++   bool     has_atr;
++   bool     has_ma;
++   bool     has_rsi;
++   bool     has_ohlc;
 +};
 +
-+// Internal store (mirrors ctx.symbols)
-+static IndicatorSymbolContext g_indicator_symbols[];
++// Static storage sized by Symbols list during init
++IndicatorSymbolSlot g_indicator_slots[];
 +
-+// Helper: clear cached values
-+void Indicators_ResetValues(IndicatorSymbolContext &slot)
++// Helper: release indicator handles for a slot index
++void Indicators_ReleaseSlot(const int idx)
 +{
-+   slot.atr_d1 = 0.0;
-+   slot.ma20_h1 = 0.0;
-+   slot.rsi_h1 = 0.0;
-+   slot.open_d1_prev = 0.0;
-+   slot.high_d1_prev = 0.0;
-+   slot.low_d1_prev = 0.0;
-+   slot.close_d1_prev = 0.0;
-+   slot.has_atr = false;
-+   slot.has_ma = false;
-+   slot.has_rsi = false;
-+   slot.has_d1 = false;
++   if(idx < 0 || idx >= ArraySize(g_indicator_slots))
++      return;
++
++   if(g_indicator_slots[idx].handle_ATR_D1 != INVALID_HANDLE)
++   {
++      IndicatorRelease(g_indicator_slots[idx].handle_ATR_D1);
++      g_indicator_slots[idx].handle_ATR_D1 = INVALID_HANDLE;
++   }
++   if(g_indicator_slots[idx].handle_MA20_H1 != INVALID_HANDLE)
++   {
++      IndicatorRelease(g_indicator_slots[idx].handle_MA20_H1);
++      g_indicator_slots[idx].handle_MA20_H1 = INVALID_HANDLE;
++   }
++   if(g_indicator_slots[idx].handle_RSI_H1 != INVALID_HANDLE)
++   {
++      IndicatorRelease(g_indicator_slots[idx].handle_RSI_H1);
++      g_indicator_slots[idx].handle_RSI_H1 = INVALID_HANDLE;
++   }
 +}
 +
-+// Helper: locate symbol index
-+int Indicators_FindIndex(const string symbol)
++// Helper: find slot index for symbol
++int Indicators_FindSlot(const string symbol)
 +{
-+   int total = ArraySize(g_indicator_symbols);
++   int total = ArraySize(g_indicator_slots);
 +   for(int i=0;i<total;i++)
 +   {
-+      if(g_indicator_symbols[i].symbol == symbol)
++      if(g_indicator_slots[i].symbol == symbol)
 +         return i;
 +   }
 +   return -1;
 +}
 +
-+// Helper: ensure handles exist for a slot (called on init/refresh)
-+void Indicators_EnsureHandles(IndicatorSymbolContext &slot)
++// Helper: copy latest buffer value if available
++bool Indicators_CopyLatestValue(const int handle, double &out_value)
 +{
-+   if(slot.handle_atr_d1 == INVALID_HANDLE)
-+   {
-+      ResetLastError();
-+      slot.handle_atr_d1 = iATR(slot.symbol, PERIOD_D1, 14);
-+      if(slot.handle_atr_d1 == INVALID_HANDLE)
-+      {
-+         int err = GetLastError();
-+         if(err != 0)
-+            PrintFormat("RPEA Indicators: failed to create ATR(D1) handle for %s (err=%d)", slot.symbol, err);
-+      }
-+   }
-+   if(slot.handle_ma20_h1 == INVALID_HANDLE)
-+   {
-+      ResetLastError();
-+      slot.handle_ma20_h1 = iMA(slot.symbol, PERIOD_H1, 20, 0, MODE_EMA, PRICE_CLOSE);
-+      if(slot.handle_ma20_h1 == INVALID_HANDLE)
-+      {
-+         int err = GetLastError();
-+         if(err != 0)
-+            PrintFormat("RPEA Indicators: failed to create EMA20(H1) handle for %s (err=%d)", slot.symbol, err);
-+      }
-+   }
-+   if(slot.handle_rsi_h1 == INVALID_HANDLE)
-+   {
-+      ResetLastError();
-+      slot.handle_rsi_h1 = iRSI(slot.symbol, PERIOD_H1, 14, PRICE_CLOSE);
-+      if(slot.handle_rsi_h1 == INVALID_HANDLE)
-+      {
-+         int err = GetLastError();
-+         if(err != 0)
-+            PrintFormat("RPEA Indicators: failed to create RSI14(H1) handle for %s (err=%d)", slot.symbol, err);
-+      }
-+   }
++   out_value = 0.0;
++   if(handle == INVALID_HANDLE)
++      return false;
++
++   double values[];
++   ArraySetAsSeries(values, true);
++   int copied = CopyBuffer(handle, 0, 0, 1, values);
++   if(copied < 1)
++      return false;
++
++   double v = values[0];
++   if(!MathIsValidNumber(v) || v == EMPTY_VALUE)
++      return false;
++
++   out_value = v;
++   return true;
 +}
 +
-+// Initialize indicator handles per symbol
++// Initialize indicator handles and per-symbol cache
  void Indicators_Init(const AppContext& ctx)
  {
 -   // TODO[M2]: create real handles, error handling
-+   // Release previous handles if any (safety for re-init)
-+   int existing = ArraySize(g_indicator_symbols);
++   // Release any existing handles before reinitializing
++   int existing = ArraySize(g_indicator_slots);
 +   for(int i=0;i<existing;i++)
 +   {
-+      if(g_indicator_symbols[i].handle_atr_d1 != INVALID_HANDLE)
-+         IndicatorRelease(g_indicator_symbols[i].handle_atr_d1);
-+      if(g_indicator_symbols[i].handle_ma20_h1 != INVALID_HANDLE)
-+         IndicatorRelease(g_indicator_symbols[i].handle_ma20_h1);
-+      if(g_indicator_symbols[i].handle_rsi_h1 != INVALID_HANDLE)
-+         IndicatorRelease(g_indicator_symbols[i].handle_rsi_h1);
++      Indicators_ReleaseSlot(i);
 +   }
-+   ArrayResize(g_indicator_symbols, 0);
++
++   ArrayResize(g_indicator_slots, ctx.symbols_count);
 +
 +   for(int i=0;i<ctx.symbols_count;i++)
 +   {
-+      string sym = ctx.symbols[i];
-+      if(sym == "")
++      g_indicator_slots[i].symbol = ctx.symbols[i];
++      g_indicator_slots[i].handle_ATR_D1 = INVALID_HANDLE;
++      g_indicator_slots[i].handle_MA20_H1 = INVALID_HANDLE;
++      g_indicator_slots[i].handle_RSI_H1 = INVALID_HANDLE;
++      g_indicator_slots[i].atr_d1 = 0.0;
++      g_indicator_slots[i].ma20_h1 = 0.0;
++      g_indicator_slots[i].rsi_h1 = 0.0;
++      g_indicator_slots[i].open_d1_prev = 0.0;
++      g_indicator_slots[i].high_d1_prev = 0.0;
++      g_indicator_slots[i].low_d1_prev = 0.0;
++      g_indicator_slots[i].close_d1_prev = 0.0;
++      g_indicator_slots[i].last_refresh = 0;
++      g_indicator_slots[i].has_atr = false;
++      g_indicator_slots[i].has_ma = false;
++      g_indicator_slots[i].has_rsi = false;
++      g_indicator_slots[i].has_ohlc = false;
++
++      if(g_indicator_slots[i].symbol == "")
 +         continue;
 +
-+      int idx = ArraySize(g_indicator_symbols);
-+      ArrayResize(g_indicator_symbols, idx+1);
-+      g_indicator_symbols[idx].symbol = sym;
-+      g_indicator_symbols[idx].handle_atr_d1 = INVALID_HANDLE;
-+      g_indicator_symbols[idx].handle_ma20_h1 = INVALID_HANDLE;
-+      g_indicator_symbols[idx].handle_rsi_h1 = INVALID_HANDLE;
-+      Indicators_ResetValues(g_indicator_symbols[idx]);
-+      Indicators_EnsureHandles(g_indicator_symbols[idx]);
++      ResetLastError();
++      g_indicator_slots[i].handle_ATR_D1 = iATR(g_indicator_slots[i].symbol, PERIOD_D1, 14);
++      if(g_indicator_slots[i].handle_ATR_D1 == INVALID_HANDLE)
++      {
++         PrintFormat("RPEA Indicators_Init: failed to create ATR(D1) handle for %s (err=%d)",
++                    g_indicator_slots[i].symbol, GetLastError());
++      }
++
++      ResetLastError();
++      g_indicator_slots[i].handle_MA20_H1 = iMA(g_indicator_slots[i].symbol, PERIOD_H1, 20, 0, MODE_EMA, PRICE_CLOSE);
++      if(g_indicator_slots[i].handle_MA20_H1 == INVALID_HANDLE)
++      {
++         PrintFormat("RPEA Indicators_Init: failed to create EMA20(H1) handle for %s (err=%d)",
++                    g_indicator_slots[i].symbol, GetLastError());
++      }
++
++      ResetLastError();
++      g_indicator_slots[i].handle_RSI_H1 = iRSI(g_indicator_slots[i].symbol, PERIOD_H1, 14, PRICE_CLOSE);
++      if(g_indicator_slots[i].handle_RSI_H1 == INVALID_HANDLE)
++      {
++         PrintFormat("RPEA Indicators_Init: failed to create RSI14(H1) handle for %s (err=%d)",
++                    g_indicator_slots[i].symbol, GetLastError());
++      }
 +   }
  }
  
 -// Refresh per-symbol derived stats (placeholders)
-+// Refresh per-symbol derived stats (ATR/EMA/RSI and yesterday D1 OHLC)
++// Refresh per-symbol derived stats and cache latest values
  void Indicators_Refresh(const AppContext& ctx, const string symbol)
  {
 -   // TODO[M2]: compute OR, ATR, RSI; handle errors
-+   int idx = Indicators_FindIndex(symbol);
++   int idx = Indicators_FindSlot(symbol);
 +   if(idx < 0)
 +      return;
 +
-+   IndicatorSymbolContext &slot = g_indicator_symbols[idx];
-+   Indicators_EnsureHandles(slot);
-+
-+   // ATR D1
-+   slot.has_atr = false;
-+   if(slot.handle_atr_d1 != INVALID_HANDLE)
++   double value = 0.0;
++   if(Indicators_CopyLatestValue(g_indicator_slots[idx].handle_ATR_D1, value))
 +   {
-+      double values[];
-+      ResetLastError();
-+      int copied = CopyBuffer(slot.handle_atr_d1, 0, 0, 1, values);
-+      if(copied > 0 && ArraySize(values) > 0)
-+      {
-+         double val = values[0];
-+         if(MathIsValidNumber(val) && val != EMPTY_VALUE)
-+         {
-+            slot.atr_d1 = val;
-+            slot.has_atr = true;
-+         }
-+      }
++      g_indicator_slots[idx].atr_d1 = value;
++      g_indicator_slots[idx].has_atr = true;
 +   }
-+   if(!slot.has_atr)
-+      slot.atr_d1 = 0.0;
-+
-+   // EMA20 H1
-+   slot.has_ma = false;
-+   if(slot.handle_ma20_h1 != INVALID_HANDLE)
++   else if(!g_indicator_slots[idx].has_atr)
 +   {
-+      double values[];
-+      ResetLastError();
-+      int copied = CopyBuffer(slot.handle_ma20_h1, 0, 0, 1, values);
-+      if(copied > 0 && ArraySize(values) > 0)
-+      {
-+         double val = values[0];
-+         if(MathIsValidNumber(val) && val != EMPTY_VALUE)
-+         {
-+            slot.ma20_h1 = val;
-+            slot.has_ma = true;
-+         }
-+      }
++      g_indicator_slots[idx].atr_d1 = 0.0;
++      g_indicator_slots[idx].has_atr = false;
 +   }
-+   if(!slot.has_ma)
-+      slot.ma20_h1 = 0.0;
 +
-+   // RSI14 H1
-+   slot.has_rsi = false;
-+   if(slot.handle_rsi_h1 != INVALID_HANDLE)
++   if(Indicators_CopyLatestValue(g_indicator_slots[idx].handle_MA20_H1, value))
 +   {
-+      double values[];
-+      ResetLastError();
-+      int copied = CopyBuffer(slot.handle_rsi_h1, 0, 0, 1, values);
-+      if(copied > 0 && ArraySize(values) > 0)
-+      {
-+         double val = values[0];
-+         if(MathIsValidNumber(val) && val != EMPTY_VALUE)
-+         {
-+            slot.rsi_h1 = val;
-+            slot.has_rsi = true;
-+         }
-+      }
++      g_indicator_slots[idx].ma20_h1 = value;
++      g_indicator_slots[idx].has_ma = true;
 +   }
-+   if(!slot.has_rsi)
-+      slot.rsi_h1 = 0.0;
++   else if(!g_indicator_slots[idx].has_ma)
++   {
++      g_indicator_slots[idx].ma20_h1 = 0.0;
++      g_indicator_slots[idx].has_ma = false;
++   }
 +
-+   // Yesterday's D1 OHLC
-+   slot.has_d1 = false;
++   if(Indicators_CopyLatestValue(g_indicator_slots[idx].handle_RSI_H1, value))
++   {
++      g_indicator_slots[idx].rsi_h1 = value;
++      g_indicator_slots[idx].has_rsi = true;
++   }
++   else if(!g_indicator_slots[idx].has_rsi)
++   {
++      g_indicator_slots[idx].rsi_h1 = 0.0;
++      g_indicator_slots[idx].has_rsi = false;
++   }
++
++   // Copy yesterday's D1 OHLC (shift = 1)
 +   MqlRates rates[];
-+   ResetLastError();
-+   int copied_rates = CopyRates(slot.symbol, PERIOD_D1, 1, 1, rates);
-+   if(copied_rates > 0 && ArraySize(rates) > 0)
++   ArraySetAsSeries(rates, true);
++   int copied = CopyRates(symbol, PERIOD_D1, 0, 3, rates);
++   if(copied >= 2)
 +   {
-+      slot.open_d1_prev = rates[0].open;
-+      slot.high_d1_prev = rates[0].high;
-+      slot.low_d1_prev  = rates[0].low;
-+      slot.close_d1_prev = rates[0].close;
-+      slot.has_d1 = (MathIsValidNumber(slot.open_d1_prev) &&
-+                     MathIsValidNumber(slot.high_d1_prev) &&
-+                     MathIsValidNumber(slot.low_d1_prev) &&
-+                     MathIsValidNumber(slot.close_d1_prev));
-+      if(!slot.has_d1)
-+      {
-+         slot.open_d1_prev = 0.0;
-+         slot.high_d1_prev = 0.0;
-+         slot.low_d1_prev = 0.0;
-+         slot.close_d1_prev = 0.0;
-+      }
++      g_indicator_slots[idx].open_d1_prev = rates[1].open;
++      g_indicator_slots[idx].high_d1_prev = rates[1].high;
++      g_indicator_slots[idx].low_d1_prev  = rates[1].low;
++      g_indicator_slots[idx].close_d1_prev = rates[1].close;
++      g_indicator_slots[idx].has_ohlc = true;
 +   }
-+   else
++   else if(!g_indicator_slots[idx].has_ohlc)
 +   {
-+      slot.open_d1_prev = 0.0;
-+      slot.high_d1_prev = 0.0;
-+      slot.low_d1_prev = 0.0;
-+      slot.close_d1_prev = 0.0;
++      g_indicator_slots[idx].open_d1_prev = 0.0;
++      g_indicator_slots[idx].high_d1_prev = 0.0;
++      g_indicator_slots[idx].low_d1_prev  = 0.0;
++      g_indicator_slots[idx].close_d1_prev = 0.0;
++      g_indicator_slots[idx].has_ohlc = false;
 +   }
++
++   g_indicator_slots[idx].last_refresh = TimeCurrent();
 +}
 +
-+// Accessors
-+double Indicators_ATR_D1(const string symbol)
++// Retrieve cached snapshot for consumers; returns true if slot exists
++bool Indicators_GetSnapshot(const string symbol, IndicatorSnapshot &out_snapshot)
 +{
-+   int idx = Indicators_FindIndex(symbol);
-+   if(idx < 0)
-+      return 0.0;
-+   return g_indicator_symbols[idx].atr_d1;
-+}
-+
-+double Indicators_MA20_H1(const string symbol)
-+{
-+   int idx = Indicators_FindIndex(symbol);
-+   if(idx < 0)
-+      return 0.0;
-+   return g_indicator_symbols[idx].ma20_h1;
-+}
-+
-+double Indicators_RSI_H1(const string symbol)
-+{
-+   int idx = Indicators_FindIndex(symbol);
-+   if(idx < 0)
-+      return 0.0;
-+   return g_indicator_symbols[idx].rsi_h1;
-+}
-+
-+bool Indicators_GetD1Previous(const string symbol,
-+                              double &open_price,
-+                              double &high_price,
-+                              double &low_price,
-+                              double &close_price)
-+{
-+   int idx = Indicators_FindIndex(symbol);
++   int idx = Indicators_FindSlot(symbol);
 +   if(idx < 0)
 +   {
-+      open_price = 0.0;
-+      high_price = 0.0;
-+      low_price = 0.0;
-+      close_price = 0.0;
++      out_snapshot.atr_d1 = 0.0;
++      out_snapshot.ma20_h1 = 0.0;
++      out_snapshot.rsi_h1 = 0.0;
++      out_snapshot.open_d1_prev = 0.0;
++      out_snapshot.high_d1_prev = 0.0;
++      out_snapshot.low_d1_prev = 0.0;
++      out_snapshot.close_d1_prev = 0.0;
++      out_snapshot.last_refresh = 0;
++      out_snapshot.has_atr = false;
++      out_snapshot.has_ma = false;
++      out_snapshot.has_rsi = false;
++      out_snapshot.has_ohlc = false;
 +      return false;
 +   }
 +
-+   IndicatorSymbolContext &slot = g_indicator_symbols[idx];
-+   open_price = slot.open_d1_prev;
-+   high_price = slot.high_d1_prev;
-+   low_price = slot.low_d1_prev;
-+   close_price = slot.close_d1_prev;
-+   return slot.has_d1;
-+}
-+
-+bool Indicators_GetSnapshot(const string symbol, IndicatorSnapshot &snapshot)
-+{
-+   int idx = Indicators_FindIndex(symbol);
-+   if(idx < 0)
-+   {
-+      snapshot.atr_d1 = 0.0;
-+      snapshot.ma20_h1 = 0.0;
-+      snapshot.rsi_h1 = 0.0;
-+      snapshot.open_d1_prev = 0.0;
-+      snapshot.high_d1_prev = 0.0;
-+      snapshot.low_d1_prev = 0.0;
-+      snapshot.close_d1_prev = 0.0;
-+      snapshot.has_atr = false;
-+      snapshot.has_ma = false;
-+      snapshot.has_rsi = false;
-+      snapshot.has_d1 = false;
-+      return false;
-+   }
-+
-+   IndicatorSymbolContext &slot = g_indicator_symbols[idx];
-+   snapshot.atr_d1 = slot.atr_d1;
-+   snapshot.ma20_h1 = slot.ma20_h1;
-+   snapshot.rsi_h1 = slot.rsi_h1;
-+   snapshot.open_d1_prev = slot.open_d1_prev;
-+   snapshot.high_d1_prev = slot.high_d1_prev;
-+   snapshot.low_d1_prev = slot.low_d1_prev;
-+   snapshot.close_d1_prev = slot.close_d1_prev;
-+   snapshot.has_atr = slot.has_atr;
-+   snapshot.has_ma = slot.has_ma;
-+   snapshot.has_rsi = slot.has_rsi;
-+   snapshot.has_d1 = slot.has_d1;
++   out_snapshot.atr_d1 = g_indicator_slots[idx].atr_d1;
++   out_snapshot.ma20_h1 = g_indicator_slots[idx].ma20_h1;
++   out_snapshot.rsi_h1 = g_indicator_slots[idx].rsi_h1;
++   out_snapshot.open_d1_prev = g_indicator_slots[idx].open_d1_prev;
++   out_snapshot.high_d1_prev = g_indicator_slots[idx].high_d1_prev;
++   out_snapshot.low_d1_prev = g_indicator_slots[idx].low_d1_prev;
++   out_snapshot.close_d1_prev = g_indicator_slots[idx].close_d1_prev;
++   out_snapshot.last_refresh = g_indicator_slots[idx].last_refresh;
++   out_snapshot.has_atr = g_indicator_slots[idx].has_atr;
++   out_snapshot.has_ma = g_indicator_slots[idx].has_ma;
++   out_snapshot.has_rsi = g_indicator_slots[idx].has_rsi;
++   out_snapshot.has_ohlc = g_indicator_slots[idx].has_ohlc;
 +   return true;
  }
  
