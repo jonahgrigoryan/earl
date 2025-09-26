@@ -5,3 +5,13 @@ god_mode_roadmap.txt
 
 # Research paper (long)
 statstical_arbitrage.txt
+# Local workspace artifacts
+codex.md
+codex_files/
+m2.md
+task_prompts.md
+task_3_expanded.md
+claude_code_prompt.txt
+MQL5.zip
+.vscode/
+earl-1.code-workspace
