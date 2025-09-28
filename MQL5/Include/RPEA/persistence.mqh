@@ -270,5 +270,6 @@ void Persistence_Flush()
       FileClose(h);
    }
    // TODO[M4/M6]: idempotent recovery and TTL for queued actions
+   // TODO[M3]: intent journal persistence & action dedup (see design.md §Idempotency)
 }
 #endif // RPEA_PERSISTENCE_MQH
