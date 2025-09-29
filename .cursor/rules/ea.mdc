@@ -1,0 +1,127 @@
+---
+description: "RPEA M3 — Order Engine + Synthetic XAUEUR: governance, risk/news invariants, and acceptance gates"
+globs:
+  - "MQL5/**"
+  - "finalspec.md"
+  - ".kiro/specs/rpea-m3/**"
+alwaysApply: false
+---
+
+RPEA (FundingPips 10K RapidPass EA) — Milestone M3 Rules
+
+Context
+- Project root: C:\Users\AWCS\earl-1
+- Active milestone: M3 — Order Engine + Synthetic XAUEUR
+- Sources of truth: `finalspec.md` (LOCKED), `.kiro/specs/rpea-m3/{requirements.md, design.md, tasks.md}`
+- Do not alter “Decisions & Constraints (LOCKED)” without an explicit revision/version entry.
+
+Assistant Workflow
+- Default to this project + M3; reply concisely with high-signal content.
+- Use code references for existing code; propose edits with exact file paths.
+- Preserve existing indentation/style; never reformat unrelated code.
+- Maintain TODOs for multi-step tasks; stop at HOLD POINTS in `tasks.md` until accepted.
+
+Engineering Rules
+- Risk invariants:
+  - Compute server-day baseline; enforce budget gate: open_risk + pending_risk + next_trade ≤ 0.9 × min(room_today, room_overall).
+  - Floors (Daily/Overall) override all; protective exits always allowed.
+  - Enforce caps: `MaxOpenPositionsTotal`, `MaxOpenPerSymbol`, `MaxPendingsPerSymbol`.
+- News invariants:
+  - Master T±300s block on high-impact events; protective exits always allowed.
+  - Queue trailing/SLTP updates during news; drop if older than `QueuedActionTTLMin`; revalidate post-news before applying.
+  - CSV fallback: parse `Files/RPEA/news/calendar_high_impact.csv` with schema/staleness checks if API unavailable.
+- Order Engine (M3):
+  - OCO pendings: one fill cancels/adjusts sibling; partial fills adjust sibling volume; broker expiry ≤ session cutoff/TTL; apply risk-reduction cancel/resize when buffers would be exceeded.
+  - Market fallback: enforce `MaxSlippagePoints`; retry up to 3 with 300ms backoff; fail-fast on `TRADE_DISABLED`/`NO_MONEY`.
+  - Trailing: activates ≥ +1R; move SL by ATR × `TrailMult`; queue during news with TTL and post-news revalidation.
+  - Synthetic XAUEUR:
+    - Proxy: XAUUSD only; map synthetic SL via current EURUSD; build synthetic M1 bars (forward-fill small gaps); block entries if either leg has high-impact news within `NewsBufferS`.
+    - Replication: XAUUSD + EURUSD with delta sizing `V_xau = K/(ContractXAU×E)`, `V_eur = K×(P/E²)/ContractFX`; atomic execution; rollback first leg if second fails; include both legs in risk/margin; downgrade to proxy if margin > threshold.
+  - Atomic two-leg ops: execution/reentrancy lock; pair-protect allowed during news; coordinated exits for both legs.
+- Logging invariants:
+  - CSV audit rows include: tickets, requested/filled volumes, prices, retry_count, execution mode, strategy context (confidence, efficiency, est_value, hold_time, gating_reason, news_window_state), and budget gate inputs (open_risk, pending_risk, next_trade, room_today, room_overall, pass/fail).
+- Testing gates:
+  - Unit/integration tests per `tasks.md`; deterministic seeds; fake broker support when available; honor HOLD POINTS.
+
+Style Constraints (MQL5)
+- Avoid `static` in helper functions in `indicators.mqh`.
+- Do not alias array elements via references; use local copies and assign back.
+- Prefer early returns, shallow nesting, and explicit guards for news/floors/rooms.
+- Strongly type public APIs; avoid unsafe casts.
+
+Operational
+- Non-interactive commands; background long-running tasks; no pagers.
+- Branches: `m3/<task-id>-<short>`; commits: `M3: <task> — <scope>`.
+- PRs include acceptance checklist mapped to `requirements.md`.
+
+Acceptance Focus (M3)
+- OCO logic & expiry alignment; market fallback slippage enforcement & retries; trailing ≥ +1R with news-queueing/TTL; synthetic XAUEUR proxy & replication with atomic rollback/downgrade; partial fills via `OnTradeTransaction` before next timer tick; budget gate snapshot logging & caps enforcement; news compliance integration (incl. CSV fallback); comprehensive audit logging fields.
+
+@finalspec.md
+@.kiro/specs/rpea-m3/requirements.md
+@.kiro/specs/rpea-m3/design.md
+@.kiro/specs/rpea-m3/tasks.md
+RPEA Project Card — FundingPips 10K RapidPass (MT5)
+
+Overview
+- Active Milestone: M3 — Order Engine + Synthetic XAUEUR
+- Workspace: C:\Users\AWCS\earl-1
+- Sources of Truth: `finalspec.md` (LOCKED), `.kiro/specs/rpea-m3/requirements.md`, `.kiro/specs/rpea-m3/design.md`, `.kiro/specs/rpea-m3/tasks.md`
+
+Assistant Defaults
+- Assume RPEA context in this repo; prefer concise, high-signal answers.
+- Use code references for existing files; propose edits with exact file paths.
+- Preserve existing indentation/style; no mass reformatting.
+- Create/update TODOs for multi-step tasks; stop at HOLD POINTS until accepted.
+
+Implementation Rules (Snapshot)
+- Do not modify `Decisions & Constraints (LOCKED)` in `finalspec.md`.
+- Risk invariants: compute daily/overall rooms; budget gate uses 0.9 × min(room_today, room_overall); floors override everything.
+- News invariants: Master T±300s block; protective exits always allowed; queue modifications during window; drop stale queued items.
+- Order Engine: OCO sibling cancel/resize; market fallback with `MaxSlippagePoints`; trailing activates ≥ +1R; two‑leg replication must be atomic with rollback.
+- Style constraints: avoid `static` in helper functions in `indicators.mqh`; no reference aliasing to array elements; use local copies and assign back.
+
+M3 Acceptance Checklist (condensed from requirements)
+- OCO
+  - One fill cancels/adjusts sibling; partial fills adjust sibling volume.
+  - Broker expiry ≤ session cutoff/TTL; risk‑reduction cancel/resize when combined risk would exceed buffers.
+  - Fallback to market orders with slippage protection when needed.
+- Market Fallback
+  - Enforce `MaxSlippagePoints`; retry ×3 with 300ms backoff; fail‑fast on NO_MONEY/TRADE_DISABLED.
+- Trailing
+  - Activate at +1R; move SL by ATR × `TrailMult` on favorable moves.
+  - Queue during news; TTL via `QueuedActionTTLMin`; re‑validate on post‑news before applying.
+- Synthetic XAUEUR — Proxy
+  - Use XAUUSD only; map synthetic SL distance using current EURUSD; build synthetic M1 bars (forward‑fill small gaps).
+  - Block entries if either leg has high‑impact news within `NewsBufferS`.
+- Synthetic XAUEUR — Replication
+  - Two legs (XAUUSD + EURUSD) with delta sizing: V_xau = K/(ContractXAU×E); V_eur = K×(P/E²)/ContractFX.
+  - Atomic execution; rollback first leg on second‑leg failure; include margin of both legs; downgrade to proxy if margin > threshold.
+- Partial Fills
+  - Adjust sibling volumes; base risk/trailing on filled volume; process via `OnTradeTransaction` before next timer tick.
+- Atomic Two‑Leg Ops
+  - Reentrancy/execution lock; pair‑protect allowed during news; simultaneous closes when exiting.
+- Error Handling & Recovery
+  - Retry/backoff policies; queue modifications during news; reconcile positions/orders on startup; persist intents; self‑healing paths logged.
+- Risk Integration
+  - Enforce caps: `MaxOpenPositionsTotal`, `MaxOpenPerSymbol`, `MaxPendingsPerSymbol`.
+  - Budget gate logs: open_risk, pending_risk, next_trade_risk, room_today, room_overall, pass/fail.
+- News Compliance Integration
+  - Block new orders in news window; allow protective exits, OCO risk‑reduction cancel, replication pair‑protect; CSV fallback with schema/staleness checks.
+- Telemetry & Audit
+  - CSV rows include tickets, requested/filled vols, prices, retry_count, execution mode and the strategy context fields (confidence, efficiency, est_value, hold_time, gating_reason, news_window_state) and budget‑gate inputs.
+
+Quick Links
+- Spec: `finalspec.md`
+- M3: `.kiro/specs/rpea-m3/requirements.md`, `.kiro/specs/rpea-m3/design.md`, `.kiro/specs/rpea-m3/tasks.md`
+- Core modules: `MQL5/Experts/FundingPips/RPEA.mq5`, `MQL5/Include/RPEA/order_engine.mqh` (to be created), `MQL5/Include/RPEA/synthetic.mqh` (to be created)
+- Risk/Equity: `MQL5/Include/RPEA/equity_guardian.mqh`, `MQL5/Include/RPEA/allocator.mqh`
+- Signals: `MQL5/Include/RPEA/signals_bwisc.mqh`
+- News: `MQL5/Include/RPEA/news.mqh`, `MQL5/Files/RPEA/news/calendar_high_impact.csv`
+- Persistence: `MQL5/Include/RPEA/persistence.mqh`, `MQL5/Files/RPEA/state/intents.json`
+
+Hold Points
+- Respect `.kiro/specs/rpea-m3/tasks.md` HOLD POINTS 1–4; pause for acceptance before advancing.
+
+Notes
+- M1/M2 completed: scheduler/persistence/logging, BWISC signals, budget gate, caps, governance; news blocking logic remains stubbed pending M4.
