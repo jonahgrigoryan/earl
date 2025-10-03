@@ -6,7 +6,7 @@
 /// Returns whether news window blocks entries for the symbol (M1: always false)
 bool News_IsBlocked(const string symbol)
 {
-   // TODO[M4]: implement Master 10-minute window logic; CSV fallback parse
+   // TODO[M4]: implement Master 10-minute window logic
    return false;
 }
 
@@ -15,15 +15,17 @@ bool News_IsBlocked(const string symbol)
 /// M1: only attempts to open and read; ignores content; safe if missing/empty.
 void News_LoadCsvFallback()
 {
+   // TODO[M3]: CSV fallback parser with schema/staleness checks per tasks.md §11
+   // Expected columns: timestamp_utc,symbol,impact,source,event,prebuffer_min,postbuffer_min
+   // Read path from DEFAULT_NewsCSVPath
    string path = FILE_NEWS_FALLBACK;
    int h = FileOpen(path, FILE_READ|FILE_TXT|FILE_ANSI);
    if(h==INVALID_HANDLE)
       return; // tolerate missing
-   // Naive tolerant pass over lines
+   // Placeholder tolerant read; real parsing in Task 11
    while(!FileIsEnding(h))
    {
       string _line = FileReadString(h);
-      // ignore content
    }
    FileClose(h);
 }

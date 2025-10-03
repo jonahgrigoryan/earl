@@ -43,7 +43,7 @@ Convert the RPEA M3 design into a series of atomic implementation steps for the 
   - **Files**: `Include/RPEA/order_engine.mqh`, `Include/RPEA/config.mqh`
   - **Expected diff**: ~200 lines (retry manager, error code mapping, backoff algorithms)
   - **Tests**: Unit tests for each retry policy, error code classification
-  - **Acceptance**: Different error codes trigger correct retry behavior, backoff timing is accurate
+  - **Acceptance**: Different error codes trigger correct retry behavior, backoff timing is accurate; default policy attempts ≤3 retries with 300ms backoff; fail-fast on TRADE_DISABLED and NO_MONEY
   - _Requirements: 8.1, 8.2_
 
 - [ ] 6. Implement Market Order Fallback with Slippage Protection
@@ -51,7 +51,7 @@ Convert the RPEA M3 design into a series of atomic implementation steps for the 
   - **Files**: `Include/RPEA/order_engine.mqh`
   - **Expected diff**: ~180 lines (market order logic, slippage validation, fallback mechanisms)
   - **Tests**: Unit tests for slippage calculation, integration tests with retry system
-  - **Acceptance**: Market orders reject excessive slippage, retry logic works correctly
+  - **Acceptance**: Market orders reject excessive slippage per MaxSlippagePoints; retries integrate with Task 5 defaults (≤3 attempts, 300ms backoff); fail-fast on TRADE_DISABLED and NO_MONEY
   - _Requirements: 2.2, 2.3, 2.4, 2.5_
 
 **HOLD POINT 2**: Review retry policy implementation and market order fallback before atomic operations.
@@ -87,7 +87,7 @@ Convert the RPEA M3 design into a series of atomic implementation steps for the 
   - **Files**: `Include/RPEA/risk.mqh`, `Include/RPEA/order_engine.mqh`, `Include/RPEA/config.mqh`
   - **Expected diff**: ~220 lines (snapshot logic, locking mechanism, budget gate formula, config parameters)
   - **Tests**: Unit tests for budget gate formula, stress tests for concurrent access
-  - **Acceptance**: Budget gate uses locked snapshots, compute open_risk + pending_risk + next_trade ≤ 0.9 × min(room_today, room_overall) using a locked snapshot and log the five inputs, config keys BudgetGateLockMs and RiskGateHeadroom=0.90 implemented
+  - **Acceptance**: Budget gate uses locked snapshots, compute open_risk + pending_risk + next_trade ≤ 0.9 × min(room_today, room_overall) using a locked snapshot and log the five inputs, and log pass/fail (gate_pass boolean); config keys BudgetGateLockMs and RiskGateHeadroom=0.90 implemented
   - _Requirements: 9.6_
 
 - [ ] 11. Create News CSV Fallback System
@@ -129,7 +129,7 @@ Convert the RPEA M3 design into a series of atomic implementation steps for the 
   - **Files**: `Include/RPEA/synthetic.mqh`
   - **Expected diff**: ~250 lines (replication logic, volume calculation, coordination, downgrade logic)
   - **Tests**: Unit tests for volume calculations, integration tests for two-leg scenarios
-  - **Acceptance**: Replication mode executes both legs atomically, volumes calculated per specification, on STALE quotes or margin shortfall auto-downgrade to Proxy otherwise fail-fast
+  - **Acceptance**: Replication mode executes both legs atomically, volumes calculated per specification, on STALE quotes or margin shortfall auto-downgrade to Proxy otherwise fail-fast; include pair-protect safety: if one leg hits SL/TP during a news window, close the other leg immediately and log NEWS_PAIR_PROTECT
   - _Requirements: 5.1, 5.2, 5.3, 5.4_
 
 - [ ] 16. Create Queue Manager with Bounds and TTL Management
@@ -153,7 +153,7 @@ Convert the RPEA M3 design into a series of atomic implementation steps for the 
   - **Files**: `Include/RPEA/logging.mqh`, `Files/RPEA/logs/audit_YYYYMMDD.csv`
   - **Expected diff**: ~150 lines (audit logger, CSV formatting, field mapping)
   - **Tests**: Unit tests for log formatting (including new context columns), integration tests for all audit scenarios
-  - **Acceptance**: All order activities logged with complete field set, CSV format matches specification, every placement/adjust/cancel (including risk-reduction actions) writes one row with columns [timestamp,intent_id,action_id,symbol,mode(proxy|repl),requested_price,executed_price,requested_vol,filled_vol,remaining_vol,tickets[],retry_count,gate_open_risk,gate_pending_risk,gate_next_risk,room_today,room_overall,decision,confidence,efficiency,est_value,hold_time,gating_reason,news_window_state]
+  - **Acceptance**: All order activities logged with complete field set, CSV format matches specification, every placement/adjust/cancel (including risk-reduction actions) writes one row with columns [timestamp,intent_id,action_id,symbol,mode(proxy|repl),requested_price,executed_price,requested_vol,filled_vol,remaining_vol,tickets[],retry_count,gate_open_risk,gate_pending_risk,gate_next_risk,room_today,room_overall,gate_pass,decision,confidence,efficiency,rho_est,est_value,hold_time,gating_reason,news_window_state]
   - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5, 11.6_
 
 - [ ] 19. Integrate Order Engine with Existing Risk Management
@@ -161,7 +161,7 @@ Convert the RPEA M3 design into a series of atomic implementation steps for the 
   - **Files**: `Include/RPEA/order_engine.mqh`, `Experts/FundingPips/RPEA.mq5`
   - **Expected diff**: ~100 lines (integration points, interface adaptation)
   - **Tests**: Integration tests for risk engine interaction, end-to-end workflow tests
-  - **Acceptance**: Order engine respects all existing risk constraints, integrates seamlessly
+  - **Acceptance**: Order engine respects all existing risk constraints, integrates seamlessly; on funded (Master) accounts, SL is set within 30 seconds of opening and enforcement is logged if late
   - _Requirements: 9.2, 9.3, 9.5_
 
 - [ ] 20. Implement State Recovery and Reconciliation on Startup
