@@ -8,10 +8,6 @@
 #include <RPEA/risk.mqh>
 #include <RPEA/equity_guardian.mqh>
 
-#include <RPEA/logging.mqh>
-#include <RPEA/risk.mqh>
-#include <RPEA/equity_guardian.mqh>
-
 struct AppContext;
 
 struct OrderPlan
@@ -31,7 +27,7 @@ struct OrderPlan
 };
 
 // Helpers ----------------------------------------------------------
-static string Allocator_TrimComment(const string text)
+string Allocator_TrimComment(const string text)
 {
    const int max_len = 31;
    if(StringLen(text) <= max_len)
@@ -39,10 +35,10 @@ static string Allocator_TrimComment(const string text)
    return StringSubstr(text, 0, max_len);
 }
 
-static bool Allocator_GetContractDetails(const string symbol,
-                                         double &point,
-                                         double &value_per_point,
-                                         int &digits)
+bool Allocator_GetContractDetails(const string symbol,
+                                  double &point,
+                                  double &value_per_point,
+                                  int &digits)
 {
    double tick_size = 0.0;
    double tick_value = 0.0;
@@ -66,7 +62,7 @@ static bool Allocator_GetContractDetails(const string symbol,
    return true;
 }
 
-static long Allocator_ComputeMagic(const AppContext& ctx, const string symbol)
+long Allocator_ComputeMagic(const AppContext& ctx, const string symbol)
 {
    for(int i = 0; i < ctx.symbols_count; ++i)
    {
@@ -83,7 +79,7 @@ static long Allocator_ComputeMagic(const AppContext& ctx, const string symbol)
    return MagicBase + hash % 1000;
 }
 
-static double Allocator_NormalizePrice(const double price, const int digits)
+double Allocator_NormalizePrice(const double price, const int digits)
 {
    if(digits <= 0)
       return price;
@@ -435,7 +431,7 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
       plan.sl,
       plan.tp,
       plan.volume,
-      LongToString(plan.magic),
+      IntegerToString(plan.magic),
       plan.bias,
       plan.valid ? "true" : "false",
       slPoints,

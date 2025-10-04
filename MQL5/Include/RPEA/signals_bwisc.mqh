@@ -7,6 +7,14 @@
 #include <RPEA/indicators.mqh>
 #include <RPEA/sessions.mqh>
 
+// Helper: sign function (returns -1, 0, or +1)
+int MathSign(double val)
+{
+   if(val > 0.0) return 1;
+   if(val < 0.0) return -1;
+   return 0;
+}
+
 struct AppContext;
 
 struct BWISC_Context

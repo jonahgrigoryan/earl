@@ -49,7 +49,7 @@ static bool          g_equity_session_initialized = false;
 static double        g_equity_open_risk       = 0.0;
 static double        g_equity_pending_risk    = 0.0;
 
-static double Equity_FetchAccountEquity()
+double Equity_FetchAccountEquity()
 {
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    if(!MathIsValidNumber(equity) || equity <= 0.0)
@@ -59,7 +59,7 @@ static double Equity_FetchAccountEquity()
    return equity;
 }
 
-static bool Equity_FetchSymbolContract(const string symbol, double &point, double &tick_size, double &tick_value)
+bool Equity_FetchSymbolContract(const string symbol, double &point, double &tick_size, double &tick_value)
 {
    if(symbol == NULL || symbol == "")
       return false;
@@ -72,11 +72,11 @@ static bool Equity_FetchSymbolContract(const string symbol, double &point, doubl
    return true;
 }
 
-static double Equity_CalcRiskDollars(const string symbol,
-                                     const double volume,
-                                     const double price_entry,
-                                     const double stop_price,
-                                     bool &ok)
+double Equity_CalcRiskDollars(const string symbol,
+                              const double volume,
+                              const double price_entry,
+                              const double stop_price,
+                              bool &ok)
 {
    ok = false;
    if(symbol == NULL || symbol == "" || volume <= 0.0)
@@ -116,14 +116,14 @@ static double Equity_CalcRiskDollars(const string symbol,
    return risk;
 }
 
-static double Equity_SumOpenRisk(bool &calc_ok)
+double Equity_SumOpenRisk(bool &calc_ok)
 {
    calc_ok = true;
    double total = 0.0;
    int count = PositionsTotal();
    for(int i=0; i<count; i++)
    {
-      if(!PositionSelectByIndex(i))
+      if(PositionGetSymbol(i) == "")
       {
          calc_ok = false;
          continue;
@@ -147,7 +147,7 @@ static double Equity_SumOpenRisk(bool &calc_ok)
    return total;
 }
 
-static bool Equity_IsPendingOrderType(const int type)
+bool Equity_IsPendingOrderType(const int type)
 {
    switch(type)
    {
@@ -162,14 +162,14 @@ static bool Equity_IsPendingOrderType(const int type)
    return false;
 }
 
-static double Equity_SumPendingRisk(bool &calc_ok)
+double Equity_SumPendingRisk(bool &calc_ok)
 {
    calc_ok = true;
    double total = 0.0;
    int count = OrdersTotal();
    for(int i=0; i<count; i++)
    {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      if(OrderGetTicket(i) == 0)
       {
          calc_ok = false;
          continue;
@@ -197,14 +197,14 @@ static double Equity_SumPendingRisk(bool &calc_ok)
    return total;
 }
 
-static int Equity_CountOpenPositionsTotal(bool &calc_ok)
+int Equity_CountOpenPositionsTotal(bool &calc_ok)
 {
    calc_ok = true;
    int total = 0;
    int count = PositionsTotal();
    for(int i=0; i<count; i++)
    {
-      if(!PositionSelectByIndex(i))
+      if(PositionGetSymbol(i) == "")
       {
          calc_ok = false;
          continue;
@@ -214,7 +214,7 @@ static int Equity_CountOpenPositionsTotal(bool &calc_ok)
    return total;
 }
 
-static int Equity_CountOpenPositionsBySymbol(const string symbol, bool &calc_ok)
+int Equity_CountOpenPositionsBySymbol(const string symbol, bool &calc_ok)
 {
    calc_ok = true;
    if(symbol == NULL || symbol == "")
@@ -227,7 +227,7 @@ static int Equity_CountOpenPositionsBySymbol(const string symbol, bool &calc_ok)
    int count = PositionsTotal();
    for(int i=0; i<count; i++)
    {
-      if(!PositionSelectByIndex(i))
+      if(PositionGetSymbol(i) == "")
       {
          calc_ok = false;
          continue;
@@ -239,7 +239,7 @@ static int Equity_CountOpenPositionsBySymbol(const string symbol, bool &calc_ok)
    return total;
 }
 
-static int Equity_CountPendingsBySymbol(const string symbol, bool &calc_ok)
+int Equity_CountPendingsBySymbol(const string symbol, bool &calc_ok)
 {
    calc_ok = true;
    if(symbol == NULL || symbol == "")
@@ -252,7 +252,7 @@ static int Equity_CountPendingsBySymbol(const string symbol, bool &calc_ok)
    int count = OrdersTotal();
    for(int i=0; i<count; i++)
    {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      if(OrderGetTicket(i) == 0)
       {
          calc_ok = false;
          continue;
@@ -268,7 +268,7 @@ static int Equity_CountPendingsBySymbol(const string symbol, bool &calc_ok)
    return total;
 }
 
-static EquitySessionState Equity_BuildSessionState(const EquityRooms &rooms)
+EquitySessionState Equity_BuildSessionState(const EquityRooms &rooms)
 {
    EquitySessionState state;
    state.daily_floor_breached = false;
@@ -330,7 +330,7 @@ static EquitySessionState Equity_BuildSessionState(const EquityRooms &rooms)
    return state;
 }
 
-static void Equity_LogSessionStateTransitions(const EquitySessionState &state)
+void Equity_LogSessionStateTransitions(const EquitySessionState &state)
 {
    if(!g_equity_session_initialized || state.daily_floor_breached != g_equity_session_state.daily_floor_breached)
    {

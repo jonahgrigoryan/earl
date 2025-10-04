@@ -103,7 +103,7 @@ double Risk_SizingByATRDistanceForSymbol(const string symbol,
 
    if(final_volume >= vol_min && final_volume > 0.0)
    {
-      double free_margin = AccountInfoDouble(ACCOUNT_FREEMARGIN);
+      double free_margin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
       if(!MathIsValidNumber(free_margin) || free_margin <= 0.0)
       {
          final_volume = 0.0;

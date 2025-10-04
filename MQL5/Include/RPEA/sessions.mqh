@@ -155,8 +155,8 @@ void Sessions_EnsureSlots(const AppContext &ctx)
          {
             Sessions_ResetWindow(g_session_slots[i].windows[SESSION_KIND_LONDON]);
             Sessions_ResetWindow(g_session_slots[i].windows[SESSION_KIND_NEWYORK]);
+            g_session_slots[i].symbol = ctx.symbols[i];
          }
-         g_session_slots[i].symbol = ctx.symbols[i];
       }
    }
 
@@ -387,11 +387,14 @@ void Sessions_UpdateSymbol(const AppContext &ctx, const string symbol)
    if(idx < 0)
       return;
 
-   SessionWindowState &lo_win = g_session_slots[idx].windows[SESSION_KIND_LONDON];
-   SessionWindowState &ny_win = g_session_slots[idx].windows[SESSION_KIND_NEWYORK];
+   SessionWindowState lo_win = g_session_slots[idx].windows[SESSION_KIND_LONDON];
+   SessionWindowState ny_win = g_session_slots[idx].windows[SESSION_KIND_NEWYORK];
 
    Sessions_UpdateSession(ctx, symbol, lo_win, SESSION_KIND_LONDON, StartHourLO);
    Sessions_UpdateSession(ctx, symbol, ny_win, SESSION_KIND_NEWYORK, StartHourNY);
+   
+   g_session_slots[idx].windows[SESSION_KIND_LONDON] = lo_win;
+   g_session_slots[idx].windows[SESSION_KIND_NEWYORK] = ny_win;
 }
 
 int Sessions_SessionFromLabel(const string label)
