@@ -453,11 +453,12 @@ void PlaceOCO() {
 ```
 
 ### 4. Use the Hold Points
-Your tasks have 4 hold points. **Actually stop and review** at each one:
+Your tasks have 5 hold points. **Actually stop and review** at each one:
 - **Hold Point 1** (after Task 6): Review foundation
-- **Hold Point 2** (after Task 6): Review retry/fallback
-- **Hold Point 3** (after Task 8): Review OCO
-- **Hold Point 4** (after Task 10): Review risk/news
+- **Hold Point 2** (after Task 8): Review OCO and partial fills
+- **Hold Point 3** (after Task 13): Review budget/news/synthetic/queue/trailing
+- **Hold Point 4** (after Task 17): Review integration, recovery, resilience
+- **Hold Point 5** (after Task 24): Review performance enhancements
 
 ### 5. Keep M2 Working
 Don't break existing BWISC functionality. Test that M2 still works after each phase.

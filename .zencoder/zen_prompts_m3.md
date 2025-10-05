@@ -4,14 +4,21 @@
 
 ### PHASE 1: Setup (1 hour)
 1. **Repo-Info Agent** → Paste full context prompt (see below)
-2. **Q&A Agent** → Run 4 validation queries to confirm understanding
+2. **Q&A Agent** → Run 5 validation queries to confirm understanding
 
 ### PHASE 2: Implement Tasks 1-24 (20 hours)
 - **Pattern**: Coding Agent implements → Unit Testing Agent tests → Iterate
-- **HOLD POINTs**: Q&A Agent audits at tasks 4, 6, 9, 11, 18, 24
+- **5 Implementation Phases**: Foundation (1-6) → OCO (7-8) → Risk/Trailing (9-13) → Integration (14-17) → Enhancements (21-24)
+- **HOLD POINTs**: Q&A Agent audits at tasks 6, 8, 13, 17, 24
 
 ### PHASE 3: Integration (3 hours)
-- **E2E Testing Agent** → Fake broker + full integration tests
+- **E2E Testing Agent** → Manual testing + optional integration tests
+
+**Key Changes from Original Spec:**
+- **24 tasks** (down from 28)
+- **No atomic operations** (removed Task 7 - only needed for two-leg replication)
+- **No replication mode** (removed Tasks 13-15 - XAUEUR is signal-only)
+- **Simplified synthetic** (Task 11 - just price calculation for signals, execution maps to XAUUSD)
 
 ---
 
@@ -21,20 +28,31 @@
 ```
 Build RPEA M3 knowledge base. Analyze:
 
-SPECS: finalspec.md, .kiro/specs/rpea-m3/{requirements.md, design.md, tasks.md}
+SPECS: finalspec.md, .kiro/specs/rpea-m3/{requirements.md, design.md, tasks.md}, m3_structure.md
 M1/M2 CODE: RPEA.mq5, scheduler.mqh, signals_bwisc.mqh, risk.mqh, equity_guardian.mqh, news.mqh, persistence.mqh
 STYLE: .cursor/rules/ea.mdc, .zencoder/rules/repo.md
 TESTS: test_risk.mqh, test_signals_bwisc.mqh
 
-Summarize: M1/M2 components, M3 to-build (Order Engine, Synthetic Manager), invariants (news, budget gate, OCO, atomics), MQL5 style (no static, no array alias, early returns).
+KEY M3 SCOPE CHANGES:
+- 24 tasks (not 28) - removed atomic operations and replication mode
+- XAUEUR is signal-only (not execution) - Task 11 builds synthetic prices for BWISC signals
+- When XAUEUR signal fires, execute on XAUUSD with SL/TP scaled by EURUSD rate (simple mapping in Task 15)
+- No two-leg replication, no atomic rollback complexity
+- 5-phase implementation: Foundation (1-6) → OCO (7-8) → Risk/Trailing (9-13) → Integration (14-17) → Enhancements (21-24)
+
+Summarize: M1/M2 components, M3 simplified scope (Order Engine + XAUEUR signal generation), invariants (news, budget gate, OCO), MQL5 style (no static, no array alias, early returns).
 ```
 
-### Q&A Agent — 4 Validation Queries
+### Q&A Agent — 5 Validation Queries
 ```
 1. How does OnTimer scheduler interact with signal engines? Walk through flow.
 2. Explain budget gate formula. What 5 inputs logged? Where does 0.9 headroom come from?
 3. News compliance for Master accounts? OCO sibling cancellation during news?
-4. MQL5 style constraints from .cursor/rules/ea.mdc?
+4. How is XAUEUR used in M3? Is it executed as a pair or used for signals only?
+5. MQL5 style constraints from .cursor/rules/ea.mdc?
+
+EXPECTED ANSWER FOR #4:
+XAUEUR is used as a SIGNAL SOURCE only. Task 11 builds synthetic prices (XAUUSD/EURUSD) and synthetic OHLC bars so BWISC can generate signals from XAUEUR data. When a signal fires, Task 15 maps execution to XAUUSD (proxy mode) with SL/TP distances scaled by current EURUSD rate. No two-leg replication, no atomic operations.
 ```
 
 ---
@@ -42,14 +60,50 @@ Summarize: M1/M2 components, M3 to-build (Order Engine, Synthetic Manager), inva
 ## PHASE 2: TASK TEMPLATES
 
 ### Sequenced Runbook (use this exact order)
-- Tasks 1 → 2 → 3 → 4, then HOLD POINT 1
-- Tasks 5 → 6, then HOLD POINT 2
-- Tasks 7 → 8 → 9, then HOLD POINT 3
-- Tasks 10 → 11, then HOLD POINT 4
-- Tasks 12 → 13 → 14 → 15 → 16 → 17 → 18, then HOLD POINT 5
-- Tasks 19 → 20 → 21 → 22 → 23 → 24, then HOLD POINT 6
 
-Note: Templates below are provided per task but may not appear strictly in numeric order. Always follow the Sequenced Runbook above and use the corresponding “Task X” template section.
+**PHASE 1: Foundation (Tasks 1-6) - Days 1-4**
+- Task 1: Order Engine scaffolding
+- Task 2: Idempotency system
+- Task 3: Volume/price normalization
+- Task 4: Basic order placement
+- Task 5: Simple retry logic
+- Task 6: Market fallback + slippage
+- **HOLD POINT 1** (Q&A Agent audit)
+
+**PHASE 2: OCO + Partial Fills (Tasks 7-8) - Days 5-7**
+- Task 7: OCO relationship management
+- Task 8: Partial fill handler
+- **HOLD POINT 2** (Q&A Agent audit)
+
+**PHASE 3: Risk + Trailing + Queue (Tasks 9-13) - Days 8-11**
+- Task 9: Budget gate with snapshot locking
+- Task 10: News CSV fallback
+- Task 11: Synthetic price manager (XAUEUR signals only)
+- Task 12: Queue manager
+- Task 13: Trailing stop management
+- **HOLD POINT 3** (Q&A Agent audit)
+
+**PHASE 4: Integration + Polish (Tasks 14-17) - Days 12-15**
+- Task 14: Comprehensive audit logging
+- Task 15: Integration + XAUEUR signal mapping
+- Task 16: State recovery on startup
+- Task 17: Error handling + resilience
+- (Skip Tasks 18-20 for challenge - optional)
+- **HOLD POINT 4** (Q&A Agent audit)
+
+**PHASE 5: Performance Enhancements (Tasks 21-24) - Days 16-17**
+- Task 21: Dynamic position sizing
+- Task 22: Spread filter
+- Task 23: Breakeven stop at +0.5R
+- Task 24: Pending expiry optimization
+- **HOLD POINT 5** (Q&A Agent audit)
+
+**REMOVED TASKS (deferred post-challenge):**
+- Original Task 7: Atomic Operation Manager (only needed for two-leg replication)
+- Original Tasks 13-15: Replication Margin Calculator, Proxy Mode, Replication Mode (XAUEUR is signal-only)
+
+---
+
 
 ### Task 1: Order Engine Scaffolding (Coding Agent)
 **Attach**: design.md, order_engine.mqh, config.mqh, RPEA.mq5
@@ -198,160 +252,6 @@ TESTS:
 Provide TestOrderEngineLimits_RunAll().
 ```
 
-### HOLD POINT 1 (Q&A Agent after Tasks 1-4)
-```
-Audit Tasks 1-4 for compliance:
-
-1. OrderEngine class matches design.md lines 100-151? (structs, methods)
-2. Idempotency system per design.md lines 221-260? (intent_id format, dedup)
-3. Volume normalization per design.md lines 433-443? (SYMBOL_VOLUME_STEP, clamp)
-4. Position limits match finalspec.md lines 31-34? (Max 2/1/2, enforce before OrderSend)
-5. All unit tests passing? (22 total across 4 tasks)
-6. MQL5 style? (no static, early returns, no array alias)
-
-Provide pass/fail per item.
-```
-
-### HOLD POINT 2 (Q&A Agent after Tasks 5-6)
-```
-Audit Tasks 5-6 for compliance:
-
-1. RetryManager applies MT5 error policies per design (fail-fast for NO_MONEY/TRADE_DISABLED, exponential for CONNECTION/TIMEOUT, linear for REQUOTE/PRICE_OFF) and respects MaxRetryAttempts, InitialRetryDelayMs, RetryBackoffMultiplier.
-2. Market fallback enforces MaxSlippagePoints, logs rejection reason + slippage, and stops after three attempts with 300ms backoff as required in requirements 2.2-2.5.
-3. Unit/integration tests for retry + market fallback pass and document which files were touched.
-4. Config defaults for retry/slippage live in Include/RPEA/config.mqh and match design values.
-```
-
-### HOLD POINT 3 (Q&A Agent after Tasks 7-9)
-```
-Audit Tasks 7-9 for compliance:
-
-1. AtomicOrderManager wraps multi-leg execution with execution locks and counter-order rollback; rollback attempts are logged with action + success flag.
-2. OCO relationships store ticket pairs, expiry aligned to session cutoff, and risk-reduction cancellations fire immediately on fills per requirements 1.1-1.7.
-3. Partial fill handler updates sibling volume inside OnTradeTransaction before the next timer tick using the documented fill ratio math.
-4. Tests for atomic operations, OCO management, and partial fills (including dual-fill + last-share cases) all pass.
-```
-
-### HOLD POINT 4 (Q&A Agent after Tasks 10-11)
-```
-Audit Tasks 10-11 for compliance:
-
-1. Budget gate takes position snapshots under a lock and logs open_risk, pending_risk, next_trade_risk, room_today, room_overall with 0.9 headroom, and logs gate_pass boolean.
-2. Config keys BudgetGateLockMs and RiskGateHeadroom flow through config.mqh, and failures surface clear gating_reason messages.
-3. News CSV fallback validates schema (timestamp_utc,symbol,impact,source,event,prebuffer_min,postbuffer_min), enforces NewsCSVMaxAgeHours, and wires NewsCSVPath into news.mqh.
-4. Budget gate concurrency tests and CSV parser tests pass.
-```
-
-### HOLD POINT 5 (Q&A Agent after Tasks 12-18)
-```
-Audit Tasks 12-18 for compliance:
-
-1. SyntheticPriceManager builds P_synth with forward-fill and enforces QuoteMaxAgeMs, marking synthetic quotes STALE when either leg is too old.
-2. Replication margin calculator applies the 20% buffer, downgrades to proxy on margin/quote failure, and coordinates with AtomicOrderManager for rollback.
-3. Proxy + replication flows log execution_mode and pass aggregate worst-case risk through the budget gate.
-4. Queue manager enforces MaxQueueSize/QueueTTLMinutes, implements prioritization, and only lets risk-reduction actions through during news windows.
-5. Trailing activates at +1R, queues updates during news, re-validates preconditions post-news, and drops stale actions.
-6. Audit logging outputs the full column set (intent_id, action_id, mode, risk metrics incl. gate_pass, rho_est, news_window_state) with schema verified.
-7. Unit/integration tests for synthetic manager, queue manager, trailing, and audit logging all pass.
-8. Replication implements NEWS_PAIR_PROTECT: if one leg hits SL/TP during a news window, immediately close the other leg and log NEWS_PAIR_PROTECT.
-9. Downgrade decision tree validated: STALE quotes → proxy mode; margin shortfall → proxy mode; atomic failure → fail-fast with clear error.
-```
-
-### HOLD POINT 6 (Q&A Agent after Tasks 19-24)
-```
-Audit Tasks 19-24 for compliance:
-
-1. Order engine integrates with risk.mqh, equity guardian, and news filter without duplicating logic; gating matches finalspec caps and news windows.
-2. Restart recovery restores intents/queued actions, reconciles broker state before new orders, and logs discrepancies.
-3. Error handling/self-healing covers network outages, margin failures, and produces actionable logs.
-4. Integration/E2E suites from Task 22 run clean with deterministic seed; fake broker covers OCO, replication rollback, news queue, budget gate rejection.
-5. Performance checks confirm CPU <2% and queue/memory stay bounded; configuration validation rejects bad inputs and documentation updated.
-6. On funded (Master) accounts, SL is set within 30 seconds of opening; late enforcement is logged.
-```
-
-
-### Task 7: Atomic Operation Manager (Coding Agent)
-**Attach**: .kiro/specs/rpea-m3/design.md, .kiro/specs/rpea-m3/tasks.md, Include/RPEA/order_engine.mqh, Include/RPEA/config.mqh
-
-```
-Implement Task 7 from tasks.md: "Create Atomic Operation Manager with Counter-Order Rollback"
-
-GOAL: Atomic two-leg execution with execution lock + counter-order rollback.
-
-FOCUS:
-- Wire AtomicOrderManager skeleton into OrderEngine with BeginAtomicOperation/RollbackAtomicOperation helpers.
-- Maintain operation_id, executed tickets/volumes, rollback logging per design sequences.
-- Use MaxRetryAttempts + OCO lock to prevent duplicate leg placement.
-- Ensure counter-order requests respect MaxSlippagePoints and log TRADE_RETCODE on rollback.
-
-ACCEPTANCE: Second-leg failure triggers immediate rollback of first leg, no duplicate legs across 1,000 simulated runs, unit tests updated.
-```
-
-### Task 12: Synthetic Price Manager (Coding Agent)
-**Attach**: .kiro/specs/rpea-m3/design.md, .kiro/specs/rpea-m3/tasks.md, Include/RPEA/synthetic.mqh, Include/RPEA/config.mqh
-
-```
-Implement Task 12 from tasks.md: "Create Synthetic Price Manager with Quote Staleness Detection"
-
-GOAL: Build P_synth cache with freshness guard and mapping helpers.
-
-FOCUS:
-- Implement GetSyntheticPrice/BuildSyntheticBars with forward-fill up to MaxGapBars.
-- Track last tick timestamps for XAUUSD/EURUSD and compare against QuoteMaxAgeMs.
-- Return status codes for FRESH vs STALE price to drive replication gating.
-- Include logging hooks for stale detection and fallback decisions.
-
-ACCEPTANCE: Synthetic prices accurate, stale quotes flag replication for downgrade, unit/integration tests for staleness paths pass.
-```
-
-### Task 13: Replication Margin Calculator with 20% Buffer (Coding Agent)
-**Attach**: Include/RPEA/synthetic.mqh, .kiro/specs/rpea-m3/tasks.md
-
-```
-Implement Task 13 from tasks.md: "Implement Replication Margin Calculator with 20% Buffer"
-
-GOAL: Compute margin for both legs, apply 20% buffer, trigger downgrade when required.
-
-FOCUS:
-- Calculate combined margin for XAUUSD/EURUSD legs; apply 1.2× buffer; compare to free margin.
-- If free_margin < required×1.2, abort replication and rollback first leg (coordinate with atomics).
-- Unit/integration tests for margin threshold and downgrade scenarios.
-
-ACCEPTANCE: Margin includes 20% buffer; downgrade/rollback triggers at correct thresholds.
-```
-
-### Task 3: Volume and Price Normalization (Coding Agent)
-**Attach**: Include/RPEA/order_engine.mqh, .kiro/specs/rpea-m3/design.md, .kiro/specs/rpea-m3/tasks.md
-
-```
-Implement Task 3 from tasks.md: "Create Volume and Price Normalization System"
-
-GOAL: SYMBOL_VOLUME_STEP rounding and symbol point normalization with validation.
-
-FOCUS:
-- Implement OE_NormalizeVolume(symbol, volume): round to SYMBOL_VOLUME_STEP; clamp to min/max.
-- Implement OE_NormalizePrice(symbol, price): round to symbol point; respect SYMBOL_TRADE_STOPS_LEVEL.
-- Add unit tests: rounding, boundary conditions, invalid inputs.
-
-ACCEPTANCE: All volumes rounded to valid steps; prices normalized to symbol points.
-```
-
-### Task 4: Basic Order Placement with Position Limits (Coding Agent)
-**Attach**: Include/RPEA/order_engine.mqh, .kiro/specs/rpea-m3/tasks.md
-
-```
-Implement Task 4 from tasks.md: "Implement Basic Order Placement with Position Limits"
-
-GOAL: Enforce MaxOpenPositionsTotal, MaxOpenPerSymbol, MaxPendingsPerSymbol on placement.
-
-FOCUS:
-- Implement limit checks before any OrderSend; emit clear error messages on violations.
-- Respect broker min/max volume and stops level via normalization helpers.
-- Unit tests for limit enforcement and successful placement paths.
-
-ACCEPTANCE: Orders respect position limits; proper error messages for violations.
-```
-
 ### Task 5: Retry Policy System (Coding Agent)
 **Attach**: Include/RPEA/order_engine.mqh, Include/RPEA/config.mqh, .kiro/specs/rpea-m3/design.md
 
@@ -385,11 +285,30 @@ FOCUS:
 ACCEPTANCE: Market orders reject excessive slippage; retry logic works correctly.
 ```
 
-### Task 8: OCO Relationship Management (Coding Agent)
+### HOLD POINT 1 (Q&A Agent after Tasks 1-6 - Phase 1 Complete)
+```
+Audit Phase 1 (Foundation) for compliance:
+
+1. OrderEngine class matches design.md? (structs: OrderRequest, OrderResult, QueuedAction; methods: PlaceOrder, ModifyOrder, CancelOrder, etc.)
+2. Event model correct? (OnInit→Init, OnTradeTransaction→OnTradeTxn BEFORE OnTimer, OnDeinit→OnShutdown)
+3. Idempotency system working? (intent_id generation, dedup, persistence to Files/RPEA/state/intents.json)
+4. Volume normalization per design? (SYMBOL_VOLUME_STEP rounding, min/max clamps)
+5. Price normalization per design? (SYMBOL_POINT rounding, SYMBOL_TRADE_STOPS_LEVEL validation)
+6. Position limits enforced? (MaxOpenPositionsTotal=2, MaxOpenPerSymbol=1, MaxPendingsPerSymbol=2)
+7. Retry logic working? (MaxRetryAttempts=3, InitialRetryDelayMs=300, fail-fast on NO_MONEY/TRADE_DISABLED)
+8. Market fallback working? (MaxSlippagePoints enforcement, retry integration)
+9. All unit tests passing? (Tasks 1-6)
+10. MQL5 style? (no static, early returns, no array alias, explicit types)
+11. Compiles without errors?
+
+Provide pass/fail per item. If any fail, specify which task needs fixes.
+```
+
+### Task 7: OCO Relationship Management (Coding Agent)
 **Attach**: Include/RPEA/order_engine.mqh, .kiro/specs/rpea-m3/tasks.md
 
 ```
-Implement Task 8 from tasks.md: "Implement OCO Relationship Management"
+Implement Task 7 from tasks.md: "Implement OCO Relationship Management"
 
 GOAL: OCO creation, expiry alignment, sibling cancel/resize.
 
@@ -401,11 +320,11 @@ FOCUS:
 ACCEPTANCE: OCO relations behave per acceptance; metadata tracked.
 ```
 
-### Task 9: Partial Fill Handler (Coding Agent)
+### Task 8: Partial Fill Handler (Coding Agent)
 **Attach**: Include/RPEA/order_engine.mqh, .kiro/specs/rpea-m3/design.md
 
 ```
-Implement Task 9 from tasks.md: "Create Partial Fill Handler with OCO Volume Adjustment"
+Implement Task 8 from tasks.md: "Create Partial Fill Handler with OCO Volume Adjustment"
 
 GOAL: Adjust sibling volume on partials via OnTradeTransaction.
 
@@ -416,11 +335,29 @@ FOCUS:
 ACCEPTANCE: Partial fills adjust sibling before next timer; aggregation works.
 ```
 
-### Task 10: Budget Gate (Coding Agent)
+### HOLD POINT 2 (Q&A Agent after Tasks 7-8 - Phase 2 Complete)
+```
+Audit Phase 2 (OCO + Partial Fills) for compliance:
+
+1. OCO relationships tracked? (ticket pairs, expiry aligned to session cutoff, metadata stored)
+2. OCO sibling cancellation working? (fill triggers immediate cancel of opposite side)
+3. OCO expiry working? (pendings expire at session cutoff or after configured TTL)
+4. Risk-reduction safety working? (if fill would exceed risk limits, sibling cancelled/resized)
+5. Partial fill detection working? (OnTradeTransaction processes fills immediately)
+6. OCO volume adjustment working? (sibling volume adjusted using fill ratio math: sibling_vol × (filled/requested))
+7. Partial fill aggregation working? (multiple partials tracked correctly)
+8. OnTradeTransaction fires BEFORE OnTimer? (critical for OCO adjustments)
+9. All unit tests passing? (Tasks 7-8)
+10. Integration test: Place OCO, fill one side, verify other cancels?
+
+Provide pass/fail per item. Test OCO in Strategy Tester before proceeding.
+```
+
+### Task 9: Budget Gate (Coding Agent)
 **Attach**: Include/RPEA/risk.mqh, Include/RPEA/order_engine.mqh, Include/RPEA/config.mqh
 
 ```
-Implement Task 10 from tasks.md: "Implement Budget Gate with Position Snapshot Locking"
+Implement Task 9 from tasks.md: "Implement Budget Gate with Position Snapshot Locking"
 
 GOAL: Enforce open+pending+next ≤ 0.9 × min(room_today, room_overall) under a lock.
 
@@ -431,11 +368,11 @@ FOCUS:
 ACCEPTANCE: Snapshot locking used; five inputs and gate_pass logged.
 ```
 
-### Task 11: News CSV Fallback (Coding Agent)
+### Task 10: News CSV Fallback (Coding Agent)
 **Attach**: Include/RPEA/news.mqh, Include/RPEA/config.mqh
 
 ```
-Implement Task 11 from tasks.md: "Create News CSV Fallback System"
+Implement Task 10 from tasks.md: "Create News CSV Fallback System"
 
 GOAL: Parse CSV fallback with schema and staleness checks.
 
@@ -447,26 +384,37 @@ FOCUS:
 ACCEPTANCE: CSV fallback works when API fails; stale data rejected.
 ```
 
-### Task 14: XAUEUR Proxy Mode (Coding Agent)
-**Attach**: Include/RPEA/synthetic.mqh, .kiro/specs/rpea-m3/design.md
+
+
+### Task 11: Synthetic Price Manager for Signal Generation (Coding Agent)
+**Attach**: .kiro/specs/rpea-m3/design.md, .kiro/specs/rpea-m3/tasks.md, Include/RPEA/synthetic.mqh, Include/RPEA/indicators.mqh
 
 ```
-Implement Task 14 from tasks.md: "Create XAUEUR Proxy Mode Implementation"
+Implement Task 11 from tasks.md: "Create Synthetic Price Manager for Signal Generation"
 
-GOAL: Execute via XAUUSD with synthetic SL distance mapping.
+GOAL: Build XAUEUR synthetic prices and bars for BWISC signal generation (NOT for execution).
 
 FOCUS:
-- Map sl_xau ≈ sl_synth * EURUSD_rate; size volume using mapped distance.
-- Log execution_mode=proxy; validate budget gate and caps.
+- Implement GetSyntheticPrice: XAUEUR = XAUUSD / EURUSD (use consistent bid/bid or ask/ask)
+- Implement BuildSyntheticBars: synchronize M1 bars from XAUUSD and EURUSD, forward-fill gaps
+- Cache synthetic OHLC bars for ATR/MA/RSI calculations
+- NO execution logic - this is signal generation only
+- Log synthetic price calculations for debugging
 
-ACCEPTANCE: Proxy mode maps distances correctly; executes single-leg orders.
+CRITICAL: XAUEUR is used as a SIGNAL SOURCE only. When BWISC generates a signal from XAUEUR data, Task 15 will map execution to XAUUSD (proxy mode). Do NOT implement two-leg execution or replication logic.
+
+ACCEPTANCE: XAUEUR synthetic prices calculated correctly (XAUUSD/EURUSD), synthetic OHLC bars available for ATR/MA/RSI, BWISC can generate signals from XAUEUR data, no execution code present.
+
+Expected: ~200 lines
 ```
 
-### Task 16: Queue Manager (Coding Agent)
+
+
+### Task 12: Queue Manager (Coding Agent)
 **Attach**: Include/RPEA/order_engine.mqh, Include/RPEA/config.mqh
 
 ```
-Implement Task 16 from tasks.md: "Create Queue Manager with Bounds and TTL Management"
+Implement Task 12 from tasks.md: "Create Queue Manager with Bounds and TTL Management"
 
 GOAL: News-window action queuing with bounds and TTL.
 
@@ -477,11 +425,11 @@ FOCUS:
 ACCEPTANCE: Queue bounds respected; TTL works; precondition validation enforced.
 ```
 
-### Task 17: Trailing Stop Management (Coding Agent)
+### Task 13: Trailing Stop Management (Coding Agent)
 **Attach**: Include/RPEA/order_engine.mqh, .kiro/specs/rpea-m3/design.md
 
 ```
-Implement Task 17 from tasks.md: "Implement Trailing Stop Management with Queue Integration"
+Implement Task 13 from tasks.md: "Implement Trailing Stop Management with Queue Integration"
 
 GOAL: Trailing activates at +1R; queues during news; revalidates afterward.
 
@@ -492,11 +440,32 @@ FOCUS:
 ACCEPTANCE: Trailing/queue behavior matches acceptance; tests pass.
 ```
 
-### Task 18: Comprehensive Audit Logging (Coding Agent)
+### HOLD POINT 3 (Q&A Agent after Tasks 9-13 - Phase 3 Complete)
+```
+Audit Phase 3 (Risk + Trailing + Queue) for compliance:
+
+1. Budget gate uses position snapshots? (locks positions before calculating risk)
+2. Budget gate formula correct? (open_risk + pending_risk + next_trade ≤ 0.9 × min(room_today, room_overall))
+3. Budget gate logs 5 inputs? (open_risk, pending_risk, next_trade, room_today, room_overall + gate_pass boolean)
+4. Config keys present? (BudgetGateLockMs, RiskGateHeadroom=0.90)
+5. News CSV fallback working? (schema validation, staleness check, NewsCSVMaxAgeHours enforcement)
+6. News CSV schema correct? (timestamp_utc,symbol,impact,source,event,prebuffer_min,postbuffer_min)
+7. Synthetic price manager working? (XAUEUR = XAUUSD / EURUSD calculation)
+8. Synthetic bars building? (forward-fill for gaps, available for ATR/MA/RSI)
+9. XAUEUR used for SIGNALS ONLY? (not execution - verify no two-leg orders)
+10. Queue manager working? (MAX_QUEUE_SIZE, TTL expiration, prioritization)
+11. Trailing activates at +1R? (moves SL by ATR × TrailMult)
+12. Trailing queues during news? (updates queued, executed post-news with precondition checks)
+13. All unit tests passing? (Tasks 9-13)
+
+Provide pass/fail per item. Test trailing + queue in Strategy Tester.
+```
+
+### Task 14: Comprehensive Audit Logging (Coding Agent)
 **Attach**: Include/RPEA/logging.mqh, Files/RPEA/logs/
 
 ```
-Implement Task 18 from tasks.md: "Create Comprehensive Audit Logging System"
+Implement Task 14 from tasks.md: "Create Comprehensive Audit Logging System"
 
 GOAL: Output full CSV row per placement/adjust/cancel with required fields.
 
@@ -507,28 +476,35 @@ FOCUS:
 ACCEPTANCE: CSV matches schema; all activities logged.
 ```
 
-### Task 19: Integration with Risk/Equity/News (Coding Agent)
-**Attach**: Include/RPEA/order_engine.mqh, Experts/FundingPips/RPEA.mq5
+### Task 15: Integration with Risk Management and XAUEUR Signal Mapping (Coding Agent)
+**Attach**: Include/RPEA/order_engine.mqh, Include/RPEA/allocator.mqh, Experts/FundingPips/RPEA.mq5, .kiro/specs/rpea-m3/tasks.md
 
 ```
-Implement Task 19 from tasks.md: "Integrate Order Engine with Existing Risk Management"
+Implement Task 15 from tasks.md: "Integrate Order Engine with Existing Risk Management and XAUEUR Signal Mapping"
 
-GOAL: Integrate with risk engine, equity guardian, news filter.
+GOAL: Full integration with risk/equity/news + XAUEUR synthetic signal mapping to XAUUSD execution.
 
 FOCUS:
-- Respect caps and rooms; use News_IsBlocked; no duplication of logic.
-- Master (funded) accounts: enforce SL set within 30 seconds of position open; track open_time and validate SL presence.
-- Log enforcement violations with [OrderEngine] prefix: "Master SL enforcement: ticket X, opened at Y, SL set at Z (Δt=N seconds)".
-- Protective exits (SL/TP/kill-switch) always allowed during news windows per finalspec.md Decision 1.
+- Integrate with risk.mqh, equity_guardian.mqh, news.mqh (no logic duplication)
+- Respect caps and rooms; use News_IsBlocked; enforce Master SL ≤30s
+- **XAUEUR Signal Mapping**: When signal_symbol == "XAUEUR", execute on "XAUUSD" with SL/TP distances scaled by current EURUSD rate
+- Implement GetExecutionSymbol(signal_symbol) → returns "XAUUSD" for "XAUEUR", otherwise returns signal_symbol
+- Implement MapSLDistance(signal_symbol, exec_symbol, sl_distance) → multiplies by EURUSD rate for XAUEUR signals
+- Log XAUEUR signal mapping: "[OrderEngine] XAUEUR signal mapped to XAUUSD: sl_synth=X, eurusd=Y, sl_xau=Z"
+- Protective exits (SL/TP/kill-switch) always allowed during news windows
 
-ACCEPTANCE: Integration seamless; Master SL ≤30s enforcement tracked and logged with timestamps; protective exits bypass news restrictions; all risk/equity/news checks flow through existing modules without duplication.
+CRITICAL: XAUEUR signals execute as single-leg XAUUSD orders (proxy mode). No two-leg replication, no atomic operations.
+
+ACCEPTANCE: Order engine respects all risk constraints; XAUEUR signals map to XAUUSD execution with proper SL/TP distance scaling (multiply by EURUSD rate); Master SL ≤30s enforcement logged; integration seamless.
+
+Expected: ~150 lines
 ```
 
-### Task 20: State Recovery and Reconciliation (Coding Agent)
+### Task 16: State Recovery and Reconciliation (Coding Agent)
 **Attach**: Include/RPEA/persistence.mqh, Include/RPEA/order_engine.mqh
 
 ```
-Implement Task 20 from tasks.md: "Implement State Recovery and Reconciliation on Startup"
+Implement Task 16 from tasks.md: "Implement State Recovery and Reconciliation on Startup"
 
 GOAL: Restore intents/queued actions; reconcile broker state before actions.
 
@@ -539,11 +515,11 @@ FOCUS:
 ACCEPTANCE: Full recovery on restart; broker reconciliation correct.
 ```
 
-### Task 21: Error Handling and Resilience (Coding Agent)
+### Task 17: Error Handling and Resilience (Coding Agent)
 **Attach**: Include/RPEA/order_engine.mqh
 
 ```
-Implement Task 21 from tasks.md: "Add Comprehensive Error Handling and Resilience Features"
+Implement Task 17 from tasks.md: "Add Comprehensive Error Handling and Resilience Features"
 
 GOAL: Self-healing behaviors for transient failures.
 
@@ -554,11 +530,52 @@ FOCUS:
 ACCEPTANCE: Handles error conditions gracefully; self-heals when possible.
 ```
 
-### Task 23: Performance Optimization (Coding Agent)
+### HOLD POINT 4 (Q&A Agent after Tasks 14-17 - Phase 4 Complete)
+```
+Audit Phase 4 (Integration + Polish) for compliance:
+
+1. Audit logging complete? (all required CSV columns present: timestamp, intent_id, action_id, symbol, mode, prices, volumes, tickets, retry_count, gate metrics, confidence, efficiency, news_window_state)
+2. CSV schema matches spec? (verify column order and format)
+3. Integration with risk/equity/news working? (no logic duplication, uses existing modules)
+4. XAUEUR signal mapping working? (when signal_symbol=="XAUEUR", executes on "XAUUSD" with SL/TP scaled by EURUSD rate)
+5. XAUEUR mapping logic in Task 15? (verify GetExecutionSymbol and MapSLDistance functions)
+6. Master account SL enforcement? (SL set within 30 seconds, late enforcement logged)
+7. State recovery working? (intents/queued actions restored on restart, broker reconciliation)
+8. Error handling comprehensive? (network outages, margin failures, actionable logs)
+9. All unit tests passing? (Tasks 14-17)
+10. End-to-end test passes? (signal → risk check → order → fill → trailing → close)
+11. XAUEUR end-to-end test passes? (XAUEUR signal → XAUUSD execution with scaled SL/TP)
+
+Provide pass/fail per item. Run full end-to-end test in Strategy Tester.
+```
+
+### Task 18: Integration Tests (Testing Agent) - OPTIONAL
+**Attach**: Tests/RPEA/integration_tests.mqh, Include/RPEA/order_engine.mqh
+
+```
+Implement Task 18 from tasks.md: "Create Integration Tests for End-to-End Order Flows"
+
+NOTE: This task is optional for challenge. Manual testing in Strategy Tester is acceptable.
+
+GOAL: E2E suite covering OCO, news queues, budget gate rejection, XAUEUR signal mapping.
+
+FOCUS:
+- Test OCO fill and cancel
+- Test news queue processing
+- Test partial fill adjustment
+- Test budget gate rejection
+- Test XAUEUR signal → XAUUSD execution mapping
+
+ACCEPTANCE: Integration tests pass, or manual testing in Strategy Tester confirms all scenarios work.
+```
+
+### Task 19: Performance Optimization (Coding Agent) - OPTIONAL
 **Attach**: Include/RPEA/order_engine.mqh, Include/RPEA/synthetic.mqh
 
 ```
-Implement Task 23 from tasks.md: "Implement Performance Optimization and Memory Management"
+Implement Task 19 from tasks.md: "Implement Performance Optimization and Memory Management"
+
+NOTE: This task is optional for challenge. Skip if time-constrained.
 
 GOAL: Keep CPU <2%, memory bounded.
 
@@ -569,11 +586,13 @@ FOCUS:
 ACCEPTANCE: CPU remains low; memory stable; no regressions.
 ```
 
-### Task 24: Documentation and Configuration Validation (Coding Agent)
+### Task 20: Documentation and Configuration Validation (Coding Agent) - OPTIONAL
 **Attach**: Include/RPEA/config.mqh, README.md
 
 ```
-Implement Task 24 from tasks.md: "Create Documentation and Configuration Validation"
+Implement Task 20 from tasks.md: "Create Documentation and Configuration Validation"
+
+NOTE: This task is optional for challenge. Skip if time-constrained.
 
 GOAL: Validate parameters and document configuration.
 
@@ -586,40 +605,101 @@ FOCUS:
 ACCEPTANCE: All parameters validated on startup with range checks; documentation includes complete config reference with defaults, ranges, and dependencies; validation failures produce actionable error messages.
 ```
 
-### Task 15: XAUEUR Replication Mode (Coding Agent)
-**Attach**: .kiro/specs/rpea-m3/design.md, .kiro/specs/rpea-m3/tasks.md, Include/RPEA/synthetic.mqh, Include/RPEA/order_engine.mqh
+
+
+### Task 21: Dynamic Position Sizing (Coding Agent)
+**Attach**: Include/RPEA/risk.mqh, Include/RPEA/allocator.mqh
 
 ```
-Implement Task 15 from tasks.md: "Implement XAUEUR Replication Mode with Two-Leg Coordination"
+Implement Task 21 from tasks.md: "Implement Dynamic Position Sizing Based on Confidence"
 
-GOAL: Delta-accurate two-leg execution with automatic downgrade when replication unsafe.
+GOAL: Scale risk by BWISC confidence to increase size on high-confidence setups.
 
 FOCUS:
-- Calculate leg volumes using replication formulas (ContractXAU/ContractFX, EURUSD rate).
-- Use AtomicOrderManager for Begin/Commit/Rollback and share execution lock.
-- Validate margin via ReplicationMarginCalculator (20% buffer) and downgrade to proxy when required.
-- Persist execution_mode and leg tickets for audit + recovery.
-- Implement NEWS_PAIR_PROTECT: if one leg hits SL/TP during news window, immediately close other leg and log NEWS_PAIR_PROTECT.
-- Downgrade decision tree: STALE quotes → proxy; margin shortfall → proxy; atomic failure → fail-fast.
+- Formula: effective_risk = RiskPct × confidence
+- High confidence (|Bias| ≥ 0.8) → larger position (e.g., 0.9 conf → 1.35% risk)
+- Low confidence (|Bias| = 0.6) → smaller position (e.g., 0.7 conf → 1.05% risk)
+- Unit tests for risk scaling at different confidence levels
 
-ACCEPTANCE: Replication succeeds when margin/quotes valid, downgrades cleanly to proxy on STALE/margin issues, NEWS_PAIR_PROTECT closes orphaned leg during news, tests for rollback + downgrade scenarios added.
+ACCEPTANCE: Position sizes scale with confidence; high-confidence setups get larger sizes.
+
+Expected: ~10 lines
 ```
 
-### Task 22: Integration Tests & Fake Broker (Testing Agent)
-**Attach**: Tests/RPEA/integration_tests.mqh, Tests/RPEA/fake_broker.mqh, Include/RPEA/order_engine.mqh, Include/RPEA/synthetic.mqh
+### Task 22: Spread Filter (Coding Agent)
+**Attach**: Include/RPEA/liquidity.mqh
 
 ```
-Implement Task 22 from tasks.md: "Create Integration Tests for End-to-End Order Flows"
+Implement Task 22 from tasks.md: "Add Spread Filter to Liquidity Check"
 
-GOAL: Deterministic E2E suite covering OCO, replication rollback, news queues, budget gate rejection.
+GOAL: Reject trades when spread exceeds threshold relative to ATR.
 
 FOCUS:
-- Build FakeBroker with SetTestSeed, SimulateOrderFill/Reject/Partial, slippage + margin toggles.
-- Cover scenarios listed in tasks.md (OCO cancel, synthetic rollback, news queue release, partial fill adjustment, budget gate rejection).
-- Ensure TestSeed=12345 yields stable runs and log paths mirror production audit format.
+- Logic: Reject if current_spread > ATR × 0.005 (0.5% of ATR, configurable)
+- Get current spread: SymbolInfoInteger(symbol, SYMBOL_SPREAD) × SymbolInfoDouble(symbol, SYMBOL_POINT)
+- Compare to ATR threshold
+- Log rejection with spread value
 
-ACCEPTANCE: Five integration tests pass 10 consecutive runs, failure output actionable, suite callable from CI harness.
+ACCEPTANCE: Wide spreads (e.g., XAUUSD > 50 points during news) block entry; normal spreads allow entry.
+
+Expected: ~15 lines
 ```
+
+### Task 23: Breakeven Stop (Coding Agent)
+**Attach**: Include/RPEA/order_engine.mqh
+
+```
+Implement Task 23 from tasks.md: "Implement Breakeven Stop at +0.5R"
+
+GOAL: Move SL to breakeven at +0.5R profit to protect winners early.
+
+FOCUS:
+- At +0.5R → move SL to entry + spread buffer
+- At +1R → activate trailing (existing logic)
+- Unit tests for breakeven trigger
+- Integration tests for SL modification
+
+ACCEPTANCE: Positions move to breakeven at +0.5R; trailing activates at +1R; converts potential losers to breakevens.
+
+Expected: ~20 lines
+```
+
+### Task 24: Pending Expiry Optimization (Coding Agent)
+**Attach**: Include/RPEA/order_engine.mqh
+
+```
+Implement Task 24 from tasks.md: "Optimize Pending Order Expiry Timing"
+
+GOAL: Expire pending orders after 45 minutes if not filled to avoid stale fills.
+
+FOCUS:
+- Set pending expiry to TimeCurrent() + (45 × 60) instead of session cutoff
+- Apply to all pending orders (OCO and single)
+- Unit tests for expiry time calculation
+
+ACCEPTANCE: Pending orders expire 45 minutes after placement if not filled; prevents stale fills.
+
+Expected: ~5 lines
+```
+
+### HOLD POINT 5 (Q&A Agent after Tasks 21-24 - Phase 5 Complete)
+```
+Audit Phase 5 (Performance Enhancements) for compliance:
+
+1. Dynamic position sizing working? (effective_risk = RiskPct × confidence)
+2. High confidence setups get larger sizes? (|Bias| ≥ 0.8 → larger position)
+3. Low confidence setups get smaller sizes? (|Bias| = 0.6 → smaller position)
+4. Spread filter working? (rejects when current_spread > ATR × 0.005)
+5. Wide spreads blocked? (e.g., XAUUSD > 50 points during news)
+6. Breakeven stop working? (SL moves to entry + buffer at +0.5R)
+7. Trailing still activates at +1R? (after breakeven)
+8. Pending expiry optimization working? (expires after 45 minutes if not filled)
+9. All unit tests passing? (Tasks 21-24)
+10. Performance tests pass? (position sizing scales correctly, spread filter blocks bad fills, breakeven protects winners)
+
+Provide pass/fail per item. Test enhancements in Strategy Tester with various scenarios.
+```
+
 ---
 
 ## TASK REFERENCE (2-24)
@@ -628,15 +708,14 @@ ACCEPTANCE: Five integration tests pass 10 consecutive runs, failure output acti
 - **Specs**: `.kiro/specs/rpea-m3/{requirements.md (acceptance), design.md (implementation), tasks.md (scope)}`
 - **Agent Flow**: Coding Agent → Unit Testing Agent → (HOLD POINT) → Q&A Agent
 
-**Tasks 2-4**: Idempotency, Volume Norm, Order Placement  
-**Tasks 5-6** → HOLD 2: Retry Policy, Market Fallback  
-**Tasks 7-9** → HOLD 3: Atomics, OCO, Partial Fills  
-**Tasks 10-11** → HOLD 4: Budget Gate, News CSV  
-**Tasks 12-15**: Synthetics (Price Manager, Margin Calc, Proxy, Replication)  
-**Tasks 16-18**: Queue Manager, Trailing, Audit Logging  
-**Tasks 19-21**: Integration with risk/equity/news  
-**Task 22**: E2E Tests + Fake Broker  
-**Tasks 23-24**: Performance, Documentation
+**Tasks 1-4**: Scaffolding, intents, normalization, placement  
+**Tasks 5-6** → HOLD 1: Retry policy, market fallback  
+**Tasks 7-8** → HOLD 2: OCO management, partial fills  
+**Tasks 9-13** → HOLD 3: Budget gate, news fallback, synthetic signals, queue, trailing  
+**Tasks 14-17** → HOLD 4: Audit logging, integration, recovery, resilience  
+**Task 18**: Integration tests (optional)  
+**Tasks 19-20**: Performance + documentation polish (optional)  
+**Tasks 21-24** → HOLD 5: Confidence sizing, spread filter, breakeven, expiry
 
 ---
 
@@ -652,7 +731,7 @@ FAKE BROKER: SetTestSeed(), SimulateOrderFill(), SimulateOrderReject(), Simulate
 
 TESTS:
 1. Test_OCOFillAndCancel_EndToEnd: Place OCO, fill one, assert sibling cancelled, verify logs
-2. Test_SyntheticReplicationRollback_EndToEnd: Two-leg XAUEUR, fail leg 2, assert leg 1 rollback
+2. Test_XAUEURProxyMapping_EndToEnd: Fire XAUEUR signal, verify XAUUSD order with EURUSD-scaled SL/TP
 3. Test_NewsQueueProcessing_EndToEnd: Queue during news, execute post-news with revalidation
 4. Test_PartialFillOCOAdjustment_EndToEnd: Partial fill 50%, assert sibling adjusted, OnTradeTxn before timer
 5. Test_BudgetGateRejection_EndToEnd: Near limit, attempt order, assert rejection + log
@@ -710,20 +789,28 @@ Update [file].
 ✅ Commit after each HOLD POINT  
 ✅ Use `read_lints` after Coding Agent  
 ✅ Deterministic seeds for stress tests  
-✅ Implement fake broker (Task 22) early  
+✅ Implement fake broker (Task 18) early  
 ✅ Never skip HOLD POINT reviews
 
 ---
 
 ## QUICK START
 
-1. Phase 1: Repo-Info + Q&A validation (1 hour)
-2. Tasks 1-4 → HOLD 1 → Audit → Proceed
-3. Tasks 5-24 (repeat pattern) → HOLDs 2-4
-4. Phase 3: E2E tests + Integration
+1. **Phase 1: Setup** → Repo-Info + Q&A validation (1 hour)
+2. **Phase 1: Foundation** → Tasks 1-6 → HOLD 1 → Audit
+3. **Phase 2: OCO** → Tasks 7-8 → HOLD 2 → Audit
+4. **Phase 3: Risk/Trailing** → Tasks 9-13 → HOLD 3 → Audit
+5. **Phase 4: Integration** → Tasks 14-17 → HOLD 4 → Audit
+6. **Phase 5: Enhancements** → Tasks 21-24 → HOLD 5 → Audit
+7. **Phase 3: Testing** → Manual testing in Strategy Tester
 
-**Total**: 20-30 hours agent-assisted (vs. 60-80 manual)  
+**Total**: 17-22 days (20-30 hours agent-assisted vs. 60-80 manual)  
 **Human time**: 3-5 hours (reviews + final testing)
 
-**Ready?** Start Phase 1: Repo-Info Agent. ✨
+**Key Simplifications:**
+- 24 tasks (not 28) - removed atomic operations and replication
+- XAUEUR is signal-only (Task 11) - execution maps to XAUUSD (Task 15)
+- No two-leg replication complexity
+- Optional tasks: 18-20 (can skip for challenge)
 
+**Ready?** Start Phase 1: Repo-Info Agent. ✨
