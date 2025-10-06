@@ -49,8 +49,6 @@ Convert the RPEA M3 design into a series of atomic implementation steps for the 
   - **Acceptance**: Orders respect position limits, proper error messages for limit violations
   - _Requirements: 9.1_
 
-**HOLD POINT 1**: Review scaffolding, idempotency, normalization, and basic order placement before proceeding.
-
 - [ ] 5. Create Retry Policy System with MT5 Error Code Mapping
   - **Goal**: Implement comprehensive retry logic with configurable error code policies
   - **Files**: `Include/RPEA/order_engine.mqh`, `Include/RPEA/config.mqh`
@@ -67,7 +65,7 @@ Convert the RPEA M3 design into a series of atomic implementation steps for the 
   - **Acceptance**: Market orders reject excessive slippage per MaxSlippagePoints; retries integrate with Task 5 defaults (≤3 attempts, 300ms backoff); fail-fast on TRADE_DISABLED and NO_MONEY
   - _Requirements: 2.2, 2.3, 2.4, 2.5_
 
-**HOLD POINT 2**: Review retry policy implementation and market order fallback before OCO management.
+**HOLD POINT 1**: Review scaffolding, idempotency, normalization, basic order placement, retry policy, and market fallback before OCO management.
 
 - [ ] 7. Implement OCO Relationship Management
   - **Goal**: OCO order establishment, expiry alignment, sibling cancellation, and risk-reduction safety tracking
@@ -85,7 +83,7 @@ Convert the RPEA M3 design into a series of atomic implementation steps for the 
   - **Acceptance**: Partial fills processed via OnTradeTransaction adjust OCO sibling volumes before the next timer cycle, fill aggregation works
   - _Requirements: 6.1, 6.2, 6.5_
 
-**HOLD POINT 3**: Review OCO management and partial fill handling before budget integration.
+**HOLD POINT 2**: Review OCO management and partial fill handling before budget integration.
 
 - [ ] 9. Implement Budget Gate with Position Snapshot Locking
   - **Goal**: Budget gate validation with locked position snapshots and exact formula implementation with configurable parameters
@@ -102,8 +100,6 @@ Convert the RPEA M3 design into a series of atomic implementation steps for the 
   - **Tests**: Unit tests for CSV parsing, integration tests with news filtering
   - **Acceptance**: CSV fallback works when API fails, staleness detection prevents old data usage, reject file if missing required columns [timestamp_utc,symbol,impact,source,event,prebuffer_min,postbuffer_min] or if mtime exceeds config `NewsCSVMaxAgeHours`; CSV path read from `NewsCSVPath`
   - _Requirements: 10.6_
-
-**HOLD POINT 4**: Review budget gate integration and news CSV fallback before synthetic signal generation.
 
 - [ ] 11. Create Synthetic Price Manager for Signal Generation
   - **Goal**: XAUEUR synthetic price calculation and bar building for BWISC signal generation (not for execution)
@@ -129,6 +125,8 @@ Convert the RPEA M3 design into a series of atomic implementation steps for the 
   - **Tests**: Unit tests for trailing calculations, integration tests with news queuing and post-news revalidation
   - **Acceptance**: Trailing activates at +1R, queues trailing/SLTP adjustments during news windows, enforces TTL and precondition validation before executing post-news
   - _Requirements: 3.1, 3.3_
+
+**HOLD POINT 3**: Review budget gate, news CSV fallback, synthetic signal generation, queue manager, and trailing stop management before integration.
 
 - [ ] 14. Create Comprehensive Audit Logging System
   - **Goal**: Complete CSV audit logging with all required fields including detailed order and risk information
@@ -162,6 +160,8 @@ Convert the RPEA M3 design into a series of atomic implementation steps for the 
   - **Tests**: Unit tests for error scenarios, stress tests for resilience
   - **Acceptance**: System handles all error conditions gracefully, self-heals when possible
   - _Requirements: 8.1, 8.2, 8.3, 8.5_
+
+**HOLD POINT 4**: Review audit logging, integration with risk management and XAUEUR signal mapping, state recovery, and error handling before proceeding to optional tasks.
 
 - [ ] 18. Create Integration Tests for End-to-End Order Flows
   - **Goal**: Comprehensive integration testing with deterministic seeds and fake broker layer for reproducible results
@@ -234,6 +234,8 @@ These 4 additions significantly boost execution quality with minimal complexity.
   - **Acceptance**: Pending orders expire 45 minutes after placement if not filled, preventing stale fills
   - **Impact**: +5-10% on avoiding bad fills
   - _Requirements: 1.5, 1.6_
+
+**HOLD POINT 5**: Review dynamic position sizing, spread filter, breakeven stop, and pending expiry optimization before final testing and deployment.
 
 **M3 Performance Enhancement Summary:**
 - Total additional code: ~50 lines
