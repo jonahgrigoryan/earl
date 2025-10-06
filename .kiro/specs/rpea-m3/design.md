@@ -1,10 +1,99 @@
 # Design Document
 
+## Scope and Deferred Features
+
+### ✅ IN SCOPE (Challenge Phase - 24 Tasks)
+
+**Core Order Engine (Tasks 1-10):**
+- Order placement with position limits
+- OCO relationship management with expiry enforcement
+- Partial fill handling with OCO volume adjustment
+- Retry logic with MT5 error code mapping
+- Market order fallback with slippage protection
+- Volume/price normalization
+- Idempotency system with intent journal
+- Budget gate with position snapshot locking
+- News CSV fallback system
+
+**XAUEUR Signal Generation (Task 11):**
+- Synthetic price calculation (XAUUSD/EURUSD) for BWISC signal generation
+- Synthetic OHLC bar building for indicator calculations
+- **SIGNAL SOURCE ONLY** - not for execution
+
+**Queue & Trailing (Tasks 12-13):**
+- News window action queuing with TTL management
+- Trailing stop management with queue integration
+- Post-news execution with precondition validation
+
+**Integration & Polish (Tasks 14-17):**
+- Comprehensive audit logging
+- Integration with existing risk management
+- **Simple XAUEUR signal mapping**: When BWISC generates signal from XAUEUR data → execute on XAUUSD with SL/TP distances scaled by EURUSD rate
+- State recovery and reconciliation
+- Error handling and resilience
+
+**Performance Enhancements (Tasks 21-24):**
+- Dynamic position sizing based on confidence
+- Spread filter for liquidity check
+- Breakeven stop at +0.5R
+- Pending order expiry optimization (45 minutes)
+
+### ❌ DEFERRED (Post-Challenge)
+
+**Atomic Operation Manager** (~300 lines):
+- Two-leg atomic operations with counter-order rollback
+- Complex transaction management for multi-leg trades
+- Only needed for replication mode execution
+- **Rationale**: Adds complexity without proven benefit during challenge
+
+**Replication Margin Calculator** (~200 lines):
+- Margin calculations for two-leg replication trades
+- Complex sizing logic for correlated pairs
+- Delta-based hedge ratio calculations
+- **Rationale**: Not needed for proxy-only execution
+
+**XAUEUR Proxy Mode (Formal Implementation)** (~280 lines):
+- Formal proxy mode with complex distance mapping
+- Sophisticated SL/TP transformation logic
+- **Replaced with**: Simple signal mapping in Task 15 (multiply SL/TP distances by EURUSD rate)
+- **Rationale**: Simple mapping achieves same goal with 10 lines vs 280 lines
+
+**XAUEUR Replication Mode** (~300 lines):
+- Two-leg replication with delta-based sizing
+- Execute both XAUUSD and EURUSD legs simultaneously
+- Hedge ratio calculations and rebalancing
+- Atomic two-leg coordination
+- **Rationale**: Too complex for challenge phase, uncertain benefit
+
+**Total Deferred Complexity**: ~1,080 lines of code, 4 major tasks, 5-7 days of work
+
+### 🎯 Simplified XAUEUR Approach (Challenge Phase)
+
+**What We're Building:**
+1. **Task 11**: Calculate XAUEUR synthetic prices (XAUUSD/EURUSD) for BWISC signal generation
+2. **Task 15**: When BWISC generates a signal from XAUEUR data → execute on XAUUSD as proxy
+3. **Simple Mapping**: Scale SL/TP distances by current EURUSD rate (e.g., 50 pip SL on XAUEUR → 50 * 1.08 = 54 pip SL on XAUUSD)
+
+**What We're NOT Building:**
+- No two-leg trades (XAUUSD + EURUSD simultaneously)
+- No atomic operations or rollback logic
+- No complex margin calculations
+- No formal proxy mode infrastructure
+- No replication mode at all
+
+**Implementation Guidance for AI Agent:**
+- If you see references to "AtomicOrderManager", "ReplicationMarginCalculator", or "two-leg execution" in this design doc → **IGNORE THEM**
+- These are deferred features documented for future reference
+- Focus only on the 24 tasks in tasks.md
+- XAUEUR is a signal source only; execution is simple XAUUSD orders with scaled SL/TP
+
+---
+
 ## Overview
 
-RPEA M3 implements the Order Engine and Synthetic Cross Support components, providing robust order execution capabilities with OCO pending orders, market fallbacks, trailing stops, and synthetic XAUEUR cross-pair support. The design emphasizes atomic operations, comprehensive error handling, and seamless integration with existing risk management and news compliance systems.
+RPEA M3 implements the Order Engine and Synthetic Cross Support components, providing robust order execution capabilities with OCO pending orders, market fallbacks, trailing stops, and synthetic XAUEUR cross-pair support for signal generation. The design emphasizes comprehensive error handling, idempotency, and seamless integration with existing risk management and news compliance systems.
 
-The architecture follows a modular approach with clear separation of concerns: the Order Engine handles all broker interactions and order lifecycle management, while the Synthetic Manager provides abstraction for cross-pair operations. Both components integrate tightly with the existing Risk Engine and News Filter to ensure compliance and safety.
+The architecture follows a modular approach with clear separation of concerns: the Order Engine handles all broker interactions and order lifecycle management, while the Synthetic Manager provides price calculation for signal generation only. Both components integrate tightly with the existing Risk Engine and News Filter to ensure compliance and safety.
 
 ## Architecture
 
@@ -52,10 +141,10 @@ The architecture follows a modular approach with clear separation of concerns: t
 - **State**: Active orders map, OCO relationships with expiry metadata, queued actions, execution locks
 
 #### Synthetic Manager (`synthetic.mqh`)
-- **Responsibility**: XAUEUR proxy/replication logic, synthetic price calculation, two-leg coordination
-- **Public Interface**: `ExecuteSyntheticOrder()`, `GetSyntheticPrice()`, `BuildSyntheticBars()`, `ValidateReplicationRisk()`
-- **Dependencies**: Order Engine, Risk Engine, Market Data
-- **State**: Synthetic price cache, replication position tracking, margin calculations
+ - **Responsibility**: XAUEUR synthetic price calculation and XAUEUR→XAUUSD signal mapping only (signal source; no two-leg execution)
+ - **Public Interface**: `GetSyntheticPrice()`, `BuildSyntheticBars()`, `ScaleSyntheticDistance()`
+ - **Dependencies**: Risk Engine, Market Data
+ - **State**: Synthetic price cache; no replication or position tracking in M3
 
 #### Queue Manager (within Order Engine)
 - **Responsibility**: News-window action queuing for trailing and SL/TP optimizations, TTL management, post-news execution
@@ -163,39 +252,45 @@ struct QueuedAction {
 
 ### Synthetic Manager Interface
 
+**⚠️ IMPLEMENTATION NOTE**: For challenge phase (Tasks 11 & 15), implement ONLY the price calculation and signal mapping functions. The execution functions (ExecuteSyntheticOrder, ValidateReplicationRisk, etc.) are deferred to post-challenge.
+
 ```cpp
+// ✅ IMPLEMENT THESE (Task 11 - Signal Generation)
 class SyntheticManager {
 public:
-    struct SyntheticOrderRequest {
-        string base_symbol;      // "XAUEUR"
-        ENUM_ORDER_TYPE type;
-        double volume;
-        double sl_distance;
-        double tp_distance;
-        bool use_proxy_mode;
-    };
-    
-    struct SyntheticResult {
-        bool success;
-        vector<ulong> tickets;   // Single ticket for proxy, two for replication
-        double total_margin_used;
-        string execution_mode;   // "PROXY" or "REPLICATION"
-        string error_message;
-    };
-    
-    SyntheticResult ExecuteSyntheticOrder(const SyntheticOrderRequest& request);
+    // Price calculation for BWISC signal generation
     double GetSyntheticPrice(string synthetic_symbol, ENUM_APPLIED_PRICE price_type);
     bool BuildSyntheticBars(string synthetic_symbol, ENUM_TIMEFRAMES timeframe, int count);
+    bool AreQuotesStale(string symbol1, string symbol2);
     
-    // Replication-specific
+private:
+    // XAUEUR = XAUUSD / EURUSD
+    double CalculateXAUEURPrice(ENUM_APPLIED_PRICE price_type);
+    datetime GetLastTickTime(string symbol);
+    static const int MAX_QUOTE_AGE_MS = 5000;
+};
+
+// ✅ IMPLEMENT THIS (Task 15 - Simple Signal Mapping)
+// When signal_symbol == "XAUEUR":
+//   1. Execute on "XAUUSD" 
+//   2. Scale SL/TP distances: distance_xauusd = distance_xaueur * EURUSD_rate
+//   3. Example: 50 pip SL on XAUEUR → 50 * 1.08 = 54 pip SL on XAUUSD
+double ScaleSyntheticDistance(double xaueur_distance, double eurusd_rate);
+
+// ❌ DEFERRED - DO NOT IMPLEMENT (Post-Challenge)
+/*
+class SyntheticManager {
+    struct SyntheticOrderRequest { ... };
+    struct SyntheticResult { ... };
+    
+    SyntheticResult ExecuteSyntheticOrder(const SyntheticOrderRequest& request);
     bool ValidateReplicationRisk(const SyntheticOrderRequest& request);
     bool CloseReplicationPosition(const vector<ulong>& tickets);
     double CalculateReplicationMargin(double xau_volume, double eur_volume);
-    
-    // Proxy-specific  
     double MapSyntheticToProxy(string synthetic_symbol, double synthetic_distance);
     ulong ExecuteProxyOrder(const SyntheticOrderRequest& request);
 };
+*/
 ```
 
 ### Risk Integration Interface
@@ -234,7 +329,7 @@ double CalculateWorstCaseRisk(const OrderRequest& request);
       "tp": 2070.00,
       "expiry": "2024-01-15T11:00:00Z",
       "status": "PENDING|EXECUTED|FAILED|CANCELLED",
-      "execution_mode": "PROXY|REPLICATION|DIRECT",
+      "execution_mode": "PROXY|DIRECT", // "REPLICATION" reserved for post-challenge work
       "oco_sibling_id": "rpea_20240115_103000_002",
       "retry_count": 0,
       "error_messages": [],
@@ -278,7 +373,10 @@ map<ulong, OCORelationship> active_oco_relationships;
 
 ### Synthetic Position Tracking
 
+**❌ DEFERRED – Post-challenge (Not implemented in M3)**
+
 ```cpp
+// Deferred to post-challenge replication work. No synthetic position tracking in M3.
 struct SyntheticPosition {
     string synthetic_symbol;
     vector<ulong> leg_tickets;
@@ -342,7 +440,12 @@ class RetryManager {
 
 ### Atomic Operation Rollback with Explicit Counter-Orders
 
+**❌ DEFERRED - DO NOT IMPLEMENT THIS SECTION**
+
+This entire section is deferred to post-challenge. It's documented here for future reference only.
+
 ```cpp
+// ❌ DEFERRED - DO NOT IMPLEMENT
 class AtomicOrderManager {
     struct AtomicOperation {
         string operation_id;
@@ -490,8 +593,8 @@ class NewsCSVParser {
     bool ValidateCSVSchema(string csv_path);
     bool IsCSVStale(string csv_path, int max_age_hours);
     
-    // CSV Schema: timestamp,impact,countries,symbols,description
-    // Example: 2024-01-15 14:30:00,High,USD,EURUSD;GBPUSD,NFP Release
+    // Required CSV Schema (M3): timestamp_utc,symbol,impact,source,event,prebuffer_min,postbuffer_min
+    // Example: 2024-01-15T14:30:00Z,XAUUSD,High,ForexFactory,NFP,5,5
     
 private:
     bool ParseCSVLine(string line, NewsEvent& event);
@@ -499,14 +602,17 @@ private:
     datetime ParseTimestamp(string timestamp_str);
     
     static const string CSV_DELIMITER = ",";
-    static const string SYMBOL_DELIMITER = ";";
-    static const int MAX_CSV_AGE_HOURS = 24;
+    // CSV path comes from config: NewsCSVPath
+    // Staleness max age comes from config: NewsCSVMaxAgeHours
 };
 ```
 
 ### Synthetic Price Staleness and Margin Model
 
+**⚠️ PARTIAL IMPLEMENTATION**: Implement only SyntheticPriceManager (Task 11). ReplicationMarginCalculator is deferred.
+
 ```cpp
+// ✅ IMPLEMENT THIS (Task 11)
 class SyntheticPriceManager {
     double GetSyntheticPrice(string synthetic_symbol, ENUM_APPLIED_PRICE price_type);
     bool AreQuotesStale(string symbol1, string symbol2);
@@ -514,9 +620,11 @@ class SyntheticPriceManager {
     
 private:
     datetime GetLastTickTime(string symbol);
-    static const int MAX_QUOTE_AGE_MS = 5000; // 5 seconds
+    // Read max age from config: QuoteMaxAgeMs
 };
 
+// ❌ DEFERRED - DO NOT IMPLEMENT (Post-Challenge)
+/*
 class ReplicationMarginCalculator {
     double CalculateReplicationMargin(double xau_volume, double eur_volume);
     bool ValidateMarginAvailability(double required_margin);
@@ -536,6 +644,7 @@ private:
     static const double MARGIN_BUFFER_PCT = 0.20;
     static const double MARGIN_THRESHOLD_PCT = 0.60; // 60% of free margin
 };
+*/
 ```
 
 ### Queue Management with Bounds and Back-pressure
@@ -550,9 +659,8 @@ class BoundedQueueManager {
     void CleanupExpiredActions();
     
 private:
-    static const int MAX_QUEUE_SIZE = 1000;
-    static const int TTL_MINUTES = 5;
-    
+    // Use config keys instead of hardcoded constants
+    // MaxQueueSize (int), QueueTTLMinutes (int), EnableQueuePrioritization (bool)
     vector<QueuedAction> action_queue;
     
     // Back-pressure policy when queue is full
@@ -579,6 +687,8 @@ struct AuditLogEntry {
     double tp;
     int retry_count;
     string execution_mode;     // "PROXY", "REPLICATION", "DIRECT"
+    // M3 usage: "PROXY" for XAUEUR-derived executions (mapped to XAUUSD), "DIRECT" for native symbols.
+    // "REPLICATION" reserved for post-challenge; not used in M3.
     
     // Budget gate inputs
     double open_risk;
@@ -636,10 +746,10 @@ class NewsQueueProcessor {
    - Execution lock behavior
 
 2. **Synthetic Manager**
-   - Proxy mode price mapping accuracy
-   - Replication volume calculations
-   - Margin validation logic
-   - Atomic two-leg execution
+   - XAUEUR synthetic price calculation accuracy (XAUUSD/EURUSD)
+   - Synthetic bar gap fill and cache management
+   - Quote staleness detection (QuoteMaxAgeMs)
+   - Distance scaling helper (XAUEUR → XAUUSD)
 
 3. **Risk Integration**
    - Budget gate formula validation
@@ -654,14 +764,14 @@ class NewsQueueProcessor {
    - News window queuing and post-news execution
 
 2. **Synthetic Cross Operations**
-   - XAUEUR signal execution in both proxy and replication modes
-   - Margin threshold triggering mode downgrade
-   - Two-leg atomic failure and rollback
+- XAUEUR signal mapping to XAUUSD (proxy-only)
+- Verify EURUSD-scaled SL/TP distances
+- No replication, no rollback in M3
 
 3. **Error Recovery**
    - System restart with pending intents
    - Partial fill handling and OCO adjustment
-   - Network failure during atomic operations
+   - Network failure during queued action execution
 
 ### Stress Tests
 
@@ -722,7 +832,7 @@ input int QueuedActionTTLMin = 5;
 input double MaxSlippagePoints = 10.0;
 input int MinHoldSeconds = 120;
 input bool EnableExecutionLock = true;
-input int PendingExpiryGraceSeconds = 60; // align pending expiry to session cut with buffer
+input int PendingExpiryMinutes = 45; // Task 24: expire pendings 45 minutes after placement
 
 // OCO settings
 input bool AutoCancelOCOSibling = true;
@@ -738,15 +848,34 @@ input int LogBufferSize = 1000;
 ### Synthetic Manager Configuration
 
 ```cpp
-// Mode selection (dynamic - replication attempted first when margin allows)
-input bool UseXAUEURProxy = true;  // Default mode, but system attempts replication first
-input double ReplicationMarginThreshold = 0.6; // 60% of free margin
-
+// ✅ IMPLEMENT THESE (Task 11 - Signal Generation)
 // Synthetic price calculation
 input int SyntheticBarCacheSize = 1000;
 input bool ForwardFillGaps = true;
 input int MaxGapBars = 5;
 input int QuoteMaxAgeMs = 5000; // Max age for XAUUSD/EURUSD quotes
+
+// ✅ IMPLEMENT THESE (Task 15 - Signal Mapping)
+// When BWISC generates XAUEUR signal → execute on XAUUSD with scaled SL/TP
+// No additional config needed, just use current EURUSD rate for scaling
+
+// ✅ IMPLEMENT THESE (Other M3 Tasks)
+// News and timing
+input string NewsCSVPath = "Files/RPEA/news/calendar_high_impact.csv";
+input int NewsCSVMaxAgeHours = 24;
+input int BudgetGateLockMs = 1000;
+input double RiskGateHeadroom = 0.90; // 90% of available room
+
+// Queue management
+input int MaxQueueSize = 1000;
+input int QueueTTLMinutes = 5;
+input bool EnableQueuePrioritization = true;
+
+// ❌ DEFERRED - DO NOT IMPLEMENT
+/*
+// Mode selection (dynamic - replication attempted first when margin allows)
+input bool UseXAUEURProxy = true;  // Default mode, but system attempts replication first
+input double ReplicationMarginThreshold = 0.6; // 60% of free margin
 
 // Replication parameters
 input double ContractXAU = 100.0;  // oz per lot
@@ -757,16 +886,7 @@ input double MarginBufferPct = 0.20; // 20% margin buffer
 // Risk mapping
 input double ProxyRiskMultiplier = 1.0;
 input bool EnableReplicationFallback = true;
-
-// News and timing
-input string NewsCSVPath = "Files/RPEA/news/calendar_high_impact.csv";
-input int NewsCSVMaxAgeHours = 24;
-input int BudgetGateLockMs = 1000;
-
-// Queue management
-input int MaxQueueSize = 1000;
-input int QueueTTLMinutes = 5;
-input bool EnableQueuePrioritization = true;
+*/
 ```
 
 ## Risks and Mitigations
@@ -778,7 +898,8 @@ input bool EnableQueuePrioritization = true;
 **Guard**: `IsExecutionLocked()` checks before any OCO operations
 
 ### Risk 2: Replication Atomicity Failure
-**Description**: First leg executes but second leg fails, leaving unhedged exposure
+**❌ DEFERRED – Not applicable to M3**
+**Description (post-challenge)**: First leg executes but second leg fails, leaving unhedged exposure
 **Mitigation**: Immediate rollback of first leg on second leg failure
 **Test**: Simulated broker failures during two-leg execution
 **Guard**: `AtomicOrderManager` with rollback capability
@@ -808,7 +929,8 @@ input bool EnableQueuePrioritization = true;
 **Guard**: File integrity checks on startup
 
 ### Risk 7: Margin Calculation Errors in Replication
-**Description**: Incorrect margin estimates leading to failed executions
+**❌ DEFERRED – Not applicable to M3**
+**Description (post-challenge)**: Incorrect margin estimates leading to failed executions on two-leg trades
 **Mitigation**: Conservative margin buffers and real-time validation
 **Test**: Edge cases with high leverage and volatile markets
 **Guard**: 20% margin buffer above calculated requirements
@@ -857,12 +979,16 @@ sequenceDiagram
 
 ### Synthetic Replication with Rollback
 
+**❌ DEFERRED - This sequence diagram is for post-challenge reference only**
+
 ```mermaid
 sequenceDiagram
     participant SM as Synthetic Manager
     participant OE as Order Engine
     participant RE as Risk Engine
     participant B as Broker
+    
+    Note over SM,B: DEFERRED - Not implemented in challenge phase
     
     SM->>RE: ValidateReplicationRisk(xaueur_request)
     RE-->>SM: validation_passed
@@ -913,3 +1039,51 @@ sequenceDiagram
 ```
 
 This design provides a robust foundation for implementing the Order Engine and Synthetic Cross Support components with comprehensive error handling, clear module boundaries, and thorough risk mitigation strategies.
+
+---
+
+## Implementation Guidance Summary for AI Coding Agent
+
+### ✅ What to Implement (24 Tasks)
+
+**Core Order Engine:**
+- Order placement, OCO management, partial fills, retry logic, market fallback
+- Volume/price normalization, idempotency, budget gate, news CSV fallback
+- Queue management, trailing stops, audit logging, state recovery
+
+**XAUEUR (Simplified):**
+- **Task 11**: Calculate XAUEUR synthetic prices (XAUUSD/EURUSD) for BWISC signal generation
+- **Task 15**: Simple signal mapping - when signal_symbol == "XAUEUR" → execute on "XAUUSD" with SL/TP scaled by EURUSD rate
+
+**Performance Enhancements:**
+- Dynamic position sizing, spread filter, breakeven stop, pending expiry optimization
+
+### ❌ What NOT to Implement (Deferred)
+
+**Do not implement these even if you see them in this design doc:**
+- `AtomicOrderManager` class and all atomic operation logic
+- `ReplicationMarginCalculator` class and margin calculations
+- `ExecuteSyntheticOrder()`, `ValidateReplicationRisk()`, `CloseReplicationPosition()`
+- Two-leg execution, replication mode, formal proxy mode
+- Any code related to "replication", "atomic", "two-leg", or "rollback"
+
+**These sections are documented for future reference only.**
+
+### 🎯 Key Simplifications
+
+1. **XAUEUR is signal-only**: Calculate synthetic prices for BWISC, but execute on XAUUSD
+2. **No two-leg trades**: Single XAUUSD order, not XAUUSD + EURUSD simultaneously
+3. **Simple distance scaling**: `distance_xauusd = distance_xaueur * EURUSD_rate`
+4. **No atomic operations**: No rollback logic, no transaction management
+5. **No margin calculations**: Standard single-leg margin only
+
+### 📋 Implementation Checklist
+
+- [ ] Follow the 24 tasks in tasks.md sequentially
+- [ ] Ignore any references to deferred features in this design doc
+- [ ] For XAUEUR: implement only price calculation (Task 11) and simple signal mapping (Task 15)
+- [ ] Do not implement AtomicOrderManager, ReplicationMarginCalculator, or related classes
+- [ ] Focus on core order execution, OCO management, and trailing stops
+- [ ] Test after each phase using Strategy Tester
+
+**Total Scope**: 24 tasks, ~17-22 days, ~3,500 lines of code (vs 4,580 with deferred features)
