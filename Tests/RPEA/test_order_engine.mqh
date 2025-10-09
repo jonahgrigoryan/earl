@@ -35,52 +35,46 @@ string g_current_test = "";
 
 
 #define ASSERT_TRUE(condition, message) \
-
    do { \
-
       if(condition) { \
-
          g_test_passed++; \
-
          PrintFormat("[PASS] %s: %s", g_current_test, message); \
-
       } else { \
-
          g_test_failed++; \
-
          PrintFormat("[FAIL] %s: %s", g_current_test, message); \
-
       } \
-
    } while(false)
-
-
 
 #define ASSERT_FALSE(condition, message) \
-
    ASSERT_TRUE(!(condition), message)
 
-
-
 #define ASSERT_EQUALS(expected, actual, message) \
-
    do { \
-
       if((expected) == (actual)) { \
-
          g_test_passed++; \
-
          PrintFormat("[PASS] %s: %s (expected=%d, actual=%d)", g_current_test, message, (int)(expected), (int)(actual)); \
-
       } else { \
-
          g_test_failed++; \
-
          PrintFormat("[FAIL] %s: %s (expected=%d, actual=%d)", g_current_test, message, (int)(expected), (int)(actual)); \
-
       } \
-
    } while(false)
+
+#define ASSERT_NEAR(expected, actual, tolerance, message) \
+   do { \
+      double __exp = (expected); \
+      double __act = (actual); \
+      double __tol = (tolerance); \
+      if(MathAbs(__exp - __act) <= __tol) { \
+         g_test_passed++; \
+         PrintFormat("[PASS] %s: %s (expected=%.10f, actual=%.10f, tol=%.10f)", g_current_test, message, __exp, __act, __tol); \
+      } else { \
+         g_test_failed++; \
+         PrintFormat("[FAIL] %s: %s (expected=%.10f, actual=%.10f, tol=%.10f)", g_current_test, message, __exp, __act, __tol); \
+      } \
+   } while(false)
+
+
+#define TEST_FRAMEWORK_DEFINED
 
 
 

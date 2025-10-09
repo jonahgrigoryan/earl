@@ -9,6 +9,7 @@
 
 // Include the test file
 #include <Tests/RPEA/test_order_engine.mqh>
+#include <Tests/RPEA/test_order_engine_normalization.mqh>
 
 //+------------------------------------------------------------------+
 //| Script program start function                                    |
@@ -19,7 +20,8 @@ void OnStart()
 
    // Run all tests
    bool success = TestOrderEngine_RunAll();
-   if(!success)
+   bool normalization_success = TestOrderEngineNormalization_RunAll();
+   if(!success || !normalization_success)
    {
       Print("Order Engine Tests reported failures.");
    }
