@@ -131,10 +131,12 @@ struct AppContext
    bool     permanently_disabled;
    // persistence anchors
    datetime server_midnight_ts;
+   datetime timer_last_check;
 };
 
 // Global context
 static AppContext g_ctx;
+OrderEngine g_order_engine;
 
 // Now that AppContext is defined, include session and scheduler modules
 #include <RPEA/sessions.mqh>
@@ -157,6 +159,7 @@ int OnInit()
    g_ctx.session_newyork = false;
    g_ctx.trading_paused = false;
    g_ctx.permanently_disabled = false;
+   g_ctx.timer_last_check = 0;
 
    // 2) Load persisted challenge state
    Persistence_LoadChallengeState();
@@ -180,7 +183,17 @@ int OnInit()
    News_LoadCsvFallback();
    LogAuditRow("BOOT", "RPEA", 1, "EA boot", "{}");
 
-   // 6) Initialize timer (30s)
+   // 6) Initialize Order Engine (M3 Task 1)
+   if(!g_order_engine.Init())
+   {
+      Print("[OrderEngine] Failed to initialize Order Engine");
+      return(INIT_FAILED);
+   }
+
+   // 7) Reconcile Order Engine state on startup (M3 Task 16 stub)
+   g_order_engine.ReconcileOnStartup();
+
+   // 8) Initialize timer (30s)
    EventSetTimer(30);
 
    return(INIT_SUCCEEDED);
@@ -190,6 +203,8 @@ int OnInit()
 // OnDeinit: flush, stop timer, log shutdown
 void OnDeinit(const int reason)
 {
+   g_order_engine.OnShutdown();
+
    EventKillTimer();
    Persistence_Flush();
    LogAuditRow("SHUTDOWN", "RPEA", 1, "EA deinit", "{}");
@@ -202,7 +217,7 @@ void OnTimer()
    g_ctx.current_server_time = TimeCurrent();
 
    // Server-day rollover handling
-   static datetime last_check = 0;
+   datetime last_check = g_ctx.timer_last_check;
    if(TimeUtils_IsNewServerDay(last_check))
    {
       // compute anchors and reset baselines in persisted state
@@ -222,7 +237,7 @@ void OnTimer()
 
       // Day-count handled in OnTradeTransaction on first DEAL_ENTRY_IN (per spec)
    }
-   last_check = g_ctx.current_server_time;
+   g_ctx.timer_last_check = g_ctx.current_server_time;
 
    // Refresh indicators per symbol (lightweight in M1)
    for(int i=0;i<g_ctx.symbols_count;i++)
@@ -232,16 +247,29 @@ void OnTimer()
       Indicators_Refresh(g_ctx, sym);
    }
 
+   // M3 Task 1: Order Engine timer tick (AFTER transaction processing)
+   g_order_engine.OnTimerTick(g_ctx.current_server_time);
+
    // Delegate to scheduler (logging-only in M1)
    Scheduler_Tick(g_ctx);
 }
 
 //+------------------------------------------------------------------+
-// OnTradeTransaction: forward to OrderEngine hook (no-op now)
+// OnTick: lightweight price monitoring and validation
+void OnTick()
+{
+   g_order_engine.OnTick();
+}
+
+//+------------------------------------------------------------------+
+// OnTradeTransaction: CRITICAL - Process fills immediately before timer
 void OnTradeTransaction(const MqlTradeTransaction& trans,
                         const MqlTradeRequest& request,
                         const MqlTradeResult& result)
 {
+   // M3 Task 1: Process transaction BEFORE any timer housekeeping
+   OrderEngine_OnTradeTxn(trans, request, result);
+
    // Count trading day on first DEAL_ENTRY_IN of the server day
    if(trans.type == TRADE_TRANSACTION_DEAL_ADD && trans.deal > 0)
    {
@@ -251,6 +279,4 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
          State_MarkTradeDayOnce();
       }
    }
-   // Keep existing order engine hook
-   OrderEngine_OnTradeTxn(trans, request, result);
 }

@@ -125,7 +125,7 @@ CRITICAL EVENT ORDERING:
 - OCO sibling adjustments and risk updates happen in OnTradeTransaction, NOT OnTimer
 - OnTimer performs housekeeping, queued actions, and periodic checks AFTER transaction events
 
-CONFIG: MaxRetryAttempts=3, InitialRetryDelayMs=300, RetryBackoffMultiplier=2.0, QueuedActionTTLMin=5, MaxSlippagePoints=10.0, EnableExecutionLock=true, PendingExpiryGraceSeconds=60, AutoCancelOCOSibling=true, OCOCancellationTimeoutMs=1000
+CONFIG: MaxRetryAttempts=3, InitialRetryDelayMs=300, RetryBackoffMultiplier=2.0, QueuedActionTTLMin=5, MaxSlippagePoints=10.0, EnableExecutionLock=true, MinHoldSeconds=120, AutoCancelOCOSibling=true, OCOCancellationTimeoutMs=1000, LogBufferSize=1000
 
 STYLE: No static, early returns, explicit types, 1-2 nesting, [OrderEngine] logs
 
@@ -269,6 +269,26 @@ FOCUS:
 ACCEPTANCE: Error codes trigger correct retry behavior; backoff timing accurate.
 ```
 
+### Task 5: Unit Tests (Unit Testing Agent)
+**Attach**: Include/RPEA/order_engine.mqh, Include/RPEA/config.mqh, test_framework.mqh
+
+```
+Generate tests for Task 5: Retry Policy System
+File: test_order_engine_retry.mqh
+
+Use test_risk.mqh pattern.
+
+TESTS:
+1. Retry_FailFast_TradeDisabled(): TRADE_DISABLED returns false on first attempt.
+2. Retry_FailFast_NoMoney(): NO_MONEY returns false on first attempt.
+3. Retry_ExponentialBackoff(): CONNECTION code schedules ≤3 attempts with 300ms→600ms delays.
+4. Retry_LinearBackoff(): REQUOTE uses linear step (300ms each) and stops at attempt 3.
+5. Retry_PolicyLookup_Default(): Unknown code falls back to linear backoff.
+6. Retry_LogIncludesLastRetcode(): Verify retry log captures retcode and attempt count.
+
+Provide TestOrderEngineRetry_RunAll().
+```
+
 ### Task 6: Market Order Fallback with Slippage (Coding Agent)
 **Attach**: Include/RPEA/order_engine.mqh, Include/RPEA/config.mqh, .kiro/specs/rpea-m3/tasks.md
 
@@ -283,6 +303,26 @@ FOCUS:
 - Log requested vs executed price, slippage, retry_count.
 
 ACCEPTANCE: Market orders reject excessive slippage; retry logic works correctly.
+```
+
+### Task 6: Unit Tests (Unit Testing Agent)
+**Attach**: Include/RPEA/order_engine.mqh, Include/RPEA/config.mqh, test_framework.mqh
+
+```
+Generate tests for Task 6: Market Order Fallback
+File: test_order_engine_market.mqh
+
+Use test_risk.mqh pattern.
+
+TESTS:
+1. MarketFallback_RejectsHighSlippage(): Reject when slippage > MaxSlippagePoints.
+2. MarketFallback_RetriesTransientError(): CONNECTION error retries ≤3 times with backoff.
+3. MarketFallback_StopsOnFailFast(): NO_MONEY aborts immediately and surfaces error.
+4. MarketFallback_StopsOnTradeDisabled(): TRADE_DISABLED aborts immediately without retry.
+5. MarketFallback_LogsRequestedVsExecuted(): Log contains requested/executed price + slippage.
+6. MarketFallback_SucceedsWithinLimits(): Successful path places market order when slippage acceptable.
+
+Provide TestOrderEngineMarket_RunAll().
 ```
 
 ### HOLD POINT 1 (Q&A Agent after Tasks 1-6 - Phase 1 Complete)
@@ -317,7 +357,28 @@ FOCUS:
 - On fill: immediate sibling cancel or risk-reduction resize.
 - Log OCO actions and expiry metadata.
 
+CONFIG: AutoCancelOCOSibling=true, OCOCancellationTimeoutMs=1000, EnableRiskReductionSiblingCancel=true
+
 ACCEPTANCE: OCO relations behave per acceptance; metadata tracked.
+```
+
+### Task 7: Unit Tests (Unit Testing Agent)
+**Attach**: Include/RPEA/order_engine.mqh, Include/RPEA/config.mqh, test_framework.mqh
+
+```
+Generate tests for Task 7: OCO Relationship Management
+File: test_order_engine_oco.mqh
+
+Use test_risk.mqh pattern.
+
+TESTS:
+1. OCO_EstablishStoresMetadata(): Establish pair, verify expiry and sibling tickets tracked.
+2. OCO_FillCancelsSibling(): Fill primary, assert sibling cancelled within OCOCancellationTimeoutMs.
+3. OCO_RiskReductionResize(): Enable risk reduction, assert sibling volume resized accurately.
+4. OCO_ReestablishAfterCancel(): Ensure cancelled sibling clears relationship state.
+5. OCO_LogsActions(): Verify logs include establishment, cancellation, and resize entries.
+
+Provide TestOrderEngineOCO_RunAll().
 ```
 
 ### Task 8: Partial Fill Handler (Coding Agent)
@@ -333,6 +394,25 @@ FOCUS:
 - Apply before next timer cycle; aggregate multiple fills.
 
 ACCEPTANCE: Partial fills adjust sibling before next timer; aggregation works.
+```
+
+### Task 8: Unit Tests (Unit Testing Agent)
+**Attach**: Include/RPEA/order_engine.mqh, test_framework.mqh
+
+```
+Generate tests for Task 8: Partial Fill Handler
+File: test_order_engine_partialfills.mqh
+
+Use test_risk.mqh pattern.
+
+TESTS:
+1. PartialFill_AdjustsSiblingVolume(): 50% fill shrinks sibling volume using exact ratio math.
+2. PartialFill_AggregatesMultipleEvents(): Multiple partials accumulate correctly before completion.
+3. PartialFill_CompletesOnLastShare(): Final fill clears partial state and fires completion logic.
+4. PartialFill_RejectedIfNoSibling(): Ensure handler guards when sibling missing.
+5. PartialFill_LogsAdjustments(): Verify log entries capture fill volume and sibling adjustment.
+
+Provide TestOrderEnginePartialFills_RunAll().
 ```
 
 ### HOLD POINT 2 (Q&A Agent after Tasks 7-8 - Phase 2 Complete)
@@ -363,9 +443,29 @@ GOAL: Enforce open+pending+next ≤ 0.9 × min(room_today, room_overall) under a
 
 FOCUS:
 - Lock position snapshot; compute five inputs; log gate_pass boolean and gating_reason.
-- Expose BudgetGateLockMs, RiskGateHeadroom=0.90.
+
+CONFIG: BudgetGateLockMs=1000, RiskGateHeadroom=0.90
 
 ACCEPTANCE: Snapshot locking used; five inputs and gate_pass logged.
+```
+
+### Task 9: Unit Tests (Unit Testing Agent)
+**Attach**: Include/RPEA/order_engine.mqh, Include/RPEA/config.mqh, test_framework.mqh
+
+```
+Generate tests for Task 9: Budget Gate Snapshot
+File: test_order_engine_budgetgate.mqh
+
+Use test_risk.mqh pattern.
+
+TESTS:
+1. BudgetGate_PassesWithinHeadroom(): Proposed risk below 0.9 × min(room_today, room_overall) passes.
+2. BudgetGate_BlocksOverHeadroom(): Exceeding threshold rejects with gating_reason logged.
+3. BudgetGate_UsesSnapshotLock(): Validate lock acquired/released and snapshot frozen during check.
+4. BudgetGate_LogsFiveInputs(): Verify log prints open_risk, pending_risk, next_trade, room_today, room_overall.
+5. BudgetGate_LockTimeout(): Simulate lock contention → ensure fallback handling/logging.
+
+Provide TestOrderEngineBudgetGate_RunAll().
 ```
 
 ### Task 10: News CSV Fallback (Coding Agent)
@@ -381,7 +481,28 @@ FOCUS:
 - Enforce NewsCSVMaxAgeHours; read path from NewsCSVPath; reject bad schema.
 - Integrate block predicate for affected symbols/legs.
 
+CONFIG: NewsCSVPath="Files/RPEA/news/calendar_high_impact.csv", NewsCSVMaxAgeHours=24
+
 ACCEPTANCE: CSV fallback works when API fails; stale data rejected.
+```
+
+### Task 10: Unit Tests (Unit Testing Agent)
+**Attach**: Include/RPEA/news.mqh, Include/RPEA/config.mqh, test_framework.mqh
+
+```
+Generate tests for Task 10: News CSV Fallback
+File: test_news_csv_fallback.mqh
+
+Use test_risk.mqh pattern.
+
+TESTS:
+1. CSVParser_ValidSchemaLoads(): Valid CSV with required columns loads successfully.
+2. CSVParser_InvalidSchemaRejected(): Missing column triggers schema failure.
+3. CSVParser_StaleFileRejected(): File older than NewsCSVMaxAgeHours rejected.
+4. CSVParser_ParsesPrePostBuffers(): prebuffer/postbuffer minutes parsed correctly.
+5. CSVParser_LogsLoadResult(): Verify log includes path and event count on success/failure.
+
+Provide TestNewsCSVFallback_RunAll().
 ```
 
 
@@ -396,16 +517,38 @@ GOAL: Build XAUEUR synthetic prices and bars for BWISC signal generation (NOT fo
 
 FOCUS:
 - Implement GetSyntheticPrice: XAUEUR = XAUUSD / EURUSD (use consistent bid/bid or ask/ask)
-- Implement BuildSyntheticBars: synchronize M1 bars from XAUUSD and EURUSD, forward-fill gaps
-- Cache synthetic OHLC bars for ATR/MA/RSI calculations
+- Implement BuildSyntheticBars: synchronize M1 bars from XAUUSD and EURUSD, forward-fill gaps (max MaxGapBars=5)
+- Cache synthetic OHLC bars for ATR/MA/RSI calculations (SyntheticBarCacheSize=1000)
+- Quote staleness check: reject if either XAUUSD or EURUSD quote age > QuoteMaxAgeMs (5000ms)
 - NO execution logic - this is signal generation only
 - Log synthetic price calculations for debugging
 
+CONFIG: SyntheticBarCacheSize=1000, ForwardFillGaps=true, MaxGapBars=5, QuoteMaxAgeMs=5000
+
 CRITICAL: XAUEUR is used as a SIGNAL SOURCE only. When BWISC generates a signal from XAUEUR data, Task 15 will map execution to XAUUSD (proxy mode). Do NOT implement two-leg execution or replication logic.
 
-ACCEPTANCE: XAUEUR synthetic prices calculated correctly (XAUUSD/EURUSD), synthetic OHLC bars available for ATR/MA/RSI, BWISC can generate signals from XAUEUR data, no execution code present.
+ACCEPTANCE: XAUEUR synthetic prices calculated correctly (XAUUSD/EURUSD), synthetic OHLC bars available for ATR/MA/RSI, forward-fill works with max 5 gap bars, quote staleness enforced, BWISC can generate signals from XAUEUR data, no execution code present.
 
 Expected: ~200 lines
+```
+
+### Task 11: Unit Tests (Unit Testing Agent)
+**Attach**: Include/RPEA/synthetic.mqh, Include/RPEA/config.mqh, test_framework.mqh
+
+```
+Generate tests for Task 11: Synthetic Price Manager
+File: test_synthetic_manager.mqh
+
+Use test_risk.mqh pattern.
+
+TESTS:
+1. SyntheticPrice_ComputesXAUEUR(): Verify XAUEUR = XAUUSD / EURUSD using bid prices.
+2. SyntheticBars_BuildsWithForwardFill(): Missing bars ≤ MaxGapBars forward-filled correctly.
+3. SyntheticBars_RejectsLargeGaps(): Gaps > MaxGapBars cause failure/log warning.
+4. SyntheticQuotes_StalenessCheck(): Quote age > QuoteMaxAgeMs rejected.
+5. SyntheticCache_ReusesData(): Consecutive requests served from cache within timeframe.
+
+Provide TestSyntheticManager_RunAll().
 ```
 
 
@@ -419,10 +562,33 @@ Implement Task 12 from tasks.md: "Create Queue Manager with Bounds and TTL Manag
 GOAL: News-window action queuing with bounds and TTL.
 
 FOCUS:
-- Enforce MAX_QUEUE_SIZE; TTL expiration; prioritization policy.
-- Allow only risk-reduction during news; revalidate preconditions post-news.
+- Enforce MaxQueueSize; reject or evict actions when limit reached using back-pressure policy (drop oldest non-risk-reduction first).
+- TTL expiration governed by QueueTTLMinutes; expired actions auto-removed with log entries.
+- Prioritize risk-reduction actions; allow trailing/SLTP modifications only post-news revalidation.
+- Preconditions validated before execution (price drift, position still open, intent not stale).
+
+CONFIG: MaxQueueSize=1000, QueueTTLMinutes=5, EnableQueuePrioritization=true, EnableRiskReductionSiblingCancel=true
 
 ACCEPTANCE: Queue bounds respected; TTL works; precondition validation enforced.
+```
+
+### Task 12: Unit Tests (Unit Testing Agent)
+**Attach**: Include/RPEA/order_engine.mqh, Include/RPEA/config.mqh, test_framework.mqh
+
+```
+Generate tests for Task 12: Queue Manager
+File: test_order_engine_queue.mqh
+
+Use test_risk.mqh pattern.
+
+TESTS:
+1. Queue_EnforcesMaxSize(): Hitting MaxQueueSize triggers overflow policy (evict oldest non-risk reduction).
+2. Queue_DropsExpiredActions(): Actions exceeding QueueTTLMinutes removed and logged.
+3. Queue_PrioritizesRiskReduction(): Risk-reduction actions executed before trailing updates.
+4. Queue_RevalidatesPreconditions(): Invalidated action (position closed) skipped with log.
+5. Queue_AllowsPostNewsExecution(): Action queued during news executes after window closes.
+
+Provide TestOrderEngineQueue_RunAll().
 ```
 
 ### Task 13: Trailing Stop Management (Coding Agent)
@@ -440,6 +606,25 @@ FOCUS:
 ACCEPTANCE: Trailing/queue behavior matches acceptance; tests pass.
 ```
 
+### Task 13: Unit Tests (Unit Testing Agent)
+**Attach**: Include/RPEA/order_engine.mqh, test_framework.mqh
+
+```
+Generate tests for Task 13: Trailing Stop Management
+File: test_order_engine_trailing.mqh
+
+Use test_risk.mqh pattern.
+
+TESTS:
+1. Trailing_ActivatesAtOneR(): Reaches +1R → trailing adjustment queued/applied.
+2. Trailing_RespectsNewsQueue(): During news, adjustment queued rather than executed.
+3. Trailing_RevalidatesAfterNews(): Post-news execution rechecks price conditions before modifying.
+4. Trailing_DropsExpiredQueuedAction(): Stale queued trailing update expires per TTL.
+5. Trailing_LogsAdjustments(): Verify log captures old/new SL values and reason.
+
+Provide TestOrderEngineTrailing_RunAll().
+```
+
 ### HOLD POINT 3 (Q&A Agent after Tasks 9-13 - Phase 3 Complete)
 ```
 Audit Phase 3 (Risk + Trailing + Queue) for compliance:
@@ -451,12 +636,13 @@ Audit Phase 3 (Risk + Trailing + Queue) for compliance:
 5. News CSV fallback working? (schema validation, staleness check, NewsCSVMaxAgeHours enforcement)
 6. News CSV schema correct? (timestamp_utc,symbol,impact,source,event,prebuffer_min,postbuffer_min)
 7. Synthetic price manager working? (XAUEUR = XAUUSD / EURUSD calculation)
-8. Synthetic bars building? (forward-fill for gaps, available for ATR/MA/RSI)
-9. XAUEUR used for SIGNALS ONLY? (not execution - verify no two-leg orders)
-10. Queue manager working? (MAX_QUEUE_SIZE, TTL expiration, prioritization)
-11. Trailing activates at +1R? (moves SL by ATR × TrailMult)
-12. Trailing queues during news? (updates queued, executed post-news with precondition checks)
-13. All unit tests passing? (Tasks 9-13)
+8. Synthetic bars building? (forward-fill for gaps with MaxGapBars=5, available for ATR/MA/RSI)
+9. Quote staleness enforced? (reject if XAUUSD or EURUSD quote age > QuoteMaxAgeMs=5000ms)
+10. XAUEUR used for SIGNALS ONLY? (not execution - verify no two-leg orders)
+11. Queue manager working? (MAX_QUEUE_SIZE, TTL expiration, prioritization)
+12. Trailing activates at +1R? (moves SL by ATR × TrailMult)
+13. Trailing queues during news? (updates queued, executed post-news with precondition checks)
+14. All unit tests passing? (Tasks 9-13)
 
 Provide pass/fail per item. Test trailing + queue in Strategy Tester.
 ```
@@ -470,10 +656,13 @@ Implement Task 14 from tasks.md: "Create Comprehensive Audit Logging System"
 GOAL: Output full CSV row per placement/adjust/cancel with required fields.
 
 FOCUS:
-- Columns: timestamp,intent_id,action_id,symbol,mode(proxy|repl),requested_price,executed_price,requested_vol,filled_vol,remaining_vol,tickets[],retry_count,gate_open_risk,gate_pending_risk,gate_next_risk,room_today,room_overall,gate_pass,decision,confidence,efficiency,rho_est,est_value,hold_time,gating_reason,news_window_state.
-- Rotate daily; schema-validate in tests.
+- Columns: timestamp,intent_id,action_id,symbol,mode(proxy|repl),requested_price,executed_price,requested_vol,filled_vol,remaining_vol,tickets[],retry_count,gate_open_risk,gate_pending_risk,gate_next_risk,room_today,room_overall,gate_pass,decision,confidence,efficiency,rho_est,est_value,hold_time,gating_reason,news_window_state
+- Rotate daily; schema-validate in tests
+- Buffer size: LogBufferSize=1000 entries before flush
 
-ACCEPTANCE: CSV matches schema; all activities logged.
+CONFIG: AuditLogPath="Files/RPEA/logs/", LogBufferSize=1000, EnableDetailedLogging=true
+
+ACCEPTANCE: CSV matches schema exactly (including rho_est column); all activities logged; daily rotation works; buffer flushes correctly.
 ```
 
 ### Task 15: Integration with Risk Management and XAUEUR Signal Mapping (Coding Agent)
@@ -486,18 +675,39 @@ GOAL: Full integration with risk/equity/news + XAUEUR synthetic signal mapping t
 
 FOCUS:
 - Integrate with risk.mqh, equity_guardian.mqh, news.mqh (no logic duplication)
-- Respect caps and rooms; use News_IsBlocked; enforce Master SL ≤30s
+- Respect caps and rooms; use News_IsBlocked
+- **Master Account SL Enforcement**: On funded (Master) accounts, SL must be set within 30 seconds of opening; log enforcement status (on-time vs late) with timestamp
 - **XAUEUR Signal Mapping**: When signal_symbol == "XAUEUR", execute on "XAUUSD" with SL/TP distances scaled by current EURUSD rate
 - Implement GetExecutionSymbol(signal_symbol) → returns "XAUUSD" for "XAUEUR", otherwise returns signal_symbol
 - Implement MapSLDistance(signal_symbol, exec_symbol, sl_distance) → multiplies by EURUSD rate for XAUEUR signals
 - Log XAUEUR signal mapping: "[OrderEngine] XAUEUR signal mapped to XAUUSD: sl_synth=X, eurusd=Y, sl_xau=Z"
+- Log Master SL enforcement: "[OrderEngine] Master SL set: ticket=X, elapsed=Ys, status=ON_TIME|LATE"
 - Protective exits (SL/TP/kill-switch) always allowed during news windows
 
 CRITICAL: XAUEUR signals execute as single-leg XAUUSD orders (proxy mode). No two-leg replication, no atomic operations.
 
-ACCEPTANCE: Order engine respects all risk constraints; XAUEUR signals map to XAUUSD execution with proper SL/TP distance scaling (multiply by EURUSD rate); Master SL ≤30s enforcement logged; integration seamless.
+ACCEPTANCE: Order engine respects all risk constraints; XAUEUR signals map to XAUUSD execution with proper SL/TP distance scaling (multiply by EURUSD rate); Master accounts set SL within 30s and log enforcement status (on-time vs late with timestamp); integration seamless.
 
 Expected: ~150 lines
+```
+
+### Task 15: Unit Tests (Unit Testing Agent)
+**Attach**: Include/RPEA/order_engine.mqh, Include/RPEA/allocator.mqh, Include/RPEA/config.mqh, test_framework.mqh
+
+```
+Generate tests for Task 15: Integration + XAUEUR Mapping
+File: test_order_engine_integration.mqh
+
+Use test_risk.mqh pattern.
+
+TESTS:
+1. Integration_XAUEURMapsToXAUUSD(): XAUEUR signal produces XAUUSD order with EURUSD-scaled SL/TP.
+2. Integration_MasterSLEnforced(): Master account sets SL within 30s; late enforcement flagged/logged.
+3. Integration_RiskRespectRoom(): Order rejected when budget gate denies allocation.
+4. Integration_NewsBlocksEntries(): News filter blocks entries during news while allowing protective exits.
+5. Integration_LogsMapping(): Verify log entry contains sl_synth, eurusd, sl_xau values.
+
+Provide TestOrderEngineIntegration_RunAll().
 ```
 
 ### Task 16: State Recovery and Reconciliation (Coding Agent)
@@ -515,6 +725,25 @@ FOCUS:
 ACCEPTANCE: Full recovery on restart; broker reconciliation correct.
 ```
 
+### Task 16: Unit Tests (Unit Testing Agent)
+**Attach**: Include/RPEA/persistence.mqh, Include/RPEA/order_engine.mqh, test_framework.mqh
+
+```
+Generate tests for Task 16: State Recovery
+File: test_order_engine_recovery.mqh
+
+Use test_risk.mqh pattern.
+
+TESTS:
+1. Recovery_RestoresIntents(): Persisted intents reload into engine state on init.
+2. Recovery_DedupsQueuedActions(): Duplicate action_id ignored after restart.
+3. Recovery_ReconcilesBrokerPositions(): Broker tickets missing from journal get reattached/logged.
+4. Recovery_HandlesCorruptIntent(): Invalid JSON entry skipped with warning.
+5. Recovery_LogsSummary(): Startup logs include counts of intents, queued actions, and reconciled tickets.
+
+Provide TestOrderEngineRecovery_RunAll().
+```
+
 ### Task 17: Error Handling and Resilience (Coding Agent)
 **Attach**: Include/RPEA/order_engine.mqh
 
@@ -530,21 +759,41 @@ FOCUS:
 ACCEPTANCE: Handles error conditions gracefully; self-heals when possible.
 ```
 
+### Task 17: Unit Tests (Unit Testing Agent)
+**Attach**: Include/RPEA/order_engine.mqh, Include/RPEA/config.mqh, test_framework.mqh
+
+```
+Generate tests for Task 17: Error Handling & Resilience
+File: test_order_engine_errors.mqh
+
+Use test_risk.mqh pattern.
+
+TESTS:
+1. ErrorHandling_ClassifiesFailFast(): TRADE_DISABLED/NO_MONEY trigger fail-fast path.
+2. ErrorHandling_TriggersCircuitBreaker(): Consecutive failures trip circuit breaker and pause execution.
+3. ErrorHandling_RetriesRecoverable(): CONNECTION errors retry with backoff, then succeed.
+4. ErrorHandling_LogsAlerts(): Critical errors emit actionable log entries.
+5. ErrorHandling_ResetsAfterRecovery(): After successful execution, circuit breaker resets.
+
+Provide TestOrderEngineErrors_RunAll().
+```
+
 ### HOLD POINT 4 (Q&A Agent after Tasks 14-17 - Phase 4 Complete)
 ```
 Audit Phase 4 (Integration + Polish) for compliance:
 
-1. Audit logging complete? (all required CSV columns present: timestamp, intent_id, action_id, symbol, mode, prices, volumes, tickets, retry_count, gate metrics, confidence, efficiency, news_window_state)
-2. CSV schema matches spec? (verify column order and format)
-3. Integration with risk/equity/news working? (no logic duplication, uses existing modules)
-4. XAUEUR signal mapping working? (when signal_symbol=="XAUEUR", executes on "XAUUSD" with SL/TP scaled by EURUSD rate)
-5. XAUEUR mapping logic in Task 15? (verify GetExecutionSymbol and MapSLDistance functions)
-6. Master account SL enforcement? (SL set within 30 seconds, late enforcement logged)
-7. State recovery working? (intents/queued actions restored on restart, broker reconciliation)
-8. Error handling comprehensive? (network outages, margin failures, actionable logs)
-9. All unit tests passing? (Tasks 14-17)
-10. End-to-end test passes? (signal → risk check → order → fill → trailing → close)
-11. XAUEUR end-to-end test passes? (XAUEUR signal → XAUUSD execution with scaled SL/TP)
+1. Audit logging complete? (all required CSV columns present: timestamp, intent_id, action_id, symbol, mode, prices, volumes, tickets, retry_count, gate metrics, confidence, efficiency, rho_est, news_window_state)
+2. CSV schema matches spec? (verify column order and format, including rho_est)
+3. Log buffer working? (LogBufferSize=1000, flushes correctly)
+4. Integration with risk/equity/news working? (no logic duplication, uses existing modules)
+5. XAUEUR signal mapping working? (when signal_symbol=="XAUEUR", executes on "XAUUSD" with SL/TP scaled by EURUSD rate)
+6. XAUEUR mapping logic in Task 15? (verify GetExecutionSymbol and MapSLDistance functions)
+7. Master account SL enforcement? (SL set within 30 seconds on funded accounts, enforcement status logged with timestamp: ON_TIME vs LATE)
+8. State recovery working? (intents/queued actions restored on restart, broker reconciliation)
+9. Error handling comprehensive? (network outages, margin failures, actionable logs)
+10. All unit tests passing? (Tasks 14-17)
+11. End-to-end test passes? (signal → risk check → order → fill → trailing → close)
+12. XAUEUR end-to-end test passes? (XAUEUR signal → XAUUSD execution with scaled SL/TP)
 
 Provide pass/fail per item. Run full end-to-end test in Strategy Tester.
 ```
@@ -626,6 +875,25 @@ ACCEPTANCE: Position sizes scale with confidence; high-confidence setups get lar
 Expected: ~10 lines
 ```
 
+### Task 21: Unit Tests (Unit Testing Agent)
+**Attach**: Include/RPEA/risk.mqh, Include/RPEA/allocator.mqh, test_framework.mqh
+
+```
+Generate tests for Task 21: Dynamic Position Sizing
+File: test_risk_dynamic_sizing.mqh
+
+Use test_risk.mqh pattern.
+
+TESTS:
+1. DynamicSizing_HighConfidenceUpsizes(): |Bias|=0.9 increases effective risk as expected.
+2. DynamicSizing_LowConfidenceDownsizes(): |Bias|=0.6 reduces effective risk proportionally.
+3. DynamicSizing_FloorsAtZero(): Confidence=0 yields zero additional risk allocation.
+4. DynamicSizing_CapsAtMaxRisk(): Confidence=1.0 respects configured RiskPct ceiling.
+5. DynamicSizing_LogsAdjustment(): Verify log outputs original vs scaled risk.
+
+Provide TestRiskDynamicSizing_RunAll().
+```
+
 ### Task 22: Spread Filter (Coding Agent)
 **Attach**: Include/RPEA/liquidity.mqh
 
@@ -643,6 +911,25 @@ FOCUS:
 ACCEPTANCE: Wide spreads (e.g., XAUUSD > 50 points during news) block entry; normal spreads allow entry.
 
 Expected: ~15 lines
+```
+
+### Task 22: Unit Tests (Unit Testing Agent)
+**Attach**: Include/RPEA/liquidity.mqh, Include/RPEA/config.mqh, test_framework.mqh
+
+```
+Generate tests for Task 22: Spread Filter
+File: test_liquidity_spread_filter.mqh
+
+Use test_risk.mqh pattern.
+
+TESTS:
+1. SpreadFilter_BlocksWideSpread(): Spread > ATR×0.005 rejects trade.
+2. SpreadFilter_AllowsNormalSpread(): Spread below threshold permits trade.
+3. SpreadFilter_LogsRejectionReason(): Log includes spread value and threshold used.
+4. SpreadFilter_RespectsConfigMultiplier(): Adjusting multiplier changes threshold outcome.
+5. SpreadFilter_HandlesMissingATR(): Missing ATR data triggers safe rejection/log warning.
+
+Provide TestLiquiditySpreadFilter_RunAll().
 ```
 
 ### Task 23: Breakeven Stop (Coding Agent)
@@ -664,6 +951,25 @@ ACCEPTANCE: Positions move to breakeven at +0.5R; trailing activates at +1R; con
 Expected: ~20 lines
 ```
 
+### Task 23: Unit Tests (Unit Testing Agent)
+**Attach**: Include/RPEA/order_engine.mqh, test_framework.mqh
+
+```
+Generate tests for Task 23: Breakeven Stop
+File: test_order_engine_breakeven.mqh
+
+Use test_risk.mqh pattern.
+
+TESTS:
+1. Breakeven_TriggersAtHalfR(): Profit reaches +0.5R → SL moves to entry + spread buffer.
+2. Breakeven_DoesNotTriggerEarly(): Profit < +0.5R leaves SL untouched.
+3. Breakeven_PassesControlAtOneR(): Profit ≥ +1R activates trailing without duplicate adjustments.
+4. Breakeven_LogsUpdate(): Log includes previous SL, new SL, and buffer applied.
+5. Breakeven_ProtectsProfit(): After breakeven, price reversal exits at break-even rather than loss.
+
+Provide TestOrderEngineBreakeven_RunAll().
+```
+
 ### Task 24: Pending Expiry Optimization (Coding Agent)
 **Attach**: Include/RPEA/order_engine.mqh
 
@@ -680,6 +986,25 @@ FOCUS:
 ACCEPTANCE: Pending orders expire 45 minutes after placement if not filled; prevents stale fills.
 
 Expected: ~5 lines
+```
+
+### Task 24: Unit Tests (Unit Testing Agent)
+**Attach**: Include/RPEA/order_engine.mqh, Include/RPEA/config.mqh, test_framework.mqh
+
+```
+Generate tests for Task 24: Pending Expiry Optimization
+File: test_order_engine_pending_expiry.mqh
+
+Use test_risk.mqh pattern.
+
+TESTS:
+1. PendingExpiry_Sets45Minutes(): Expiry equals TimeCurrent() + 45×60 seconds.
+2. PendingExpiry_AppliesToAllPendings(): OCO legs and singles receive same expiry window.
+3. PendingExpiry_AutoCancelsExpired(): Expired pending orders cancelled and logged.
+4. PendingExpiry_HonorsCustomExpiry(): Manual expiry override preserved when provided.
+5. PendingExpiry_LogsExpirySet(): Log entry records new expiry timestamp and rationale.
+
+Provide TestOrderEnginePendingExpiry_RunAll().
 ```
 
 ### HOLD POINT 5 (Q&A Agent after Tasks 21-24 - Phase 5 Complete)
