@@ -16,7 +16,7 @@ This document outlines the complete implementation strategy for RPEA M3 (Order E
 
 **Tasks:**
 1. Order Engine scaffolding + event model
-2. Idempotency system (simplified - just intent_id)
+2. Idempotency system (intent_id + action_id dedup + persistence)
 3. Volume/price normalization
 4. Basic order placement
 5. Simple retry logic
