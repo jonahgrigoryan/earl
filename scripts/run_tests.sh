@@ -4,9 +4,22 @@ set -euo pipefail
 # Environment setup
 export WINEPREFIX=${WINEPREFIX:-/workspace/.wine-mt5}
 REPO_ROOT="${EARL_ROOT:-/workspace/earl}"
+
+# Load environment (.env) if present
+if [ -f "${REPO_ROOT}/.env" ]; then
+  # shellcheck disable=SC1090
+  source "${REPO_ROOT}/.env"
+fi
+
 REPORTS_DIR="${REPO_ROOT}/reports"
 MT5_TERMINAL="${MT5_TERMINAL_PATH:-/workspace/mt5/terminal}/terminal64.exe"
 TEST_CONFIG="${REPO_ROOT}/MQL5/Files/RPEA/strategy_tester/RPEA_10k_tester.ini"
+
+# Respect validation-only mode
+if [ "${VALIDATION_ONLY_MODE:-false}" = "true" ]; then
+  echo "⚠️  Validation-only mode: skipping Strategy Tester"
+  exit 0
+fi
 
 mkdir -p "${REPORTS_DIR}"
 
@@ -36,8 +49,13 @@ TIMEOUT=300  # 5 minutes
 ELAPSED=0
 
 echo "==> Waiting for test completion (timeout: ${TIMEOUT}s)..."
+
+# Support alternate report path under MQL5/Files
+TEST_REPORT="${REPORTS_DIR}/audit_report.csv"
+ALT_REPORT="${REPO_ROOT}/MQL5/Files/RPEA/reports/audit_report.csv"
+
 while [ ${ELAPSED} -lt ${TIMEOUT} ]; do
-  if [ -f "${REPORTS_DIR}/audit_report.csv" ]; then
+  if [ -f "${TEST_REPORT}" ] || [ -f "${ALT_REPORT}" ]; then
     echo "✅ Test execution completed at ${ELAPSED}s"
     break
   fi
@@ -50,15 +68,20 @@ echo ""
 # Kill MT5 process
 kill ${MT5_PID} 2>/dev/null || true
 sleep 2
-killall -9 terminal64.exe 2>/dev/null || true
+pkill -f terminal64.exe 2>/dev/null || wineserver -k || true
 
 # Parse test results
-if [ -f "${REPORTS_DIR}/audit_report.csv" ]; then
+REPORT_TO_READ="${TEST_REPORT}"
+if [ -f "${ALT_REPORT}" ]; then
+  REPORT_TO_READ="${ALT_REPORT}"
+fi
+
+if [ -f "${REPORT_TO_READ}" ]; then
   echo "==> Test Results:"
-  tail -20 "${REPORTS_DIR}/audit_report.csv"
+  tail -20 "${REPORT_TO_READ}"
   
   # Simple pass/fail check (customize based on your report format)
-  if grep -q "FAIL\|ERROR" "${REPORTS_DIR}/audit_report.csv"; then
+  if grep -E -q "FAIL|ERROR" "${REPORT_TO_READ}"; then
     echo "❌ Tests contain failures"
     exit 1
   else
