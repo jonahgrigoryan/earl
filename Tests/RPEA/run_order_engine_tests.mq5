@@ -26,6 +26,8 @@
 #include "test_order_engine.mqh"
 #include "test_order_engine_normalization.mqh"
 #include "test_order_engine_limits.mqh"
+#include "test_order_engine_retry.mqh"
+#include "test_order_engine_market.mqh"
 
 double Equity_CalcRiskDollars(const string symbol,
                               const double volume,
@@ -74,7 +76,9 @@ void OnStart()
    bool success = TestOrderEngine_RunAll();
    bool normalization_success = TestOrderEngineNormalization_RunAll();
    bool limits_success = TestOrderEngineLimits_RunAll();
-   if(!success || !normalization_success || !limits_success)
+   bool retry_success = TestOrderEngineRetry_RunAll();
+   bool market_success = TestOrderEngineMarket_RunAll();
+   if(!success || !normalization_success || !limits_success || !retry_success || !market_success)
    {
       Print("Order Engine Tests reported failures.");
    }
