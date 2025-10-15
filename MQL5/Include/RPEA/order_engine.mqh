@@ -206,6 +206,12 @@ public:
 
 bool OE_OrderSend(const MqlTradeRequest &request, MqlTradeResult &result);
 void OE_ApplyRetryDelay(const int delay_ms);
+bool OE_GetLatestQuote(const string context,
+                       const string symbol,
+                       double &out_point,
+                       int &out_digits,
+                       double &out_bid,
+                       double &out_ask);
 
 //==============================================================================
 // OrderEngine Class
@@ -299,6 +305,12 @@ private:
                               const int projected_total_positions,
                               const int projected_symbol_positions,
                               const int projected_symbol_pending,
+                              OrderResult &result);
+   bool IsBuyDirection(const ENUM_ORDER_TYPE type) const;
+   ENUM_ORDER_TYPE MarketTypeFromPending(const ENUM_ORDER_TYPE type) const;
+   bool ShouldFallbackToMarket(const int retcode) const;
+   bool ExecuteMarketFallback(const OrderRequest &pending_request,
+                              const double evaluated_risk,
                               OrderResult &result);
    void AppendLogLine(const string line);
    void FlushLogBuffer();
@@ -724,6 +736,19 @@ public:
                             projected_symbol_pending,
                             result);
 
+      if(is_pending && !result.success && ShouldFallbackToMarket(result.last_retcode))
+      {
+         LogOE(StringFormat("Pending order failed with retcode %d - attempting market fallback",
+                            result.last_retcode));
+         LogDecision("OrderEngine",
+                     "MARKET_FALLBACK_TRIGGER",
+                     StringFormat("{\"symbol\":\"%s\",\"pending_type\":\"%s\",\"retcode\":%d}",
+                                  normalized.symbol,
+                                  EnumToString(normalized.type),
+                                  result.last_retcode));
+         ExecuteMarketFallback(normalized, risk_dollars, result);
+      }
+
       return result;
    }
    
@@ -848,6 +873,50 @@ bool OrderEngine::IsPendingOrderType(const ENUM_ORDER_TYPE type)
    return Equity_IsPendingOrderType((int)type);
 }
 
+bool OrderEngine::IsBuyDirection(const ENUM_ORDER_TYPE type) const
+{
+   switch(type)
+   {
+      case ORDER_TYPE_BUY:
+      case ORDER_TYPE_BUY_LIMIT:
+      case ORDER_TYPE_BUY_STOP:
+      case ORDER_TYPE_BUY_STOP_LIMIT:
+         return true;
+   }
+   return false;
+}
+
+ENUM_ORDER_TYPE OrderEngine::MarketTypeFromPending(const ENUM_ORDER_TYPE type) const
+{
+   switch(type)
+   {
+      case ORDER_TYPE_BUY_LIMIT:
+      case ORDER_TYPE_BUY_STOP:
+      case ORDER_TYPE_BUY_STOP_LIMIT:
+         return ORDER_TYPE_BUY;
+      case ORDER_TYPE_SELL_LIMIT:
+      case ORDER_TYPE_SELL_STOP:
+      case ORDER_TYPE_SELL_STOP_LIMIT:
+         return ORDER_TYPE_SELL;
+      default:
+         break;
+   }
+   return type;
+}
+
+bool OrderEngine::ShouldFallbackToMarket(const int retcode) const
+{
+   switch(retcode)
+   {
+      case TRADE_RETCODE_PRICE_CHANGED:
+      case TRADE_RETCODE_PRICE_OFF:
+      case TRADE_RETCODE_REQUOTE:
+      case TRADE_RETCODE_INVALID_PRICE:
+         return true;
+   }
+   return false;
+}
+
 bool OrderEngine::EvaluatePositionCaps(const OrderRequest &request,
                                        const bool is_pending_request,
                                        int &out_total_positions,
@@ -955,6 +1024,7 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
                                         const int projected_symbol_pending,
                                         OrderResult &result)
 {
+   const bool is_market_request = (!is_pending_request && IsMarketOrderType(request.type));
    const string mode = is_pending_request
                        ? "PENDING"
                        : (IsMarketOrderType(request.type) ? "MARKET" : "UNSPECIFIED");
@@ -969,12 +1039,13 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
                       projected_symbol_pending));
 
    string init_fields = StringFormat(
-      "{\"symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"volume\":%.4f,\"risk\":%.2f,\"total_after\":%d,\"symbol_after\":%d,\"pending_after\":%d}",
+      "{\"symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"volume\":%.4f,\"risk\":%.2f,\"requested\":%.5f,\"total_after\":%d,\"symbol_after\":%d,\"pending_after\":%d}",
       request.symbol,
       EnumToString(request.type),
       mode,
       request.volume,
       evaluated_risk,
+      request.price,
       projected_total_positions,
       projected_symbol_positions,
       projected_symbol_pending);
@@ -989,6 +1060,34 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
    result.retry_count = 0;
    result.last_retcode = 0;
 
+   double snapshot_point = 0.0;
+   int snapshot_digits = 0;
+   double snapshot_bid = 0.0;
+   double snapshot_ask = 0.0;
+   const bool have_snapshot = OE_GetLatestQuote("ExecuteOrderWithRetry::init",
+                                                request.symbol,
+                                                snapshot_point,
+                                                snapshot_digits,
+                                                snapshot_bid,
+                                                snapshot_ask);
+
+   double requested_price = request.price;
+    if(is_market_request && requested_price <= 0.0 && have_snapshot)
+    {
+       const bool buy_init = IsBuyDirection(request.type);
+       const double snapshot_price = buy_init
+                                     ? (snapshot_ask > 0.0 ? snapshot_ask : snapshot_bid)
+                                     : (snapshot_bid > 0.0 ? snapshot_bid : snapshot_ask);
+       if(snapshot_price > 0.0)
+          requested_price = snapshot_price;
+    }
+
+   const double base_point = snapshot_point;
+   const double base_multiplier = (base_point > 0.0 ? MathMax(1.0, 1.0 / base_point) : 1.0);
+   int base_deviation = (int)MathRound(MathMax(0.0, m_max_slippage_points * base_multiplier));
+   if(base_deviation < 0)
+      base_deviation = 0;
+
    MqlTradeRequest trade_request;
    ZeroMemory(trade_request);
    trade_request.action = is_pending_request ? TRADE_ACTION_PENDING : TRADE_ACTION_DEAL;
@@ -998,7 +1097,7 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
    trade_request.price = request.price;
    trade_request.sl = request.sl;
    trade_request.tp = request.tp;
-   trade_request.deviation = (int)MathRound(MathMax(0.0, m_max_slippage_points));
+   trade_request.deviation = base_deviation;
    trade_request.magic = request.magic;
    trade_request.comment = request.comment;
    trade_request.type_filling = ORDER_FILLING_RETURN;
@@ -1021,22 +1120,135 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
    const int max_attempts = m_retry_manager.MaxRetries() + 1;
    int retries_performed = 0;
    bool success = false;
+   double last_quote_price = 0.0;
+   double last_slippage_points = 0.0;
+   bool slippage_rejected = false;
+   string slippage_reject_reason = "";
+   bool quote_failure = false;
+   string quote_failure_reason = "";
+   bool failure_logged = false;
 
    for(int attempt = 0; attempt < max_attempts; ++attempt)
    {
       if(attempt > 0)
          retries_performed = attempt;
 
+      if(is_market_request)
+      {
+         double attempt_point = snapshot_point;
+         int attempt_digits = snapshot_digits;
+         double attempt_bid = snapshot_bid;
+         double attempt_ask = snapshot_ask;
+
+         if(!OE_GetLatestQuote("ExecuteOrderWithRetry::attempt",
+                               request.symbol,
+                               attempt_point,
+                               attempt_digits,
+                               attempt_bid,
+                               attempt_ask))
+         {
+            quote_failure = true;
+            quote_failure_reason = "Unable to retrieve market quotes";
+            result.last_retcode = TRADE_RETCODE_PRICE_OFF;
+            break;
+         }
+
+         if(attempt_point > 0.0)
+            snapshot_point = attempt_point;
+         if(attempt_digits > 0)
+            snapshot_digits = attempt_digits;
+
+         const bool is_buy = IsBuyDirection(request.type);
+         double quote_price = 0.0;
+         if(is_buy)
+            quote_price = (attempt_ask > 0.0 ? attempt_ask : attempt_bid);
+         else
+            quote_price = (attempt_bid > 0.0 ? attempt_bid : attempt_ask);
+
+         if(quote_price <= 0.0)
+         {
+            quote_failure = true;
+            quote_failure_reason = StringFormat("Invalid market quote (bid=%.5f, ask=%.5f)",
+                                                attempt_bid,
+                                                attempt_ask);
+            result.last_retcode = TRADE_RETCODE_PRICE_OFF;
+            break;
+         }
+
+         if(requested_price <= 0.0)
+            requested_price = quote_price;
+
+         const double calc_point = (attempt_point > 0.0
+                                    ? attempt_point
+                                    : (snapshot_point > 0.0 ? snapshot_point : 0.0));
+
+         if(calc_point > 0.0 && requested_price > 0.0)
+            last_slippage_points = MathAbs(quote_price - requested_price) / calc_point;
+         else
+            last_slippage_points = 0.0;
+
+         const bool within_limit = (m_max_slippage_points <= 0.0) ||
+                                   (last_slippage_points <= m_max_slippage_points + 1e-6);
+
+         LogOE(StringFormat("Market slippage check attempt %d: requested=%.5f quote=%.5f slippage=%.2f pts max=%.2f",
+                            attempt,
+                            requested_price,
+                            quote_price,
+                            last_slippage_points,
+                            m_max_slippage_points));
+         LogDecision("OrderEngine",
+                     "MARKET_SLIPPAGE_CHECK",
+                     StringFormat("{\"symbol\":\"%s\",\"attempt\":%d,\"requested\":%.5f,\"quote\":%.5f,\"slippage_pts\":%.2f,\"max_pts\":%.2f,\"within_limit\":%s}",
+                                  request.symbol,
+                                  attempt,
+                                  requested_price,
+                                  quote_price,
+                                  last_slippage_points,
+                                  m_max_slippage_points,
+                                  within_limit ? "true" : "false"));
+
+         if(!within_limit)
+         {
+            slippage_rejected = true;
+            slippage_reject_reason = StringFormat("Slippage %.2f pts exceeds MaxSlippagePoints %.2f",
+                                                  last_slippage_points,
+                                                  m_max_slippage_points);
+            result.last_retcode = TRADE_RETCODE_PRICE_OFF;
+            break;
+         }
+
+         last_quote_price = quote_price;
+
+         const double point_multiplier = (attempt_point > 0.0
+                                          ? MathMax(1.0, 1.0 / attempt_point)
+                                          : MathMax(1.0, (snapshot_point > 0.0 ? 1.0 / snapshot_point : 1.0)));
+         trade_request.deviation = (int)MathRound(MathMax(0.0, m_max_slippage_points * point_multiplier));
+         if(trade_request.deviation < 0)
+            trade_request.deviation = 0;
+
+         const int price_digits = (attempt_digits > 0 ? attempt_digits : (snapshot_digits > 0 ? snapshot_digits : 8));
+         trade_request.price = NormalizeDouble(quote_price, price_digits);
+      }
+      else
+      {
+         trade_request.deviation = base_deviation;
+      }
+
       ZeroMemory(trade_result);
       const bool send_ok = OE_OrderSend(trade_request, trade_result);
       result.last_retcode = trade_result.retcode;
 
+      const double attempt_slippage = (is_market_request ? last_slippage_points : 0.0);
+
       string attempt_fields = StringFormat(
-         "{\"attempt\":%d,\"symbol\":\"%s\",\"retcode\":%d,\"send_ok\":%s}",
+         "{\"attempt\":%d,\"symbol\":\"%s\",\"retcode\":%d,\"send_ok\":%s,\"requested\":%.5f,\"submitted\":%.5f,\"slippage_pts\":%.2f}",
          attempt,
          request.symbol,
          trade_result.retcode,
-         send_ok ? "true" : "false");
+         send_ok ? "true" : "false",
+         requested_price,
+         trade_request.price,
+         attempt_slippage);
       LogDecision("OrderEngine", "ORDER_SEND_ATTEMPT", attempt_fields);
 
       const bool order_done = (send_ok && trade_result.retcode == TRADE_RETCODE_DONE);
@@ -1050,19 +1262,28 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
          result.last_retcode = trade_result.retcode;
          result.error_message = "";
 
-         LogOE(StringFormat("ExecuteOrderWithRetry success on attempt %d: ticket=%llu price=%.5f volume=%.4f",
+         double executed_slippage_pts = 0.0;
+         if(snapshot_point > 0.0 && requested_price > 0.0 && trade_result.price > 0.0)
+            executed_slippage_pts = MathAbs(trade_result.price - requested_price) / snapshot_point;
+
+         LogOE(StringFormat("ExecuteOrderWithRetry success on attempt %d: ticket=%llu requested=%.5f executed=%.5f slippage=%.2f pts volume=%.4f",
                             attempt,
                             result.ticket,
+                            requested_price,
                             result.executed_price,
+                            executed_slippage_pts,
                             result.executed_volume));
          LogDecision("OrderEngine",
                      "EXECUTE_ORDER_SUCCESS",
-                     StringFormat("{\"symbol\":\"%s\",\"attempt\":%d,\"retries\":%d,\"retcode\":%d,\"ticket\":%llu}",
+                     StringFormat("{\"symbol\":\"%s\",\"attempt\":%d,\"retries\":%d,\"retcode\":%d,\"ticket\":%llu,\"requested\":%.5f,\"executed\":%.5f,\"slippage_pts\":%.2f}",
                                   request.symbol,
                                   attempt,
                                   retries_performed,
                                   trade_result.retcode,
-                                  result.ticket));
+                                  result.ticket,
+                                  requested_price,
+                                  result.executed_price,
+                                  executed_slippage_pts));
          success = true;
          break;
       }
@@ -1071,19 +1292,21 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
       const string policy_name = m_retry_manager.PolicyName(policy);
       const bool retry_allowed = m_retry_manager.ShouldRetry(policy, attempt);
 
-      LogOE(StringFormat("ExecuteOrderWithRetry failure: attempt=%d retcode=%d policy=%s retry_allowed=%s",
+      LogOE(StringFormat("ExecuteOrderWithRetry failure: attempt=%d retcode=%d policy=%s retry_allowed=%s slippage=%.2f pts",
                          attempt,
                          trade_result.retcode,
                          policy_name,
-                         retry_allowed ? "true" : "false"));
+                         retry_allowed ? "true" : "false",
+                         attempt_slippage));
 
       LogDecision("OrderEngine",
                   "ORDER_RETRY_EVALUATE",
-                  StringFormat("{\"attempt\":%d,\"retcode\":%d,\"policy\":\"%s\",\"retry_allowed\":%s}",
+                  StringFormat("{\"attempt\":%d,\"retcode\":%d,\"policy\":\"%s\",\"retry_allowed\":%s,\"slippage_pts\":%.2f}",
                                attempt,
                                trade_result.retcode,
                                policy_name,
-                               retry_allowed ? "true" : "false"));
+                               retry_allowed ? "true" : "false",
+                               attempt_slippage));
 
       if(!retry_allowed)
          break;
@@ -1099,7 +1322,62 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
       }
    }
 
-   if(!success)
+   if(slippage_rejected)
+   {
+      result.success = false;
+      result.ticket = 0;
+      result.executed_price = last_quote_price;
+      result.executed_volume = 0.0;
+      result.retry_count = retries_performed;
+
+      result.error_message = slippage_reject_reason;
+
+      LogOE(StringFormat("ExecuteOrderWithRetry slippage rejection: requested=%.5f quote=%.5f slippage=%.2f pts limit=%.2f",
+                         requested_price,
+                         last_quote_price,
+                         last_slippage_points,
+                         m_max_slippage_points));
+      LogDecision("OrderEngine",
+                  "MARKET_SLIPPAGE_REJECT",
+                  StringFormat("{\"symbol\":\"%s\",\"retries\":%d,\"requested\":%.5f,\"quote\":%.5f,\"slippage_pts\":%.2f,\"max_pts\":%.2f}",
+                               request.symbol,
+                               retries_performed,
+                               requested_price,
+                               last_quote_price,
+                               last_slippage_points,
+                               m_max_slippage_points));
+      LogDecision("OrderEngine",
+                  "EXECUTE_ORDER_FAIL",
+                  StringFormat("{\"symbol\":\"%s\",\"retries\":%d,\"retcode\":%d,\"reason\":\"slippage_reject\",\"requested\":%.5f,\"last_quote\":%.5f,\"slippage_pts\":%.2f}",
+                               request.symbol,
+                               retries_performed,
+                               result.last_retcode,
+                               requested_price,
+                               last_quote_price,
+                               last_slippage_points));
+      failure_logged = true;
+   }
+
+   if(quote_failure)
+   {
+      result.success = false;
+      result.ticket = 0;
+      result.executed_price = last_quote_price;
+      result.executed_volume = 0.0;
+      result.retry_count = retries_performed;
+      result.error_message = quote_failure_reason;
+
+      LogOE(StringFormat("ExecuteOrderWithRetry quote failure: %s", quote_failure_reason));
+      LogDecision("OrderEngine",
+                  "EXECUTE_ORDER_FAIL",
+                  StringFormat("{\"symbol\":\"%s\",\"retries\":%d,\"retcode\":%d,\"reason\":\"quote_failure\"}",
+                               request.symbol,
+                               retries_performed,
+                               result.last_retcode));
+      failure_logged = true;
+   }
+
+   if(!success && !failure_logged)
    {
       result.success = false;
       result.ticket = 0;
@@ -1112,22 +1390,184 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
                                          retries_performed);
       if(trade_result.comment != "")
          fail_message = StringFormat("%s comment=%s", fail_message, trade_result.comment);
+      if(is_market_request && last_quote_price > 0.0)
+      {
+         fail_message = StringFormat("%s requested=%.5f last_quote=%.5f slippage=%.2f pts",
+                                     fail_message,
+                                     requested_price,
+                                     last_quote_price,
+                                     last_slippage_points);
+      }
 
       result.error_message = fail_message;
 
       LogDecision("OrderEngine",
                   "EXECUTE_ORDER_FAIL",
-                  StringFormat("{\"symbol\":\"%s\",\"retries\":%d,\"retcode\":%d}",
+                  StringFormat("{\"symbol\":\"%s\",\"retries\":%d,\"retcode\":%d,\"requested\":%.5f,\"last_quote\":%.5f,\"slippage_pts\":%.2f}",
                                request.symbol,
                                retries_performed,
-                               result.last_retcode));
+                               result.last_retcode,
+                               requested_price,
+                               last_quote_price,
+                               is_market_request ? last_slippage_points : 0.0));
    }
 
-   LogOE(StringFormat("ExecuteOrderWithRetry complete: success=%s retries=%d last_retcode=%d",
+   double final_slippage_pts = 0.0;
+   if(snapshot_point > 0.0 && requested_price > 0.0 && result.executed_price > 0.0)
+      final_slippage_pts = MathAbs(result.executed_price - requested_price) / snapshot_point;
+
+   LogOE(StringFormat("ExecuteOrderWithRetry complete: success=%s retries=%d last_retcode=%d requested=%.5f executed=%.5f slippage=%.2f pts",
                       result.success ? "true" : "false",
                       result.retry_count,
-                      result.last_retcode));
+                      result.last_retcode,
+                      requested_price,
+                      result.executed_price,
+                      final_slippage_pts));
    return result.success;
+}
+
+bool OrderEngine::ExecuteMarketFallback(const OrderRequest &pending_request,
+                                        const double evaluated_risk,
+                                        OrderResult &result)
+{
+   const ENUM_ORDER_TYPE market_type = MarketTypeFromPending(pending_request.type);
+   if(!IsMarketOrderType(market_type))
+   {
+      LogOE(StringFormat("Market fallback unavailable for pending type %s",
+                         EnumToString(pending_request.type)));
+      return false;
+   }
+
+   OrderRequest market_request = pending_request;
+   market_request.type = market_type;
+   market_request.expiry = 0;
+
+   if(StringFind(market_request.comment, "fallback") < 0)
+   {
+      if(StringLen(market_request.comment) > 0)
+         market_request.comment = market_request.comment + "|fallback";
+      else
+         market_request.comment = "market-fallback";
+   }
+
+   int total_positions = 0;
+   int symbol_positions = 0;
+   int symbol_pending = 0;
+   string violation_reason = "";
+
+   if(!EvaluatePositionCaps(market_request,
+                            false,
+                            total_positions,
+                            symbol_positions,
+                            symbol_pending,
+                            violation_reason))
+   {
+      LogOE(StringFormat("Market fallback blocked by caps: %s", violation_reason));
+      result.success = false;
+      result.ticket = 0;
+      result.executed_price = 0.0;
+      result.executed_volume = 0.0;
+      result.retry_count = 0;
+      result.last_retcode = TRADE_RETCODE_PRICE_OFF;
+      result.error_message = StringFormat("Market fallback blocked: %s", violation_reason);
+      return false;
+   }
+
+   const int projected_total = total_positions + 1;
+   const int projected_symbol_positions = symbol_positions + 1;
+   const int projected_symbol_pending = symbol_pending;
+
+   double point = 0.0;
+   int digits = 0;
+   double bid = 0.0;
+   double ask = 0.0;
+   if(!OE_GetLatestQuote("ExecuteMarketFallback",
+                         market_request.symbol,
+                         point,
+                         digits,
+                         bid,
+                         ask))
+   {
+      LogOE(StringFormat("Market fallback failed: unable to get quote for %s",
+                         market_request.symbol));
+      result.success = false;
+      result.ticket = 0;
+      result.executed_price = 0.0;
+      result.executed_volume = 0.0;
+      result.retry_count = 0;
+      result.last_retcode = TRADE_RETCODE_PRICE_OFF;
+      result.error_message = "Market fallback failed: unable to get current price";
+      return false;
+   }
+
+   const bool is_buy = IsBuyDirection(market_request.type);
+   double entry_price = is_buy ? (ask > 0.0 ? ask : bid) : (bid > 0.0 ? bid : ask);
+   if(entry_price <= 0.0)
+   {
+      LogOE(StringFormat("Market fallback failed: invalid quote (bid=%.5f ask=%.5f)",
+                         bid,
+                         ask));
+      result.success = false;
+      result.ticket = 0;
+      result.executed_price = 0.0;
+      result.executed_volume = 0.0;
+      result.retry_count = 0;
+      result.last_retcode = TRADE_RETCODE_PRICE_OFF;
+      result.error_message = "Market fallback failed: invalid quote";
+      return false;
+   }
+
+   entry_price = OE_NormalizePrice(market_request.symbol, entry_price);
+
+   bool risk_ok = true;
+   double risk_value = evaluated_risk;
+
+   if(g_oe_risk_override.active)
+   {
+      risk_ok = g_oe_risk_override.ok;
+      risk_value = g_oe_risk_override.risk_value;
+   }
+   else
+   {
+      risk_ok = false;
+      risk_value = Equity_CalcRiskDollars(market_request.symbol,
+                                          market_request.volume,
+                                          entry_price,
+                                          market_request.sl,
+                                          risk_ok);
+   }
+
+   if(!risk_ok || risk_value <= 0.0)
+   {
+      LogOE("Market fallback blocked: unable to evaluate risk for market execution");
+      result.success = false;
+      result.ticket = 0;
+      result.executed_price = 0.0;
+      result.executed_volume = 0.0;
+      result.retry_count = 0;
+      result.last_retcode = TRADE_RETCODE_INVALID_PRICE;
+      result.error_message = "Market fallback failed: risk evaluation failed";
+      return false;
+   }
+
+   LogOE("Converting pending to market due to high slippage");
+   LogDecision("OrderEngine",
+               "MARKET_FALLBACK_INIT",
+               StringFormat("{\"symbol\":\"%s\",\"pending_type\":\"%s\",\"market_type\":\"%s\",\"volume\":%.4f,\"requested\":%.5f}",
+                            market_request.symbol,
+                            EnumToString(pending_request.type),
+                            EnumToString(market_request.type),
+                            market_request.volume,
+                            pending_request.price));
+
+   const bool executed = ExecuteOrderWithRetry(market_request,
+                                               false,
+                                               risk_value,
+                                               projected_total,
+                                               projected_symbol_positions,
+                                               projected_symbol_pending,
+                                               result);
+   return executed;
 }
 
 void OrderEngine::AppendLogLine(const string line)
@@ -1356,7 +1796,7 @@ struct OEOrderSendOverrideState
    OEOrderSendResponse responses[];
 };
 
-static OEOrderSendOverrideState g_oe_order_send_override = {false, 0, 0, NULL};
+static OEOrderSendOverrideState g_oe_order_send_override;
 
 void OE_Test_ClearOrderSendOverride()
 {
@@ -1417,7 +1857,7 @@ struct OERetryDelayCaptureState
    int  delays[];
 };
 
-static OERetryDelayCaptureState g_oe_retry_delay_capture = {false, false, NULL};
+static OERetryDelayCaptureState g_oe_retry_delay_capture;
 
 void OE_Test_ResetRetryDelayCapture()
 {
@@ -1470,7 +1910,7 @@ bool OE_OrderSend(const MqlTradeRequest &request, MqlTradeResult &result)
          return false;
       }
 
-      const OEOrderSendResponse &queued = g_oe_order_send_override.responses[idx];
+      const OEOrderSendResponse queued = g_oe_order_send_override.responses[idx];
       g_oe_order_send_override.current_index++;
 
       ZeroMemory(result);
@@ -1605,6 +2045,60 @@ bool OE_Test_GetPriceOverride(const string symbol,
    bid = g_oe_norm_overrides.price_bid;
    ask = g_oe_norm_overrides.price_ask;
    stops_level = g_oe_norm_overrides.price_stops_level;
+   return true;
+}
+
+bool OE_GetLatestQuote(const string context,
+                       const string symbol,
+                       double &out_point,
+                       int &out_digits,
+                       double &out_bid,
+                       double &out_ask)
+{
+   double override_point = 0.0;
+   int override_digits = 0;
+   double override_bid = 0.0;
+   double override_ask = 0.0;
+   int override_stops = 0;
+
+   if(OE_Test_GetPriceOverride(symbol,
+                               override_point,
+                               override_digits,
+                               override_bid,
+                               override_ask,
+                               override_stops))
+   {
+      out_point = override_point;
+      out_digits = override_digits;
+      out_bid = override_bid;
+      out_ask = override_ask;
+      return true;
+   }
+
+   out_point = 0.0;
+   out_digits = 0;
+   out_bid = 0.0;
+   out_ask = 0.0;
+
+   string ctx_point = StringFormat("%s::POINT", context);
+   if(!OE_SymbolInfoDoubleSafe(ctx_point, symbol, SYMBOL_POINT, out_point))
+      return false;
+
+   long digits_long = 0;
+   string ctx_digits = StringFormat("%s::DIGITS", context);
+   if(OE_SymbolInfoIntegerSafe(ctx_digits, symbol, SYMBOL_DIGITS, digits_long))
+      out_digits = (int)digits_long;
+   else
+      out_digits = 0;
+
+   string ctx_bid = StringFormat("%s::BID", context);
+   if(!OE_SymbolInfoDoubleSafe(ctx_bid, symbol, SYMBOL_BID, out_bid))
+      return false;
+
+   string ctx_ask = StringFormat("%s::ASK", context);
+   if(!OE_SymbolInfoDoubleSafe(ctx_ask, symbol, SYMBOL_ASK, out_ask))
+      return false;
+
    return true;
 }
 
