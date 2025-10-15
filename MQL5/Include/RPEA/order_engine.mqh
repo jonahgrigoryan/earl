@@ -56,6 +56,7 @@ struct OrderResult
    double   executed_price;
    double   executed_volume;
    int      retry_count;
+   int      last_retcode;
 };
 
 // Queued action structure
@@ -81,6 +82,130 @@ struct OCORelationship
    datetime expiry;
    bool     is_active;
 };
+
+//==============================================================================
+// Retry Policy Support
+//==============================================================================
+
+enum RetryPolicy
+{
+   RETRY_POLICY_NONE = 0,
+   RETRY_POLICY_FAIL_FAST,
+   RETRY_POLICY_EXPONENTIAL,
+   RETRY_POLICY_LINEAR
+};
+
+class RetryManager
+{
+private:
+   int     m_max_retries;
+   int     m_initial_delay_ms;
+   double  m_backoff_multiplier;
+
+public:
+   RetryManager()
+   {
+      m_max_retries = 0;
+      m_initial_delay_ms = 0;
+      m_backoff_multiplier = 1.0;
+   }
+
+   void Configure(const int max_retries,
+                  const int initial_delay_ms,
+                  const double backoff_multiplier)
+   {
+      m_max_retries = MathMax(0, max_retries);
+      m_initial_delay_ms = MathMax(0, initial_delay_ms);
+      m_backoff_multiplier = (backoff_multiplier <= 0.0 ? 1.0 : backoff_multiplier);
+   }
+
+   int MaxRetries() const
+   {
+      return m_max_retries;
+   }
+
+   int InitialDelayMs() const
+   {
+      return m_initial_delay_ms;
+   }
+
+   double BackoffMultiplier() const
+   {
+      return m_backoff_multiplier;
+   }
+
+   RetryPolicy GetPolicyForError(const int retcode) const
+   {
+      switch(retcode)
+      {
+         case TRADE_RETCODE_TRADE_DISABLED:
+         case TRADE_RETCODE_NO_MONEY:
+         case TRADE_RETCODE_INVALID_PRICE:
+         case TRADE_RETCODE_INVALID_VOLUME:
+         case TRADE_RETCODE_POSITION_CLOSED:
+            return RETRY_POLICY_FAIL_FAST;
+
+         case TRADE_RETCODE_CONNECTION:
+         case TRADE_RETCODE_TIMEOUT:
+            return RETRY_POLICY_EXPONENTIAL;
+
+         case TRADE_RETCODE_MARKET_CLOSED:
+         case TRADE_RETCODE_REQUOTE:
+         case TRADE_RETCODE_PRICE_CHANGED:
+         case TRADE_RETCODE_PRICE_OFF:
+            return RETRY_POLICY_LINEAR;
+      }
+
+      return RETRY_POLICY_FAIL_FAST;
+   }
+
+   bool ShouldRetry(const RetryPolicy policy, const int attempt_index) const
+   {
+      if(policy == RETRY_POLICY_FAIL_FAST || policy == RETRY_POLICY_NONE)
+         return false;
+
+      return (attempt_index < m_max_retries);
+   }
+
+   int CalculateDelayMs(const int retry_number, const RetryPolicy policy) const
+   {
+      if(retry_number <= 0 || m_initial_delay_ms <= 0)
+         return 0;
+
+      switch(policy)
+      {
+         case RETRY_POLICY_EXPONENTIAL:
+         {
+            const double multiplier = MathMax(1.0, m_backoff_multiplier);
+            const double scaled = (double)m_initial_delay_ms * MathPow(multiplier, retry_number - 1);
+            return (int)MathRound(scaled);
+         }
+         case RETRY_POLICY_LINEAR:
+            return m_initial_delay_ms;
+         default:
+            break;
+      }
+
+      return 0;
+   }
+
+   string PolicyName(const RetryPolicy policy) const
+   {
+      switch(policy)
+      {
+         case RETRY_POLICY_FAIL_FAST:
+            return "FAIL_FAST";
+         case RETRY_POLICY_EXPONENTIAL:
+            return "EXPONENTIAL";
+         case RETRY_POLICY_LINEAR:
+            return "LINEAR";
+      }
+      return "UNKNOWN";
+   }
+};
+
+bool OE_OrderSend(const MqlTradeRequest &request, MqlTradeResult &result);
+void OE_ApplyRetryDelay(const int delay_ms);
 
 //==============================================================================
 // OrderEngine Class
@@ -112,6 +237,7 @@ private:
    string          m_log_buffer[];
    int             m_log_buffer_count;
    bool            m_log_buffer_dirty;
+   RetryManager    m_retry_manager;
 
    // Helper methods
    void LogOE(const string message)
@@ -167,13 +293,13 @@ private:
                              int &out_symbol_positions,
                              int &out_symbol_pending,
                              string &out_violation_reason);
-   bool SubmitOrderStub(const OrderRequest &request,
-                        const bool is_pending_request,
-                        const double evaluated_risk,
-                        const int projected_total_positions,
-                        const int projected_symbol_positions,
-                        const int projected_symbol_pending,
-                        OrderResult &result);
+   bool ExecuteOrderWithRetry(const OrderRequest &request,
+                              const bool is_pending_request,
+                              const double evaluated_risk,
+                              const int projected_total_positions,
+                              const int projected_symbol_positions,
+                              const int projected_symbol_pending,
+                              OrderResult &result);
    void AppendLogLine(const string line);
    void FlushLogBuffer();
    void FlushIntentJournalStub();
@@ -204,6 +330,9 @@ public:
       m_log_buffer_size = DEFAULT_LogBufferSize;
       m_log_buffer_count = 0;
       m_log_buffer_dirty = false;
+      m_retry_manager.Configure(m_max_retry_attempts,
+                                m_initial_retry_delay_ms,
+                                m_retry_backoff_multiplier);
       
       ArrayResize(m_oco_relationships, 100);
       ArrayResize(m_queued_actions, 1000);
@@ -230,6 +359,9 @@ public:
       m_log_buffer_count = 0;
       m_log_buffer_dirty = false;
       ArrayResize(m_log_buffer, 0);
+      m_retry_manager.Configure(m_max_retry_attempts,
+                                m_initial_retry_delay_ms,
+                                m_retry_backoff_multiplier);
       LogOE("OrderEngine::Init() - Initialization complete");
       return true;
    }
@@ -320,12 +452,13 @@ public:
       result.executed_price = 0.0;
       result.executed_volume = 0.0;
       result.retry_count = 0;
+      result.last_retcode = 0;
       
       LogOE(StringFormat("PlaceOrder: %s %s vol=%.2f price=%.5f sl=%.5f tp=%.5f",
             request.symbol, EnumToString(request.type), request.volume, 
             request.price, request.sl, request.tp));
       
-      // TODO[M3-Task5]: Implement retry logic
+      // Retry policy handled via ExecuteOrderWithRetry (Task 5)
       // TODO[M3-Task6]: Market fallback with slippage protection
 
       const bool is_pending = IsPendingOrderType(request.type);
@@ -583,13 +716,13 @@ public:
                                normalized.volume,
                                risk_dollars));
 
-      SubmitOrderStub(normalized,
-                      is_pending,
-                      risk_dollars,
-                      projected_total,
-                      projected_symbol_positions,
-                      projected_symbol_pending,
-                      result);
+      ExecuteOrderWithRetry(normalized,
+                            is_pending,
+                            risk_dollars,
+                            projected_total,
+                            projected_symbol_positions,
+                            projected_symbol_pending,
+                            result);
 
       return result;
    }
@@ -814,19 +947,19 @@ bool OrderEngine::EvaluatePositionCaps(const OrderRequest &request,
    return true;
 }
 
-bool OrderEngine::SubmitOrderStub(const OrderRequest &request,
-                                  const bool is_pending_request,
-                                  const double evaluated_risk,
-                                  const int projected_total_positions,
-                                  const int projected_symbol_positions,
-                                  const int projected_symbol_pending,
-                                  OrderResult &result)
+bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
+                                        const bool is_pending_request,
+                                        const double evaluated_risk,
+                                        const int projected_total_positions,
+                                        const int projected_symbol_positions,
+                                        const int projected_symbol_pending,
+                                        OrderResult &result)
 {
    const string mode = is_pending_request
                        ? "PENDING"
                        : (IsMarketOrderType(request.type) ? "MARKET" : "UNSPECIFIED");
 
-   LogOE(StringFormat("SubmitOrderStub: %s order for %s volume=%.4f risk=%.2f (projected totals: total=%d, symbol=%d, pending=%d)",
+   LogOE(StringFormat("ExecuteOrderWithRetry: %s order for %s volume=%.4f risk=%.2f (projected totals: total=%d, symbol=%d, pending=%d)",
                       mode,
                       request.symbol,
                       request.volume,
@@ -835,7 +968,7 @@ bool OrderEngine::SubmitOrderStub(const OrderRequest &request,
                       projected_symbol_positions,
                       projected_symbol_pending));
 
-   string fields = StringFormat(
+   string init_fields = StringFormat(
       "{\"symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"volume\":%.4f,\"risk\":%.2f,\"total_after\":%d,\"symbol_after\":%d,\"pending_after\":%d}",
       request.symbol,
       EnumToString(request.type),
@@ -846,16 +979,155 @@ bool OrderEngine::SubmitOrderStub(const OrderRequest &request,
       projected_symbol_positions,
       projected_symbol_pending);
 
-   LogDecision("OrderEngine", "PLACE_STUB", fields);
+   LogDecision("OrderEngine", "EXECUTE_ORDER_INIT", init_fields);
 
-   result.success = true;
+   result.success = false;
    result.ticket = 0;
    result.error_message = "";
    result.executed_price = 0.0;
    result.executed_volume = 0.0;
    result.retry_count = 0;
+   result.last_retcode = 0;
 
-   return true;
+   MqlTradeRequest trade_request;
+   ZeroMemory(trade_request);
+   trade_request.action = is_pending_request ? TRADE_ACTION_PENDING : TRADE_ACTION_DEAL;
+   trade_request.symbol = request.symbol;
+   trade_request.type = request.type;
+   trade_request.volume = request.volume;
+   trade_request.price = request.price;
+   trade_request.sl = request.sl;
+   trade_request.tp = request.tp;
+   trade_request.deviation = (int)MathRound(MathMax(0.0, m_max_slippage_points));
+   trade_request.magic = request.magic;
+   trade_request.comment = request.comment;
+   trade_request.type_filling = ORDER_FILLING_RETURN;
+   if(is_pending_request)
+   {
+      trade_request.type_time = (request.expiry > 0 ? ORDER_TIME_SPECIFIED : ORDER_TIME_GTC);
+      trade_request.expiration = request.expiry;
+   }
+   else
+   {
+      trade_request.type_time = ORDER_TIME_GTC;
+      trade_request.expiration = 0;
+      if(!MathIsValidNumber(trade_request.price) || trade_request.price <= 0.0)
+         trade_request.price = 0.0;
+   }
+
+   MqlTradeResult trade_result;
+   ZeroMemory(trade_result);
+
+   const int max_attempts = m_retry_manager.MaxRetries() + 1;
+   int retries_performed = 0;
+   bool success = false;
+
+   for(int attempt = 0; attempt < max_attempts; ++attempt)
+   {
+      if(attempt > 0)
+         retries_performed = attempt;
+
+      ZeroMemory(trade_result);
+      const bool send_ok = OE_OrderSend(trade_request, trade_result);
+      result.last_retcode = trade_result.retcode;
+
+      string attempt_fields = StringFormat(
+         "{\"attempt\":%d,\"symbol\":\"%s\",\"retcode\":%d,\"send_ok\":%s}",
+         attempt,
+         request.symbol,
+         trade_result.retcode,
+         send_ok ? "true" : "false");
+      LogDecision("OrderEngine", "ORDER_SEND_ATTEMPT", attempt_fields);
+
+      const bool order_done = (send_ok && trade_result.retcode == TRADE_RETCODE_DONE);
+      if(order_done)
+      {
+         result.success = true;
+         result.ticket = (trade_result.deal != 0 ? trade_result.deal : trade_result.order);
+         result.executed_price = trade_result.price;
+         result.executed_volume = trade_result.volume;
+         result.retry_count = retries_performed;
+         result.last_retcode = trade_result.retcode;
+         result.error_message = "";
+
+         LogOE(StringFormat("ExecuteOrderWithRetry success on attempt %d: ticket=%llu price=%.5f volume=%.4f",
+                            attempt,
+                            result.ticket,
+                            result.executed_price,
+                            result.executed_volume));
+         LogDecision("OrderEngine",
+                     "EXECUTE_ORDER_SUCCESS",
+                     StringFormat("{\"symbol\":\"%s\",\"attempt\":%d,\"retries\":%d,\"retcode\":%d,\"ticket\":%llu}",
+                                  request.symbol,
+                                  attempt,
+                                  retries_performed,
+                                  trade_result.retcode,
+                                  result.ticket));
+         success = true;
+         break;
+      }
+
+      const RetryPolicy policy = m_retry_manager.GetPolicyForError(trade_result.retcode);
+      const string policy_name = m_retry_manager.PolicyName(policy);
+      const bool retry_allowed = m_retry_manager.ShouldRetry(policy, attempt);
+
+      LogOE(StringFormat("ExecuteOrderWithRetry failure: attempt=%d retcode=%d policy=%s retry_allowed=%s",
+                         attempt,
+                         trade_result.retcode,
+                         policy_name,
+                         retry_allowed ? "true" : "false"));
+
+      LogDecision("OrderEngine",
+                  "ORDER_RETRY_EVALUATE",
+                  StringFormat("{\"attempt\":%d,\"retcode\":%d,\"policy\":\"%s\",\"retry_allowed\":%s}",
+                               attempt,
+                               trade_result.retcode,
+                               policy_name,
+                               retry_allowed ? "true" : "false"));
+
+      if(!retry_allowed)
+         break;
+
+      const int delay_ms = m_retry_manager.CalculateDelayMs(attempt + 1, policy);
+      if(delay_ms > 0)
+      {
+         LogOE(StringFormat("ExecuteOrderWithRetry delay before retry %d: %d ms (policy=%s)",
+                            attempt + 1,
+                            delay_ms,
+                            policy_name));
+         OE_ApplyRetryDelay(delay_ms);
+      }
+   }
+
+   if(!success)
+   {
+      result.success = false;
+      result.ticket = 0;
+      result.executed_price = 0.0;
+      result.executed_volume = 0.0;
+      result.retry_count = retries_performed;
+
+      string fail_message = StringFormat("OrderSend failed (retcode=%d, retries=%d)",
+                                         result.last_retcode,
+                                         retries_performed);
+      if(trade_result.comment != "")
+         fail_message = StringFormat("%s comment=%s", fail_message, trade_result.comment);
+
+      result.error_message = fail_message;
+
+      LogDecision("OrderEngine",
+                  "EXECUTE_ORDER_FAIL",
+                  StringFormat("{\"symbol\":\"%s\",\"retries\":%d,\"retcode\":%d}",
+                               request.symbol,
+                               retries_performed,
+                               result.last_retcode));
+   }
+
+   LogOE(StringFormat("ExecuteOrderWithRetry complete: success=%s retries=%d last_retcode=%d",
+                      result.success ? "true" : "false",
+                      result.retry_count,
+                      result.last_retcode));
+   return result.success;
 }
 
 void OrderEngine::AppendLogLine(const string line)
@@ -1061,6 +1333,191 @@ void OE_Test_ClearRiskOverride()
    g_oe_risk_override.risk_value = 0.0;
 }
 
+//------------------------------------------------------------------------------
+// OrderSend override queue for deterministic retry testing (Task 5)
+//------------------------------------------------------------------------------
+
+struct OEOrderSendResponse
+{
+   bool   result_ok;
+   int    retcode;
+   ulong  order_ticket;
+   ulong  deal_ticket;
+   double price;
+   double volume;
+   string comment;
+};
+
+struct OEOrderSendOverrideState
+{
+   bool   active;
+   int    call_count;
+   int    current_index;
+   OEOrderSendResponse responses[];
+};
+
+static OEOrderSendOverrideState g_oe_order_send_override = {false, 0, 0, NULL};
+
+void OE_Test_ClearOrderSendOverride()
+{
+   g_oe_order_send_override.active = false;
+   g_oe_order_send_override.call_count = 0;
+   g_oe_order_send_override.current_index = 0;
+   ArrayResize(g_oe_order_send_override.responses, 0);
+}
+
+void OE_Test_EnableOrderSendOverride()
+{
+   g_oe_order_send_override.active = true;
+   g_oe_order_send_override.call_count = 0;
+   g_oe_order_send_override.current_index = 0;
+   ArrayResize(g_oe_order_send_override.responses, 0);
+}
+
+void OE_Test_DisableOrderSendOverride()
+{
+   OE_Test_ClearOrderSendOverride();
+}
+
+void OE_Test_EnqueueOrderSendResponse(const bool result_ok,
+                                      const int retcode,
+                                      const ulong order_ticket,
+                                      const ulong deal_ticket,
+                                      const double price,
+                                      const double volume,
+                                      const string comment)
+{
+   if(!g_oe_order_send_override.active)
+      OE_Test_EnableOrderSendOverride();
+
+   const int size = ArraySize(g_oe_order_send_override.responses);
+   ArrayResize(g_oe_order_send_override.responses, size + 1);
+   g_oe_order_send_override.responses[size].result_ok = result_ok;
+   g_oe_order_send_override.responses[size].retcode = retcode;
+   g_oe_order_send_override.responses[size].order_ticket = order_ticket;
+   g_oe_order_send_override.responses[size].deal_ticket = deal_ticket;
+   g_oe_order_send_override.responses[size].price = price;
+   g_oe_order_send_override.responses[size].volume = volume;
+   g_oe_order_send_override.responses[size].comment = comment;
+}
+
+int OE_Test_GetOrderSendCallCount()
+{
+   return g_oe_order_send_override.call_count;
+}
+
+//------------------------------------------------------------------------------
+// Retry delay capture for deterministic validation (Task 5)
+//------------------------------------------------------------------------------
+
+struct OERetryDelayCaptureState
+{
+   bool active;
+   bool skip_sleep;
+   int  delays[];
+};
+
+static OERetryDelayCaptureState g_oe_retry_delay_capture = {false, false, NULL};
+
+void OE_Test_ResetRetryDelayCapture()
+{
+   g_oe_retry_delay_capture.active = false;
+   g_oe_retry_delay_capture.skip_sleep = false;
+   ArrayResize(g_oe_retry_delay_capture.delays, 0);
+}
+
+void OE_Test_BeginRetryDelayCapture(const bool skip_sleep)
+{
+   g_oe_retry_delay_capture.active = true;
+   g_oe_retry_delay_capture.skip_sleep = skip_sleep;
+   ArrayResize(g_oe_retry_delay_capture.delays, 0);
+}
+
+void OE_Test_EndRetryDelayCapture()
+{
+   OE_Test_ResetRetryDelayCapture();
+}
+
+int OE_Test_GetCapturedDelayCount()
+{
+   return ArraySize(g_oe_retry_delay_capture.delays);
+}
+
+int OE_Test_GetCapturedDelay(const int index)
+{
+   const int count = ArraySize(g_oe_retry_delay_capture.delays);
+   if(index < 0 || index >= count)
+      return 0;
+   return g_oe_retry_delay_capture.delays[index];
+}
+
+//------------------------------------------------------------------------------
+// Internal OrderSend wrapper honoring overrides
+//------------------------------------------------------------------------------
+
+bool OE_OrderSend(const MqlTradeRequest &request, MqlTradeResult &result)
+{
+   if(g_oe_order_send_override.active)
+   {
+      g_oe_order_send_override.call_count++;
+
+      const int idx = g_oe_order_send_override.current_index;
+      const int total = ArraySize(g_oe_order_send_override.responses);
+      if(idx >= total)
+      {
+         ZeroMemory(result);
+         result.retcode = 0;
+         return false;
+      }
+
+      const OEOrderSendResponse &queued = g_oe_order_send_override.responses[idx];
+      g_oe_order_send_override.current_index++;
+
+      ZeroMemory(result);
+      result.retcode = queued.retcode;
+      result.order = queued.order_ticket;
+      result.deal = queued.deal_ticket;
+      result.price = queued.price;
+      result.volume = queued.volume;
+      result.comment = queued.comment;
+      return queued.result_ok;
+   }
+
+   ResetLastError();
+   bool ok = OrderSend(request, result);
+   if(!ok)
+   {
+      const int err = GetLastError();
+      PrintFormat("[OrderEngine] OrderSend failed (err=%d, retcode=%d, comment=%s)",
+                  err,
+                  result.retcode,
+                  result.comment);
+      ResetLastError();
+   }
+   return ok;
+}
+
+//------------------------------------------------------------------------------
+// Retry delay helper honoring capture overrides
+//------------------------------------------------------------------------------
+
+void OE_ApplyRetryDelay(const int delay_ms)
+{
+   if(delay_ms <= 0)
+      return;
+
+   if(g_oe_retry_delay_capture.active)
+   {
+      const int size = ArraySize(g_oe_retry_delay_capture.delays);
+      ArrayResize(g_oe_retry_delay_capture.delays, size + 1);
+      g_oe_retry_delay_capture.delays[size] = delay_ms;
+      if(g_oe_retry_delay_capture.skip_sleep)
+         return;
+   }
+
+   Sleep(delay_ms);
+}
+
 void OE_Test_SetVolumeOverride(const string symbol,
                                const double step,
                                const double min_volume,
@@ -1115,6 +1572,8 @@ void OE_Test_ClearOverrides()
    OE_Test_ClearPriceOverride();
    OE_Test_ClearCapOverride();
    OE_Test_ClearRiskOverride();
+   OE_Test_ClearOrderSendOverride();
+   OE_Test_ResetRetryDelayCapture();
 }
 
 bool OE_Test_GetVolumeOverride(const string symbol,
