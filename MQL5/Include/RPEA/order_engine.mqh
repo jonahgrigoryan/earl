@@ -1,3 +1,4 @@
+// Include guard
 #ifndef RPEA_ORDER_ENGINE_MQH
 #define RPEA_ORDER_ENGINE_MQH
 // order_engine.mqh - Order Engine scaffolding (M3 Task 1)
@@ -5,6 +6,26 @@
 
 #include <RPEA/config.mqh>
 #include <RPEA/logging.mqh>
+
+#ifndef RPEA_ORDER_ENGINE_SKIP_RISK
+#include <RPEA/risk.mqh>
+#else
+double Equity_CalcRiskDollars(const string symbol,
+                              const double volume,
+                              const double price_entry,
+                              const double stop_price,
+                              bool &ok);
+#endif
+
+#ifndef RPEA_ORDER_ENGINE_SKIP_EQUITY
+#include <RPEA/equity_guardian.mqh>
+#else
+bool Equity_IsPendingOrderType(const int type);
+bool Equity_CheckPositionCaps(const string symbol,
+                              int &out_total_positions,
+                              int &out_symbol_positions,
+                              int &out_symbol_pending);
+#endif
 
 //==============================================================================
 // Structs for Order Engine State Management
@@ -88,12 +109,17 @@ private:
    bool            m_enable_risk_reduction_sibling_cancel;
    bool            m_enable_detailed_logging;
    int             m_log_buffer_size;
+   string          m_log_buffer[];
+   int             m_log_buffer_count;
+   bool            m_log_buffer_dirty;
 
    // Helper methods
    void LogOE(const string message)
    {
       if(m_enable_detailed_logging)
       {
+         string formatted = FormatLogLine(message);
+         AppendLogLine(formatted);
          PrintFormat("[OrderEngine] %s", message);
       }
    }
@@ -133,6 +159,27 @@ private:
       m_queue_count = new_count;
    }
 
+   bool IsMarketOrderType(const ENUM_ORDER_TYPE type);
+   bool IsPendingOrderType(const ENUM_ORDER_TYPE type);
+   bool EvaluatePositionCaps(const OrderRequest &request,
+                             const bool is_pending_request,
+                             int &out_total_positions,
+                             int &out_symbol_positions,
+                             int &out_symbol_pending,
+                             string &out_violation_reason);
+   bool SubmitOrderStub(const OrderRequest &request,
+                        const bool is_pending_request,
+                        const double evaluated_risk,
+                        const int projected_total_positions,
+                        const int projected_symbol_positions,
+                        const int projected_symbol_pending,
+                        OrderResult &result);
+   void AppendLogLine(const string line);
+   void FlushLogBuffer();
+   void FlushIntentJournalStub();
+   void ResetState();
+   string FormatLogLine(const string message);
+
 public:
    // Constructor
    OrderEngine()
@@ -155,6 +202,8 @@ public:
       m_enable_risk_reduction_sibling_cancel = DEFAULT_EnableRiskReductionSiblingCancel;
       m_enable_detailed_logging = DEFAULT_EnableDetailedLogging;
       m_log_buffer_size = DEFAULT_LogBufferSize;
+      m_log_buffer_count = 0;
+      m_log_buffer_dirty = false;
       
       ArrayResize(m_oco_relationships, 100);
       ArrayResize(m_queued_actions, 1000);
@@ -165,6 +214,9 @@ public:
    {
       ArrayFree(m_oco_relationships);
       ArrayFree(m_queued_actions);
+      ArrayFree(m_log_buffer);
+      m_log_buffer_count = 0;
+      m_log_buffer_dirty = false;
    }
    
    //===========================================================================
@@ -174,9 +226,10 @@ public:
    bool Init()
    {
       LogOE("OrderEngine::Init() - Initializing Order Engine");
-      m_oco_count = 0;
-      m_queue_count = 0;
-      m_execution_locked = false;
+      ResetState();
+      m_log_buffer_count = 0;
+      m_log_buffer_dirty = false;
+      ArrayResize(m_log_buffer, 0);
       LogOE("OrderEngine::Init() - Initialization complete");
       return true;
    }
@@ -188,11 +241,14 @@ public:
       // Log final state
       LogOE(StringFormat("OrderEngine::OnShutdown() - Active OCO relationships: %d", m_oco_count));
       LogOE(StringFormat("OrderEngine::OnShutdown() - Queued actions: %d", m_queue_count));
-      
-      // TODO[M3-Task2]: Persist intent journal
-      // TODO[M3-Task14]: Flush audit logs
-      
       LogOE("OrderEngine::OnShutdown() - Shutdown complete");
+
+      FlushIntentJournalStub();
+      FlushLogBuffer();
+      ResetState();
+      m_log_buffer_count = 0;
+      m_log_buffer_dirty = false;
+      ArrayResize(m_log_buffer, 0);
    }
    
    //===========================================================================
@@ -269,11 +325,272 @@ public:
             request.symbol, EnumToString(request.type), request.volume, 
             request.price, request.sl, request.tp));
       
-      // TODO[M3-Task3]: Normalize volume and price
-      // TODO[M3-Task4]: Check position limits
       // TODO[M3-Task5]: Implement retry logic
       // TODO[M3-Task6]: Market fallback with slippage protection
-      
+
+      const bool is_pending = IsPendingOrderType(request.type);
+      const bool is_market = IsMarketOrderType(request.type);
+      const string mode = is_pending ? "PENDING" : (is_market ? "MARKET" : "UNSPECIFIED");
+
+      if(StringLen(request.symbol) == 0)
+      {
+         result.error_message = "Order request missing symbol";
+         LogOE("PlaceOrder failed: missing symbol");
+         LogDecision("OrderEngine",
+                     "PLACE_REJECT",
+                     StringFormat("{\"reason\":\"missing_symbol\",\"type\":\"%s\"}",
+                                  EnumToString(request.type)));
+         return result;
+      }
+
+      if(!MathIsValidNumber(request.volume) || request.volume <= 0.0)
+      {
+         result.error_message = StringFormat("Volume %.4f invalid for %s", request.volume, request.symbol);
+         LogOE(StringFormat("PlaceOrder failed: invalid volume %.4f for %s",
+                            request.volume,
+                            request.symbol));
+         LogDecision("OrderEngine",
+                     "PLACE_REJECT",
+                     StringFormat("{\"symbol\":\"%s\",\"mode\":\"%s\",\"reason\":\"invalid_volume\",\"volume\":%.4f}",
+                                  request.symbol,
+                                  mode,
+                                  request.volume));
+         return result;
+      }
+
+      if(!is_market && !is_pending)
+      {
+         result.error_message = StringFormat("Unsupported order type %s", EnumToString(request.type));
+         LogOE(StringFormat("PlaceOrder failed: unsupported order type %s",
+                            EnumToString(request.type)));
+         LogDecision("OrderEngine",
+                     "PLACE_REJECT",
+                     StringFormat("{\"symbol\":\"%s\",\"reason\":\"unsupported_type\",\"type\":\"%s\"}",
+                                  request.symbol,
+                                  EnumToString(request.type)));
+         return result;
+      }
+
+      OrderRequest normalized = request;
+
+      const double normalized_volume = OE_NormalizeVolume(request.symbol, request.volume);
+      if(!MathIsValidNumber(normalized_volume) || normalized_volume <= 0.0)
+      {
+         result.error_message = StringFormat("Unable to normalize volume %.8f for %s", request.volume, request.symbol);
+         LogOE(StringFormat("PlaceOrder failed: normalization produced invalid volume %.8f for %s",
+                            normalized_volume,
+                            request.symbol));
+         LogDecision("OrderEngine",
+                     "PLACE_REJECT",
+                     StringFormat("{\"symbol\":\"%s\",\"mode\":\"%s\",\"reason\":\"volume_normalization\",\"raw_volume\":%.8f}",
+                                  request.symbol,
+                                  mode,
+                                  request.volume));
+         return result;
+      }
+
+      if(MathAbs(normalized_volume - request.volume) > 1e-8)
+      {
+         LogOE(StringFormat("Normalized volume for %s adjusted from %.8f to %.8f",
+                            request.symbol,
+                            request.volume,
+                            normalized_volume));
+      }
+
+      normalized.volume = normalized_volume;
+
+      if(request.price > 0.0)
+      {
+         const double normalized_price = OE_NormalizePrice(request.symbol, request.price);
+         if(MathIsValidNumber(normalized_price) && normalized_price > 0.0)
+         {
+            if(MathAbs(normalized_price - request.price) > 1e-8)
+            {
+               LogOE(StringFormat("Normalized price for %s adjusted from %.10f to %.10f",
+                                  request.symbol,
+                                  request.price,
+                                  normalized_price));
+            }
+            normalized.price = normalized_price;
+         }
+      }
+
+      if(request.sl > 0.0)
+      {
+         const double normalized_sl = OE_NormalizePrice(request.symbol, request.sl);
+         if(MathIsValidNumber(normalized_sl) && normalized_sl > 0.0)
+         {
+            if(MathAbs(normalized_sl - request.sl) > 1e-8)
+            {
+               LogOE(StringFormat("Normalized SL for %s adjusted from %.10f to %.10f",
+                                  request.symbol,
+                                  request.sl,
+                                  normalized_sl));
+            }
+            normalized.sl = normalized_sl;
+         }
+      }
+
+      if(request.tp > 0.0)
+      {
+         const double normalized_tp = OE_NormalizePrice(request.symbol, request.tp);
+         if(MathIsValidNumber(normalized_tp) && normalized_tp > 0.0)
+         {
+            if(MathAbs(normalized_tp - request.tp) > 1e-8)
+            {
+               LogOE(StringFormat("Normalized TP for %s adjusted from %.10f to %.10f",
+                                  request.symbol,
+                                  request.tp,
+                                  normalized_tp));
+            }
+            normalized.tp = normalized_tp;
+         }
+      }
+
+      int total_positions = 0;
+      int symbol_positions = 0;
+      int symbol_pending = 0;
+      string violation_reason = "";
+
+      if(!EvaluatePositionCaps(normalized,
+                               is_pending,
+                               total_positions,
+                               symbol_positions,
+                               symbol_pending,
+                               violation_reason))
+      {
+         const int total_limit = MaxOpenPositionsTotal;
+         const int symbol_limit = MaxOpenPerSymbol;
+         const int pending_limit = MaxPendingsPerSymbol;
+
+         string fields = StringFormat(
+            "{\"symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"reason\":\"%s\",\"total\":%d,\"symbol\":%d,\"pending\":%d,\"limit_total\":%d,\"limit_symbol\":%d,\"limit_pending\":%d}",
+            normalized.symbol,
+            EnumToString(normalized.type),
+            mode,
+            violation_reason,
+            total_positions,
+            symbol_positions,
+            symbol_pending,
+            total_limit,
+            symbol_limit,
+            pending_limit);
+
+         LogDecision("OrderEngine", "CAP_BLOCK", fields);
+         LogOE(StringFormat("PlaceOrder blocked: %s", violation_reason));
+         result.error_message = StringFormat("Position caps prevent order: %s", violation_reason);
+         return result;
+      }
+
+      const int projected_total = total_positions + (is_market ? 1 : 0);
+      const int projected_symbol_positions = symbol_positions + (is_market ? 1 : 0);
+      const int projected_symbol_pending = symbol_pending + (is_pending ? 1 : 0);
+
+      string cap_pass_fields = StringFormat(
+         "{\"symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"total_current\":%d,\"total_after\":%d,\"total_limit\":%d,\"symbol_current\":%d,\"symbol_after\":%d,\"symbol_limit\":%d,\"pending_current\":%d,\"pending_after\":%d,\"pending_limit\":%d}",
+         normalized.symbol,
+         EnumToString(normalized.type),
+         mode,
+         total_positions,
+         projected_total,
+         MaxOpenPositionsTotal,
+         symbol_positions,
+         projected_symbol_positions,
+         MaxOpenPerSymbol,
+         symbol_pending,
+         projected_symbol_pending,
+         MaxPendingsPerSymbol);
+
+      LogDecision("OrderEngine", "CAP_PASS", cap_pass_fields);
+      LogOE(StringFormat("Position caps OK for %s (%s): total %d->%d (limit=%d), symbol %d->%d (limit=%d), pending %d->%d (limit=%d)",
+                         normalized.symbol,
+                         mode,
+                         total_positions,
+                         projected_total,
+                         MaxOpenPositionsTotal,
+                         symbol_positions,
+                         projected_symbol_positions,
+                         MaxOpenPerSymbol,
+                         symbol_pending,
+                         projected_symbol_pending,
+                         MaxPendingsPerSymbol));
+
+      double entry_price = normalized.price;
+      if(is_market)
+      {
+         double quote = 0.0;
+         if(normalized.type == ORDER_TYPE_BUY)
+         {
+            if(OE_SymbolInfoDoubleSafe("PlaceOrder::BUY", normalized.symbol, SYMBOL_ASK, quote))
+               entry_price = quote;
+         }
+         else if(normalized.type == ORDER_TYPE_SELL)
+         {
+            if(OE_SymbolInfoDoubleSafe("PlaceOrder::SELL", normalized.symbol, SYMBOL_BID, quote))
+               entry_price = quote;
+         }
+      }
+
+      if(entry_price > 0.0)
+      {
+         const double normalized_entry = OE_NormalizePrice(normalized.symbol, entry_price);
+         if(MathIsValidNumber(normalized_entry) && normalized_entry > 0.0)
+            entry_price = normalized_entry;
+      }
+
+      bool risk_calc_ok = false;
+      double risk_dollars = 0.0;
+
+      if(g_oe_risk_override.active)
+      {
+         risk_calc_ok = g_oe_risk_override.ok;
+         risk_dollars = g_oe_risk_override.risk_value;
+      }
+      else
+      {
+         risk_dollars = Equity_CalcRiskDollars(normalized.symbol,
+                                               normalized.volume,
+                                               entry_price,
+                                               normalized.sl,
+                                               risk_calc_ok);
+      }
+
+      if(!risk_calc_ok || risk_dollars <= 0.0)
+      {
+         string fields = StringFormat(
+            "{\"symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"entry\":%.5f,\"sl\":%.5f,\"volume\":%.4f}",
+            normalized.symbol,
+            EnumToString(normalized.type),
+            mode,
+            entry_price,
+            normalized.sl,
+            normalized.volume);
+
+         LogDecision("OrderEngine", "RISK_BLOCK", fields);
+         LogOE("PlaceOrder blocked: unable to evaluate risk (entry/sl invalid)");
+         result.error_message = "Risk evaluation failed for order request";
+         return result;
+      }
+
+      LogDecision("OrderEngine",
+                  "RISK_EVAL",
+                  StringFormat("{\"symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"entry\":%.5f,\"sl\":%.5f,\"volume\":%.4f,\"risk\":%.2f}",
+                               normalized.symbol,
+                               EnumToString(normalized.type),
+                               mode,
+                               entry_price,
+                               normalized.sl,
+                               normalized.volume,
+                               risk_dollars));
+
+      SubmitOrderStub(normalized,
+                      is_pending,
+                      risk_dollars,
+                      projected_total,
+                      projected_symbol_positions,
+                      projected_symbol_pending,
+                      result);
+
       return result;
    }
    
@@ -388,6 +705,267 @@ public:
    }
 };
 
+bool OrderEngine::IsMarketOrderType(const ENUM_ORDER_TYPE type)
+{
+   return (type == ORDER_TYPE_BUY || type == ORDER_TYPE_SELL);
+}
+
+bool OrderEngine::IsPendingOrderType(const ENUM_ORDER_TYPE type)
+{
+   return Equity_IsPendingOrderType((int)type);
+}
+
+bool OrderEngine::EvaluatePositionCaps(const OrderRequest &request,
+                                       const bool is_pending_request,
+                                       int &out_total_positions,
+                                       int &out_symbol_positions,
+                                       int &out_symbol_pending,
+                                       string &out_violation_reason)
+{
+   out_violation_reason = "";
+
+   const bool is_market = IsMarketOrderType(request.type);
+   bool caps_ok = true;
+
+   if(g_oe_cap_override.active)
+   {
+      caps_ok = g_oe_cap_override.caps_ok;
+      out_total_positions = g_oe_cap_override.total_positions;
+      out_symbol_positions = g_oe_cap_override.symbol_positions;
+      out_symbol_pending = g_oe_cap_override.symbol_pending;
+   }
+   else
+   {
+      caps_ok = Equity_CheckPositionCaps(request.symbol,
+                                         out_total_positions,
+                                         out_symbol_positions,
+                                         out_symbol_pending);
+   }
+
+   const int total_limit = MaxOpenPositionsTotal;
+   const int symbol_limit = MaxOpenPerSymbol;
+   const int pending_limit = MaxPendingsPerSymbol;
+
+   if(!caps_ok)
+   {
+      if(total_limit > 0 && out_total_positions >= total_limit)
+      {
+         out_violation_reason = StringFormat("MaxOpenPositionsTotal reached (%d/%d)",
+                                             out_total_positions,
+                                             total_limit);
+      }
+      else if(symbol_limit > 0 && out_symbol_positions >= symbol_limit)
+      {
+         out_violation_reason = StringFormat("MaxOpenPerSymbol reached for %s (%d/%d)",
+                                             request.symbol,
+                                             out_symbol_positions,
+                                             symbol_limit);
+      }
+      else if(pending_limit > 0 && out_symbol_pending >= pending_limit)
+      {
+         out_violation_reason = StringFormat("MaxPendingsPerSymbol reached for %s (%d/%d)",
+                                             request.symbol,
+                                             out_symbol_pending,
+                                             pending_limit);
+      }
+      else
+      {
+         out_violation_reason = "Unable to evaluate position limits (calculation error)";
+      }
+      return false;
+   }
+
+   const int projected_total = out_total_positions + (is_market ? 1 : 0);
+   const int projected_symbol_positions = out_symbol_positions + (is_market ? 1 : 0);
+   const int projected_symbol_pending = out_symbol_pending + (is_pending_request ? 1 : 0);
+
+   if(total_limit > 0 && projected_total > total_limit)
+   {
+      out_violation_reason = StringFormat(
+         "Placing order would exceed MaxOpenPositionsTotal (%d -> %d > %d)",
+         out_total_positions,
+         projected_total,
+         total_limit);
+      return false;
+   }
+
+   if(symbol_limit > 0 && projected_symbol_positions > symbol_limit)
+   {
+      out_violation_reason = StringFormat(
+         "Placing order would exceed MaxOpenPerSymbol for %s (%d -> %d > %d)",
+         request.symbol,
+         out_symbol_positions,
+         projected_symbol_positions,
+         symbol_limit);
+      return false;
+   }
+
+   if(is_pending_request && pending_limit > 0 && projected_symbol_pending > pending_limit)
+   {
+      out_violation_reason = StringFormat(
+         "Placing order would exceed MaxPendingsPerSymbol for %s (%d -> %d > %d)",
+         request.symbol,
+         out_symbol_pending,
+         projected_symbol_pending,
+         pending_limit);
+      return false;
+   }
+
+   return true;
+}
+
+bool OrderEngine::SubmitOrderStub(const OrderRequest &request,
+                                  const bool is_pending_request,
+                                  const double evaluated_risk,
+                                  const int projected_total_positions,
+                                  const int projected_symbol_positions,
+                                  const int projected_symbol_pending,
+                                  OrderResult &result)
+{
+   const string mode = is_pending_request
+                       ? "PENDING"
+                       : (IsMarketOrderType(request.type) ? "MARKET" : "UNSPECIFIED");
+
+   LogOE(StringFormat("SubmitOrderStub: %s order for %s volume=%.4f risk=%.2f (projected totals: total=%d, symbol=%d, pending=%d)",
+                      mode,
+                      request.symbol,
+                      request.volume,
+                      evaluated_risk,
+                      projected_total_positions,
+                      projected_symbol_positions,
+                      projected_symbol_pending));
+
+   string fields = StringFormat(
+      "{\"symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"volume\":%.4f,\"risk\":%.2f,\"total_after\":%d,\"symbol_after\":%d,\"pending_after\":%d}",
+      request.symbol,
+      EnumToString(request.type),
+      mode,
+      request.volume,
+      evaluated_risk,
+      projected_total_positions,
+      projected_symbol_positions,
+      projected_symbol_pending);
+
+   LogDecision("OrderEngine", "PLACE_STUB", fields);
+
+   result.success = true;
+   result.ticket = 0;
+   result.error_message = "";
+   result.executed_price = 0.0;
+   result.executed_volume = 0.0;
+   result.retry_count = 0;
+
+   return true;
+}
+
+void OrderEngine::AppendLogLine(const string line)
+{
+   if(m_log_buffer_size <= 0)
+      return;
+
+   if(m_log_buffer_count >= m_log_buffer_size)
+   {
+      for(int i = 1; i < m_log_buffer_count; i++)
+         m_log_buffer[i - 1] = m_log_buffer[i];
+      m_log_buffer_count = m_log_buffer_size - 1;
+   }
+
+   int current_capacity = ArraySize(m_log_buffer);
+   if(current_capacity <= m_log_buffer_count)
+   {
+      int desired = m_log_buffer_count + 1;
+      int growth = desired;
+      if(growth < 16)
+         growth = 16;
+      if(m_log_buffer_size > 0 && growth < m_log_buffer_size)
+         growth = m_log_buffer_size;
+      ArrayResize(m_log_buffer, growth);
+   }
+
+   m_log_buffer[m_log_buffer_count] = line;
+   m_log_buffer_count++;
+   m_log_buffer_dirty = true;
+}
+
+void OrderEngine::FlushLogBuffer()
+{
+   if(!m_log_buffer_dirty || m_log_buffer_count <= 0)
+      return;
+
+   MqlDateTime tm;
+   TimeToStruct(TimeCurrent(), tm);
+   string ymd = StringFormat("%04d%02d%02d", tm.year, tm.mon, tm.day);
+   string path = StringFormat("%s/order_engine_trace_%s.csv", RPEA_LOGS_DIR, ymd);
+
+   FolderCreate(RPEA_DIR);
+   FolderCreate(RPEA_LOGS_DIR);
+
+   ResetLastError();
+   int handle = FileOpen(path, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(handle == INVALID_HANDLE)
+   {
+      const int err = GetLastError();
+      PrintFormat("[OrderEngine] FlushLogBuffer: unable to open %s (err=%d)", path, err);
+      ResetLastError();
+      return;
+   }
+
+   bool need_header = (FileSize(handle) == 0);
+   FileSeek(handle, 0, SEEK_END);
+   if(need_header)
+      FileWrite(handle, "timestamp,message");
+
+   for(int i = 0; i < m_log_buffer_count; i++)
+      FileWrite(handle, m_log_buffer[i]);
+
+   FileClose(handle);
+
+   ArrayResize(m_log_buffer, 0);
+   m_log_buffer_count = 0;
+   m_log_buffer_dirty = false;
+}
+
+void OrderEngine::FlushIntentJournalStub()
+{
+   FolderCreate(RPEA_DIR);
+   FolderCreate(RPEA_STATE_DIR);
+
+   ResetLastError();
+   int handle = FileOpen(FILE_INTENTS, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(handle == INVALID_HANDLE)
+   {
+      const int err = GetLastError();
+      PrintFormat("[OrderEngine] FlushIntentJournalStub: unable to open %s (err=%d)", FILE_INTENTS, err);
+      ResetLastError();
+      return;
+   }
+
+   if(FileSize(handle) == 0)
+      FileWrite(handle, "{}");
+
+   FileClose(handle);
+}
+
+void OrderEngine::ResetState()
+{
+   m_oco_count = 0;
+   m_queue_count = 0;
+   m_execution_locked = false;
+}
+
+string OrderEngine::FormatLogLine(const string message)
+{
+   MqlDateTime tm;
+   TimeToStruct(TimeCurrent(), tm);
+   string timestamp = StringFormat("%04d-%02d-%02d %02d:%02d:%02d",
+                                   tm.year, tm.mon, tm.day, tm.hour, tm.min, tm.sec);
+   string sanitized = message;
+   sanitized = StringReplace(sanitized, "\"", "\"\"");
+   sanitized = StringReplace(sanitized, "\r", "");
+   sanitized = StringReplace(sanitized, "\n", "\\n");
+   return StringFormat("%s,\"%s\"", timestamp, sanitized);
+}
+
 //==============================================================================
 // Global OrderEngine Instance
 //==============================================================================
@@ -419,6 +997,69 @@ static OENormalizationOverrides g_oe_norm_overrides =
    false, "", 0.0, 0.0, 0.0,
    false, "", 0.0, 0, 0.0, 0.0, 0
 };
+
+//------------------------------------------------------------------------------
+// Position cap overrides for deterministic unit testing (Task 4)
+//------------------------------------------------------------------------------
+
+struct OECapOverrideState
+{
+   bool active;
+   bool caps_ok;
+   int  total_positions;
+   int  symbol_positions;
+   int  symbol_pending;
+};
+
+static OECapOverrideState g_oe_cap_override = {false, true, 0, 0, 0};
+
+void OE_Test_SetCapOverride(const bool caps_ok,
+                            const int total_positions,
+                            const int symbol_positions,
+                            const int symbol_pending)
+{
+   g_oe_cap_override.active = true;
+   g_oe_cap_override.caps_ok = caps_ok;
+   g_oe_cap_override.total_positions = total_positions;
+   g_oe_cap_override.symbol_positions = symbol_positions;
+   g_oe_cap_override.symbol_pending = symbol_pending;
+}
+
+void OE_Test_ClearCapOverride()
+{
+   g_oe_cap_override.active = false;
+   g_oe_cap_override.caps_ok = true;
+   g_oe_cap_override.total_positions = 0;
+   g_oe_cap_override.symbol_positions = 0;
+   g_oe_cap_override.symbol_pending = 0;
+}
+
+//------------------------------------------------------------------------------
+// Risk override for deterministic unit testing (Task 4)
+//------------------------------------------------------------------------------
+
+struct OERiskOverrideState
+{
+   bool active;
+   bool ok;
+   double risk_value;
+};
+
+static OERiskOverrideState g_oe_risk_override = {false, true, 0.0};
+
+void OE_Test_SetRiskOverride(const bool ok, const double risk_value)
+{
+   g_oe_risk_override.active = true;
+   g_oe_risk_override.ok = ok;
+   g_oe_risk_override.risk_value = risk_value;
+}
+
+void OE_Test_ClearRiskOverride()
+{
+   g_oe_risk_override.active = false;
+   g_oe_risk_override.ok = true;
+   g_oe_risk_override.risk_value = 0.0;
+}
 
 void OE_Test_SetVolumeOverride(const string symbol,
                                const double step,
@@ -472,6 +1113,8 @@ void OE_Test_ClearOverrides()
 {
    OE_Test_ClearVolumeOverride();
    OE_Test_ClearPriceOverride();
+   OE_Test_ClearCapOverride();
+   OE_Test_ClearRiskOverride();
 }
 
 bool OE_Test_GetVolumeOverride(const string symbol,
@@ -884,4 +1527,5 @@ void OrderEngine_OnTradeTxn(const MqlTradeTransaction& trans,
    g_order_engine.OnTradeTxn(trans, request, result);
 }
 
+// End include guard
 #endif // RPEA_ORDER_ENGINE_MQH
