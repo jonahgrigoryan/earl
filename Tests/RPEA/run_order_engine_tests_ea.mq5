@@ -26,6 +26,7 @@
 #include "test_order_engine.mqh"
 #include "test_order_engine_normalization.mqh"
 #include "test_order_engine_limits.mqh"
+#include "test_order_engine_retry.mqh"
 
 // Stubs matching prototypes declared when SKIP_* defines are set
 double Equity_CalcRiskDollars(const string symbol,
@@ -75,7 +76,8 @@ int OnInit()
    bool success = TestOrderEngine_RunAll();
    bool normalization_success = TestOrderEngineNormalization_RunAll();
    bool limits_success = TestOrderEngineLimits_RunAll();
-   if(!success || !normalization_success || !limits_success)
+   bool retry_success = TestOrderEngineRetry_RunAll();
+   if(!success || !normalization_success || !limits_success || !retry_success)
    {
       Print("Order Engine Tests reported failures.");
       // Returning INIT_FAILED will stop the expert immediately

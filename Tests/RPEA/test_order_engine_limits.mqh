@@ -159,6 +159,14 @@ bool PlaceOrder_SucceedsWithinCaps()
    TestOrderEngineLimits_Reset();
    OE_Test_SetCapOverride(true, 0, 0, 0);
    OE_Test_SetRiskOverride(true, 25.0);
+   OE_Test_EnableOrderSendOverride();
+   OE_Test_EnqueueOrderSendResponse(true,
+                                    TRADE_RETCODE_DONE,
+                                    5550001,
+                                    0,
+                                    1900.10,
+                                    0.10,
+                                    "limits-success");
 
    OrderRequest request;
    TestOrderEngineLimits_BuildRequest(request);
@@ -167,6 +175,7 @@ bool PlaceOrder_SucceedsWithinCaps()
 
    ASSERT_TRUE(result.success, "Order accepted when below all caps");
    ASSERT_TRUE(result.error_message == "", "Successful order returns empty error message");
+   ASSERT_EQUALS(1, OE_Test_GetOrderSendCallCount(), "Order send executed exactly once");
 
    OE_Test_ClearOverrides();
 
