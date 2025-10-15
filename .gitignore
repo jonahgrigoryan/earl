@@ -1,0 +1,9 @@
+﻿# MQL5/MetaEditor build artifacts
+*.ex5
+*.log
+MQL5/compile.log
+MQL5/Files/RPEA/strategy_tester/
+
+# Local scratch files
+temp.txt
+
