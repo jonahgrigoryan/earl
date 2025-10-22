@@ -73,6 +73,19 @@ string g_current_test = "";
       } \
    } while(false)
 
+#define ASSERT_STRING_EQ(expected, actual, message) \
+   do { \
+      string __exp = (expected); \
+      string __act = (actual); \
+      if(__exp == __act) { \
+         g_test_passed++; \
+         PrintFormat("[PASS] %s: %s", g_current_test, message); \
+      } else { \
+         g_test_failed++; \
+         PrintFormat("[FAIL] %s: %s (expected=%s, actual=%s)", g_current_test, message, __exp, __act); \
+      } \
+   } while(false)
+
 
 #define TEST_FRAMEWORK_DEFINED
 

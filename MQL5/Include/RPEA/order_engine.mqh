@@ -679,7 +679,7 @@ public:
       intent_record.tp = normalized.tp;
       intent_record.expiry = normalized.expiry;
       intent_record.status = "PENDING";
-      intent_record.execution_mode = "DIRECT"; // TODO[M3-Task15]: Set to "PROXY" for XAUEUR-derived signals
+      intent_record.execution_mode = (mode == "" ? "DIRECT" : mode);
       intent_record.oco_sibling_id = "";
       intent_record.retry_count = 0;
       intent_record.reasoning = request.comment;
