@@ -24,7 +24,7 @@
 #define RPEA_ORDER_ENGINE_SKIP_EQUITY
 
 // Include test reporter
-#include "../../MQL5/Include/RPEA/test_reporter.mqh"
+#include <RPEA/test_reporter.mqh>
 
 // Include test files
 #include "test_order_engine.mqh"

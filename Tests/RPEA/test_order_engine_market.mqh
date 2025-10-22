@@ -3,7 +3,7 @@
 // test_order_engine_market.mqh - Unit tests for Task 6 (Market fallback & slippage)
 // References: .kiro/specs/rpea-m3/tasks.md, requirements.md
 
-#include "../../MQL5/Include/RPEA/order_engine.mqh"
+#include <RPEA/order_engine.mqh>
 
 #ifndef TEST_FRAMEWORK_DEFINED
 extern int g_test_passed;

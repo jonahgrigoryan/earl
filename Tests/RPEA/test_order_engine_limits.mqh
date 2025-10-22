@@ -3,7 +3,7 @@
 // test_order_engine_limits.mqh - Unit tests for Task 4 order placement caps
 // References: .kiro/specs/rpea-m3/tasks.md (Task 4)
 
-#include "../../MQL5/Include/RPEA/order_engine.mqh"
+#include <RPEA/order_engine.mqh>
 
 #ifndef TEST_FRAMEWORK_DEFINED
 extern int g_test_passed;

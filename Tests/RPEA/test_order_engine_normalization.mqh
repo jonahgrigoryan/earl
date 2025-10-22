@@ -3,7 +3,7 @@
 // test_order_engine_normalization.mqh - Unit tests for normalization helpers (M3 Task 3)
 // References: .kiro/specs/rpea-m3/tasks.md, design.md
 
-#include "../../MQL5/Include/RPEA/order_engine.mqh"
+#include <RPEA/order_engine.mqh>
 
 #ifndef TEST_FRAMEWORK_DEFINED
 extern int g_test_passed;

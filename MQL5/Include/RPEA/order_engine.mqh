@@ -689,11 +689,16 @@ public:
       ArrayResize(intent_record.executed_tickets, 0);
       ArrayResize(intent_record.partial_fills, 0);
 
-      intent_index = ArraySize(m_intent_journal.intents);
-      ArrayResize(m_intent_journal.intents, intent_index + 1);
-      m_intent_journal.intents[intent_index] = intent_record;
-      MarkJournalDirty();
-      PersistIntentJournal();
+  intent_index = ArraySize(m_intent_journal.intents);
+  ArrayResize(m_intent_journal.intents, intent_index + 1);
+  m_intent_journal.intents[intent_index] = intent_record;
+  MarkJournalDirty();
+  LogOE(StringFormat("Intent created: id=%s accept_key=%s status=%s symbol=%s",
+                     intent_record.intent_id,
+                     intent_record.accept_once_key,
+                     intent_record.status,
+                     intent_record.symbol));
+  PersistIntentJournal();
 
       intent_created = true;
       result.intent_id = intent_id;
@@ -907,9 +912,13 @@ public:
                                               result.last_retcode);
             LogAuditRow("ORDER_INTENT_FAILED", "OrderEngine", LOG_WARN, "Intent failed", fail_fields);
          }
-         m_intent_journal.intents[intent_index] = record;
-         MarkJournalDirty();
-         PersistIntentJournal();
+     m_intent_journal.intents[intent_index] = record;
+     MarkJournalDirty();
+      LogOE(StringFormat("Intent updated: id=%s status=%s retries=%d",
+                         record.intent_id,
+                         record.status,
+                         record.retry_count));
+     PersistIntentJournal();
       }
 
       return result;
@@ -1111,9 +1120,7 @@ bool OrderEngine::ShouldFallbackToMarket(const int retcode) const
 {
    switch(retcode)
    {
-      case TRADE_RETCODE_PRICE_CHANGED:
       case TRADE_RETCODE_PRICE_OFF:
-      case TRADE_RETCODE_REQUOTE:
       case TRADE_RETCODE_INVALID_PRICE:
          return true;
    }
@@ -1511,6 +1518,14 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
                                retry_allowed ? "true" : "false",
                                attempt_slippage));
 
+      // For pending orders that trigger market fallback, stop retrying immediately
+      if(is_pending_request && ShouldFallbackToMarket(trade_result.retcode))
+      {
+         LogOE(StringFormat("ExecuteOrderWithRetry stopping pending retry: fallback to market on retcode %d",
+                            trade_result.retcode));
+         break;
+      }
+
       if(!retry_allowed)
          break;
 
@@ -1722,6 +1737,36 @@ bool OrderEngine::ExecuteMarketFallback(const OrderRequest &pending_request,
 
    entry_price = OE_NormalizePrice(market_request.symbol, entry_price);
 
+   double entry_slippage_pts = 0.0;
+   if(point > 0.0 && pending_request.price > 0.0)
+      entry_slippage_pts = MathAbs(entry_price - pending_request.price) / point;
+   if(m_max_slippage_points > 0.0 && entry_slippage_pts > (m_max_slippage_points + 1e-6))
+   {
+      result.success = false;
+      result.ticket = 0;
+      result.executed_price = entry_price;
+      result.executed_volume = 0.0;
+      result.retry_count = 0;
+      result.last_retcode = TRADE_RETCODE_PRICE_OFF;
+      result.error_message = StringFormat("Slippage %.2f pts exceeds MaxSlippagePoints %.2f",
+                                          entry_slippage_pts,
+                                          m_max_slippage_points);
+      LogOE(StringFormat("Market fallback rejected due to slippage: requested=%.5f market=%.5f slippage=%.2f pts limit=%.2f",
+                         pending_request.price,
+                         entry_price,
+                         entry_slippage_pts,
+                         m_max_slippage_points));
+      LogDecision("OrderEngine",
+                  "MARKET_FALLBACK_SLIPPAGE_REJECT",
+                  StringFormat("{\"symbol\":\"%s\",\"requested\":%.5f,\"market\":%.5f,\"slippage_pts\":%.2f,\"max_pts\":%.2f}",
+                               market_request.symbol,
+                               pending_request.price,
+                               entry_price,
+                               entry_slippage_pts,
+                               m_max_slippage_points));
+      return false;
+   }
+
    bool risk_ok = true;
    double risk_value = evaluated_risk;
 
@@ -1753,7 +1798,7 @@ bool OrderEngine::ExecuteMarketFallback(const OrderRequest &pending_request,
       return false;
    }
 
-   LogOE("Converting pending to market due to high slippage");
+   LogOE("Converting pending to market for fallback execution");
    LogDecision("OrderEngine",
                "MARKET_FALLBACK_INIT",
                StringFormat("{\"symbol\":\"%s\",\"pending_type\":\"%s\",\"market_type\":\"%s\",\"volume\":%.4f,\"requested\":%.5f}",
@@ -2354,6 +2399,19 @@ bool OE_OrderSend(const MqlTradeRequest &request, MqlTradeResult &result)
       return queued.result_ok;
    }
 
+#ifdef RPEA_ORDER_ENGINE_SKIP_RISK
+#define RPEA_ORDER_ENGINE_SKIP_ORDERSEND_TMP
+#endif
+#ifdef RPEA_ORDER_ENGINE_SKIP_EQUITY
+#define RPEA_ORDER_ENGINE_SKIP_ORDERSEND_TMP
+#endif
+
+#ifdef RPEA_ORDER_ENGINE_SKIP_ORDERSEND_TMP
+   // Skip live OrderSend in test builds when no override is active
+   ZeroMemory(result);
+   result.retcode = TRADE_RETCODE_PRICE_OFF;
+   return false;
+#else
    ResetLastError();
    bool ok = OrderSend(request, result);
    if(!ok)
@@ -2366,6 +2424,11 @@ bool OE_OrderSend(const MqlTradeRequest &request, MqlTradeResult &result)
       ResetLastError();
    }
    return ok;
+#endif
+
+#ifdef RPEA_ORDER_ENGINE_SKIP_ORDERSEND_TMP
+#undef RPEA_ORDER_ENGINE_SKIP_ORDERSEND_TMP
+#endif
 }
 
 //------------------------------------------------------------------------------

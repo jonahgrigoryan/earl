@@ -282,11 +282,11 @@ string Persistence_RemoveOuterBrackets(const string source)
 string Persistence_EscapeJson(const string value)
 {
    string escaped = value;
-   escaped = StringReplace(escaped, "\\", "\\\\");
-   escaped = StringReplace(escaped, "\"", "\\\"");
-   escaped = StringReplace(escaped, "\r", "\\r");
-   escaped = StringReplace(escaped, "\n", "\\n");
-   escaped = StringReplace(escaped, "\t", "\\t");
+   StringReplace(escaped, "\\", "\\\\");
+   StringReplace(escaped, "\"", "\\\"");
+   StringReplace(escaped, "\r", "\\r");
+   StringReplace(escaped, "\n", "\\n");
+   StringReplace(escaped, "\t", "\\t");
    return escaped;
 }
 
