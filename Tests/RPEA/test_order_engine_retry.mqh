@@ -3,7 +3,7 @@
 // test_order_engine_retry.mqh - Unit tests for retry policy system (M3 Task 5)
 // References: .kiro/specs/rpea-m3/tasks.md, design.md, requirements.md
 
-#include "../../MQL5/Include/RPEA/order_engine.mqh"
+#include <RPEA/order_engine.mqh>
 
 #ifndef TEST_FRAMEWORK_DEFINED
 extern int g_test_passed;
