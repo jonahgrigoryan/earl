@@ -281,12 +281,23 @@ string Persistence_RemoveOuterBrackets(const string source)
 
 string Persistence_EscapeJson(const string value)
 {
-   string escaped = value;
-   StringReplace(escaped, "\\", "\\\\");
-   StringReplace(escaped, "\"", "\\\"");
-   StringReplace(escaped, "\r", "\\r");
-   StringReplace(escaped, "\n", "\\n");
-   StringReplace(escaped, "\t", "\\t");
+   string escaped = "";
+   int len = StringLen(value);
+   for(int i = 0; i < len; ++i)
+   {
+      ushort ch = StringGetCharacter(value, i);
+      switch(ch)
+      {
+         case '\\': escaped += "\\\\"; break;
+         case '"':  escaped += "\\\""; break;
+         case '\r': escaped += "\\r";  break;
+         case '\n': escaped += "\\n";  break;
+         case '\t': escaped += "\\t";  break;
+         default:
+            escaped += CharToString(ch);
+            break;
+      }
+   }
    return escaped;
 }
 
@@ -308,13 +319,13 @@ string Persistence_UnescapeJson(const string value)
             case 'r': result += "\r"; break;
             case 'n': result += "\n"; break;
             case 't': result += "\t"; break;
-            default: result += (string)next; break;
+            default: result += CharToString(next); break;
          }
          i++;
       }
       else
       {
-         result += (string)ch;
+         result += CharToString(ch);
       }
    }
    return result;
@@ -398,7 +409,7 @@ bool Persistence_SplitJsonArrayObjects(const string json, string &objects[])
       ushort ch = StringGetCharacter(trimmed, i);
       if(in_string)
       {
-         current += (string)ch;
+         current += CharToString(ch);
          if(escape)
          {
             escape = false;
@@ -447,7 +458,7 @@ bool Persistence_SplitJsonArrayObjects(const string json, string &objects[])
          continue;
       }
 
-      current += (string)ch;
+      current += CharToString(ch);
    }
 
    return true;
@@ -545,50 +556,71 @@ bool Persistence_ParseStringField(const string json, const string key, string &o
       return false;
    start += StringLen(pattern);
    int len = StringLen(json);
-   bool in_string = false;
-   bool escape = false;
+   // Skip whitespace
+   while(start < len)
+   {
+      ushort ch = StringGetCharacter(json, start);
+      if(ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n')
+         start++;
+      else
+         break;
+   }
+
+   if(start >= len)
+      return false;
+
+   ushort ch = StringGetCharacter(json, start);
+   if(ch != '"')
+   {
+      // Allow null as empty string
+      if(StringSubstr(json, start, 4) == "null")
+      {
+         out_value = "";
+         return true;
+      }
+
+      string buffer = "";
+      for(int i = start; i < len; ++i)
+      {
+         ch = StringGetCharacter(json, i);
+         if(ch == ',' || ch == '}' || ch == ']')
+         {
+            out_value = Persistence_Trim(buffer);
+            return (StringLen(out_value) > 0);
+         }
+         buffer += CharToString(ch);
+      }
+      out_value = Persistence_Trim(buffer);
+      return (StringLen(out_value) > 0);
+   }
+
+   // Parse quoted string
+   start++;
    string buffer = "";
+   bool escape = false;
    for(int i = start; i < len; ++i)
    {
-      ushort ch = StringGetCharacter(json, i);
-      if(!in_string)
+      ch = StringGetCharacter(json, i);
+      if(escape)
       {
-         if(ch == '"')
-         {
-            in_string = true;
-            continue;
-         }
-         if(ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n')
-            continue;
-         if(ch == ',')
-            break;
+         buffer += CharToString(ch);
+         escape = false;
+         continue;
       }
-      else
+      if(ch == '\\')
       {
-         if(escape)
-         {
-            buffer += (string)ch;
-            escape = false;
-            continue;
-         }
-         if(ch == '\\')
-         {
-            escape = true;
-            continue;
-         }
-         if(ch == '"')
-         {
-            out_value = Persistence_UnescapeJson(buffer);
-            return true;
-         }
-         buffer += (string)ch;
+         escape = true;
+         continue;
       }
+      if(ch == '"')
+      {
+         out_value = Persistence_UnescapeJson(buffer);
+         return true;
+      }
+      buffer += CharToString(ch);
    }
-   if(buffer != "")
-   {
-      out_value = Persistence_UnescapeJson(buffer);
-      return true;
-   }
+   PrintFormat("DEBUG ParseStringField failed: key='%s' snippet='%s'", key,
+               StringSubstr(json, MathMax(0, start - 10), 80));
    return false;
 }
 
@@ -608,7 +640,7 @@ bool Persistence_ParseNumberField(const string json, const string key, double &o
          break;
       if(ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n')
          continue;
-      buffer += (string)ch;
+      buffer += CharToString(ch);
    }
    buffer = Persistence_Trim(buffer);
    if(buffer == "" || buffer == "null")
@@ -665,7 +697,7 @@ bool Persistence_ParseArrayOfStrings(const string json, const string key, string
       {
          if(escape)
          {
-            current += (string)ch;
+            current += CharToString(ch);
             escape = false;
          }
          else if(ch == '\\')
@@ -682,7 +714,7 @@ bool Persistence_ParseArrayOfStrings(const string json, const string key, string
          }
          else
          {
-            current += (string)ch;
+            current += CharToString(ch);
          }
          continue;
       }
@@ -726,7 +758,7 @@ bool Persistence_ParseArrayOfULong(const string json, const string key, ulong &o
             break;
          continue;
       }
-      current += (string)ch;
+      current += CharToString(ch);
    }
    return true;
 }
@@ -758,7 +790,7 @@ bool Persistence_ParseArrayOfDouble(const string json, const string key, double 
             break;
          continue;
       }
-      current += (string)ch;
+      current += CharToString(ch);
    }
    return true;
 }
@@ -815,6 +847,8 @@ ENUM_ORDER_TYPE Persistence_ParseOrderType(const string value)
 
 bool Persistence_OrderIntentFromJson(const string json, OrderIntent &out_intent)
 {
+   PrintFormat("[Persistence] Load intent raw: %s", json);
+
    ArrayResize(out_intent.error_messages, 0);
    ArrayResize(out_intent.executed_tickets, 0);
    ArrayResize(out_intent.partial_fills, 0);
@@ -822,12 +856,18 @@ bool Persistence_OrderIntentFromJson(const string json, OrderIntent &out_intent)
    string value;
    if(Persistence_ParseStringField(json, "intent_id", value))
       out_intent.intent_id = value;
+   else
+      PrintFormat("[Persistence] Load intent missing intent_id in %s", json);
    if(Persistence_ParseStringField(json, "accept_once_key", value))
       out_intent.accept_once_key = value;
+   else
+      PrintFormat("[Persistence] Load intent missing accept_once_key in %s", json);
    if(Persistence_ParseStringField(json, "timestamp", value))
       out_intent.timestamp = Persistence_ParseIso8601(value);
    if(Persistence_ParseStringField(json, "symbol", value))
       out_intent.symbol = value;
+   else
+      PrintFormat("[Persistence] Load intent missing symbol in %s", json);
    if(Persistence_ParseStringField(json, "order_type", value))
       out_intent.order_type = Persistence_ParseOrderType(value);
    double dbl_value = 0.0;
@@ -843,8 +883,12 @@ bool Persistence_OrderIntentFromJson(const string json, OrderIntent &out_intent)
       out_intent.expiry = Persistence_ParseIso8601(value);
    if(Persistence_ParseStringField(json, "status", value))
       out_intent.status = value;
+   else
+      PrintFormat("[Persistence] Load intent missing status in %s", json);
    if(Persistence_ParseStringField(json, "execution_mode", value))
       out_intent.execution_mode = value;
+   else
+      PrintFormat("[Persistence] Load intent missing execution_mode in %s", json);
    if(Persistence_ParseStringField(json, "oco_sibling_id", value))
       out_intent.oco_sibling_id = value;
    int int_value = 0;
@@ -966,7 +1010,15 @@ bool IntentJournal_Save(const IntentJournal &journal)
    string objects_intents[];
    ArrayResize(objects_intents, ArraySize(journal.intents));
    for(int i = 0; i < ArraySize(journal.intents); ++i)
+   {
+      PrintFormat("[Persistence] Save intent[%d]: id='%s' symbol='%s' status='%s' exec='%s'",
+                  i,
+                  journal.intents[i].intent_id,
+                  journal.intents[i].symbol,
+                  journal.intents[i].status,
+                  journal.intents[i].execution_mode);
       Persistence_OrderIntentToJson(journal.intents[i], objects_intents[i]);
+   }
 
    string objects_actions[];
    ArrayResize(objects_actions, ArraySize(journal.queued_actions));

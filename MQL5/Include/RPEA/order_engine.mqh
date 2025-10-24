@@ -440,6 +440,17 @@ public:
       m_log_buffer_dirty = false;
       ArrayResize(m_log_buffer, 0);
    }
+
+   // Test support helper: clear journal state between automated test cases.
+   void TestResetIntentJournal()
+   {
+      IntentJournal_Clear(m_intent_journal);
+      m_queue_count = 0;
+      m_intent_sequence = 0;
+      m_action_sequence = 0;
+      m_intent_journal_dirty = true;
+      PersistIntentJournal();
+   }
    
    //===========================================================================
    // Event Handlers
@@ -2011,7 +2022,7 @@ string OrderEngine::GenerateIntentId(const datetime now)
 {
    if(m_intent_sequence >= 999)
       m_intent_sequence = 0;
-   m_intent_sequence++;
+   ++m_intent_sequence;
    MqlDateTime dt;
    TimeToStruct(now, dt);
    return StringFormat("rpea_%04d%02d%02d_%02d%02d%02d_%03d",
@@ -2508,6 +2519,11 @@ void OE_Test_ClearOverrides()
    OE_Test_ClearRiskOverride();
    OE_Test_ClearOrderSendOverride();
    OE_Test_ResetRetryDelayCapture();
+}
+
+void OE_Test_ResetIntentJournal()
+{
+   g_order_engine.TestResetIntentJournal();
 }
 
 bool OE_Test_GetVolumeOverride(const string symbol,

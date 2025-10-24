@@ -59,6 +59,7 @@ extern OrderEngine g_order_engine;
 void TestOrderEngineLimits_Reset()
 {
    OE_Test_ClearOverrides();
+   OE_Test_ResetIntentJournal();
    g_order_engine.Init();
 }
 
