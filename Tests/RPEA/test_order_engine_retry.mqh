@@ -131,6 +131,7 @@ bool ExecuteOrderWithRetry_SuccessImmediate()
 
    OE_Test_ClearOverrides();
    g_order_engine.Init();
+   OE_Test_ResetIntentJournal();
    OE_Test_SetRiskOverride(true, 25.0);
 
    OE_Test_EnableOrderSendOverride();
@@ -168,6 +169,7 @@ bool ExecuteOrderWithRetry_LinearRetrySuccess()
 
    OE_Test_ClearOverrides();
    g_order_engine.Init();
+   OE_Test_ResetIntentJournal();
    OE_Test_SetRiskOverride(true, 25.0);
 
    OE_Test_EnableOrderSendOverride();
@@ -213,6 +215,7 @@ bool ExecuteOrderWithRetry_ExponentialRetriesStop()
 
    OE_Test_ClearOverrides();
    g_order_engine.Init();
+   OE_Test_ResetIntentJournal();
    OE_Test_SetRiskOverride(true, 25.0);
 
    OE_Test_EnableOrderSendOverride();
@@ -257,6 +260,7 @@ bool ExecuteOrderWithRetry_FailFastStopsImmediately()
 
    OE_Test_ClearOverrides();
    g_order_engine.Init();
+   OE_Test_ResetIntentJournal();
    OE_Test_SetRiskOverride(true, 25.0);
 
    OE_Test_EnableOrderSendOverride();

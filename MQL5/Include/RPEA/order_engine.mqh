@@ -7,8 +7,15 @@
 #include <RPEA/config.mqh>
 #include <RPEA/logging.mqh>
 #include <RPEA/persistence.mqh>
+#ifndef RPEA_ORDER_ENGINE_SKIP_SESSIONS
 // Sessions used for cutoff alignment (read-only helpers)
 #include <RPEA/sessions.mqh>
+#endif
+
+#ifndef CutoffHour
+// Default NY cutoff hour used when running in unit-test harness without input bindings
+#define CutoffHour 17
+#endif
 
 #define OE_INTENT_TTL_MINUTES   1440
 #define OE_ACTION_TTL_MINUTES   1440
@@ -657,10 +664,24 @@ private:
 
    datetime GetSessionCutoffAligned(const string symbol, const datetime now) const
    {
+      if(symbol == "")
+      {
+         // symbol unused guard
+      }
       if(m_cutoff_override_active)
          return m_cutoff_override;
-      // Fallback: align to configured CutoffHour today; if in the past, next day
+#ifndef RPEA_ORDER_ENGINE_SKIP_SESSIONS
+      // Align to the configured session cutoff hour using helper
       datetime cutoff = Sessions_AnchorForHour(now, CutoffHour);
+#else
+      // Manual alignment at CutoffHour when sessions module is skipped (unit tests)
+      MqlDateTime tm;
+      TimeToStruct(now, tm);
+      tm.hour = CutoffHour;
+      tm.min = 0;
+      tm.sec = 0;
+      datetime cutoff = StructToTime(tm);
+#endif
       if(cutoff <= now)
          cutoff += 24*60*60;
       return cutoff;
@@ -832,7 +853,7 @@ public:
          double ord_volume = 0.0;
          datetime ord_expiry = 0;
          // Try to fetch order details (if available) to capture true volume/expiry
-         if(OrderSelect((ulong)trans.order, ORDER_SELECT_BY_TICKET, ORDER_STATE_ALL))
+        if(OrderSelect((ulong)trans.order))
          {
             sym = OrderGetString(ORDER_SYMBOL);
             ord_volume = OrderGetDouble(ORDER_VOLUME_INITIAL);

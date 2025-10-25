@@ -92,6 +92,7 @@ bool MarketOrder_SlippageRejectsExcess()
 
    OE_Test_ClearOverrides();
    g_order_engine.Init();
+   OE_Test_ResetIntentJournal();
    OE_Test_SetRiskOverride(true, 25.0);
    MarketTests_SetQuote(0.01, 2, 1900.50, 1900.60);
    OE_Test_EnableOrderSendOverride();
@@ -119,6 +120,7 @@ bool MarketOrder_AllowsWithinSlippage()
 
    OE_Test_ClearOverrides();
    g_order_engine.Init();
+   OE_Test_ResetIntentJournal();
    OE_Test_SetRiskOverride(true, 25.0);
    MarketTests_SetQuote(0.01, 2, 1900.10, 1900.20);
    OE_Test_EnableOrderSendOverride();
@@ -153,6 +155,7 @@ bool PendingOrder_FallbackToMarket()
 
    OE_Test_ClearOverrides();
    g_order_engine.Init();
+   OE_Test_ResetIntentJournal();
    OE_Test_SetRiskOverride(true, 25.0);
    MarketTests_SetQuote(0.01, 2, 1899.95, 1900.05);
    OE_Test_EnableOrderSendOverride();
@@ -194,6 +197,7 @@ bool PendingOrder_FallbackSlippageRejected()
 
    OE_Test_ClearOverrides();
    g_order_engine.Init();
+   OE_Test_ResetIntentJournal();
    OE_Test_SetRiskOverride(true, 25.0);
    MarketTests_SetQuote(0.01, 2, 1899.40, 1900.60);
    OE_Test_EnableOrderSendOverride();
@@ -228,6 +232,7 @@ bool MarketOrder_FailFastStopsRetry()
 
    OE_Test_ClearOverrides();
    g_order_engine.Init();
+   OE_Test_ResetIntentJournal();
    OE_Test_SetRiskOverride(true, 25.0);
    MarketTests_SetQuote(0.01, 2, 1900.10, 1900.20);
    OE_Test_EnableOrderSendOverride();
@@ -264,6 +269,7 @@ bool MarketOrder_RetryOnRequote()
 
    OE_Test_ClearOverrides();
    g_order_engine.Init();
+   OE_Test_ResetIntentJournal();
    OE_Test_SetRiskOverride(true, 25.0);
    MarketTests_SetQuote(0.01, 2, 1900.05, 1900.15);
    OE_Test_EnableOrderSendOverride();

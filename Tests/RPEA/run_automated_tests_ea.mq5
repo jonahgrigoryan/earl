@@ -22,6 +22,7 @@
 #define MinStopPoints          1
 #define RPEA_ORDER_ENGINE_SKIP_RISK
 #define RPEA_ORDER_ENGINE_SKIP_EQUITY
+#define RPEA_ORDER_ENGINE_SKIP_SESSIONS
 
 // Include test reporter
 #include <RPEA/test_reporter.mqh>

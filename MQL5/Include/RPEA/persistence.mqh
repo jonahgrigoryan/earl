@@ -6,6 +6,10 @@
 #include <RPEA/config.mqh>
 #include <RPEA/state.mqh>
 
+#ifndef RPEA_PERSISTENCE_LOG_VERBOSE
+#define RPEA_PERSISTENCE_LOG_VERBOSE 0
+#endif
+
 //==============================================================================
 // Intent Journal Data Structures
 //==============================================================================
@@ -847,7 +851,7 @@ ENUM_ORDER_TYPE Persistence_ParseOrderType(const string value)
 
 bool Persistence_OrderIntentFromJson(const string json, OrderIntent &out_intent)
 {
-   PrintFormat("[Persistence] Load intent raw: %s", json);
+   // Verbose raw intent logging removed to reduce noise
 
    ArrayResize(out_intent.error_messages, 0);
    ArrayResize(out_intent.executed_tickets, 0);
@@ -1011,12 +1015,7 @@ bool IntentJournal_Save(const IntentJournal &journal)
    ArrayResize(objects_intents, ArraySize(journal.intents));
    for(int i = 0; i < ArraySize(journal.intents); ++i)
    {
-      PrintFormat("[Persistence] Save intent[%d]: id='%s' symbol='%s' status='%s' exec='%s'",
-                  i,
-                  journal.intents[i].intent_id,
-                  journal.intents[i].symbol,
-                  journal.intents[i].status,
-                  journal.intents[i].execution_mode);
+      // Verbose per-intent save logging removed to reduce noise
       Persistence_OrderIntentToJson(journal.intents[i], objects_intents[i]);
    }
 
