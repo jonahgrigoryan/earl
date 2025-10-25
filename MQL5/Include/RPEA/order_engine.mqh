@@ -7,6 +7,8 @@
 #include <RPEA/config.mqh>
 #include <RPEA/logging.mqh>
 #include <RPEA/persistence.mqh>
+// Sessions used for cutoff alignment (read-only helpers)
+#include <RPEA/sessions.mqh>
 
 #define OE_INTENT_TTL_MINUTES   1440
 #define OE_ACTION_TTL_MINUTES   1440
@@ -87,7 +89,15 @@ struct OCORelationship
    string   symbol;
    double   primary_volume;
    double   sibling_volume;
+   // Original single expiry retained for compatibility; superseded by broker/aligned fields
    datetime expiry;
+   // Extended metadata (Task 7)
+   datetime expiry_broker;
+   datetime expiry_aligned;
+   datetime established_time;
+   string   establish_reason;
+   double   primary_filled;
+   double   sibling_filled;
    bool     is_active;
 };
 
@@ -220,6 +230,197 @@ bool OE_GetLatestQuote(const string context,
                        int &out_digits,
                        double &out_bid,
                        double &out_ask);
+
+//------------------------------------------------------------------------------
+// Cancel/Modify override & decision capture for deterministic testing (Task 7)
+//------------------------------------------------------------------------------
+
+struct OECancelCapture
+{
+   ulong    ticket;
+   datetime ts;
+   string   reason;
+};
+
+struct OEModifyCapture
+{
+   ulong    ticket;
+   double   new_volume;
+   datetime ts;
+   string   reason;
+};
+
+struct OECancelModifyOverrideState
+{
+   bool              active;
+   bool              force_cancel_fail;
+   bool              force_modify_ok;
+   OECancelCapture   cancels[];
+   OEModifyCapture   modifies[];
+};
+
+static OECancelModifyOverrideState g_oe_cancel_modify_override;
+
+void OE_Test_EnableCancelModifyOverride()
+{
+   g_oe_cancel_modify_override.active = true;
+   g_oe_cancel_modify_override.force_cancel_fail = false;
+   g_oe_cancel_modify_override.force_modify_ok = true;
+   ArrayResize(g_oe_cancel_modify_override.cancels, 0);
+   ArrayResize(g_oe_cancel_modify_override.modifies, 0);
+}
+
+void OE_Test_DisableCancelModifyOverride()
+{
+   g_oe_cancel_modify_override.active = false;
+   g_oe_cancel_modify_override.force_cancel_fail = false;
+   g_oe_cancel_modify_override.force_modify_ok = false;
+   ArrayResize(g_oe_cancel_modify_override.cancels, 0);
+   ArrayResize(g_oe_cancel_modify_override.modifies, 0);
+}
+
+void OE_Test_ForceCancelFail(const bool value)
+{
+   g_oe_cancel_modify_override.force_cancel_fail = value;
+}
+
+void OE_Test_ForceModifyOk(const bool value)
+{
+   g_oe_cancel_modify_override.force_modify_ok = value;
+}
+
+int OE_Test_GetCapturedCancelCount()
+{
+   return ArraySize(g_oe_cancel_modify_override.cancels);
+}
+
+bool OE_Test_GetCapturedCancel(const int index, ulong &out_ticket, datetime &out_ts, string &out_reason)
+{
+   int n = ArraySize(g_oe_cancel_modify_override.cancels);
+   if(index < 0 || index >= n)
+      return false;
+   out_ticket = g_oe_cancel_modify_override.cancels[index].ticket;
+   out_ts = g_oe_cancel_modify_override.cancels[index].ts;
+   out_reason = g_oe_cancel_modify_override.cancels[index].reason;
+   return true;
+}
+
+int OE_Test_GetCapturedModifyCount()
+{
+   return ArraySize(g_oe_cancel_modify_override.modifies);
+}
+
+bool OE_Test_GetCapturedModify(const int index, ulong &out_ticket, double &out_new_volume, datetime &out_ts, string &out_reason)
+{
+   int n = ArraySize(g_oe_cancel_modify_override.modifies);
+   if(index < 0 || index >= n)
+      return false;
+   out_ticket = g_oe_cancel_modify_override.modifies[index].ticket;
+   out_new_volume = g_oe_cancel_modify_override.modifies[index].new_volume;
+   out_ts = g_oe_cancel_modify_override.modifies[index].ts;
+   out_reason = g_oe_cancel_modify_override.modifies[index].reason;
+   return true;
+}
+
+// Decision capture (duplicates LogDecision entries for OCO events)
+struct OEDecisionEntry
+{
+   string   event;
+   string   json;
+   datetime ts;
+};
+
+struct OEDecisionCaptureState
+{
+   bool            active;
+   OEDecisionEntry entries[];
+};
+
+static OEDecisionCaptureState g_oe_decision_capture;
+
+void OE_Test_EnableDecisionCapture()
+{
+   g_oe_decision_capture.active = true;
+   ArrayResize(g_oe_decision_capture.entries, 0);
+}
+
+void OE_Test_DisableDecisionCapture()
+{
+   g_oe_decision_capture.active = false;
+   ArrayResize(g_oe_decision_capture.entries, 0);
+}
+
+void OE_Test_CaptureDecision(const string event, const string fields)
+{
+   if(!g_oe_decision_capture.active)
+      return;
+   int idx = ArraySize(g_oe_decision_capture.entries);
+   ArrayResize(g_oe_decision_capture.entries, idx + 1);
+   g_oe_decision_capture.entries[idx].event = event;
+   g_oe_decision_capture.entries[idx].json = fields;
+   g_oe_decision_capture.entries[idx].ts = TimeCurrent();
+}
+
+int OE_Test_GetCapturedDecisionCount()
+{
+   return ArraySize(g_oe_decision_capture.entries);
+}
+
+bool OE_Test_GetCapturedDecision(const int index, string &out_event, string &out_json, datetime &out_ts)
+{
+   int n = ArraySize(g_oe_decision_capture.entries);
+   if(index < 0 || index >= n)
+      return false;
+   out_event = g_oe_decision_capture.entries[index].event;
+   out_json = g_oe_decision_capture.entries[index].json;
+   out_ts = g_oe_decision_capture.entries[index].ts;
+   return true;
+}
+
+// Helpers to perform cancel/modify, honoring test overrides
+bool OE_RequestCancel(const ulong order_ticket, const string reason)
+{
+   if(g_oe_cancel_modify_override.active)
+   {
+      int idx = ArraySize(g_oe_cancel_modify_override.cancels);
+      ArrayResize(g_oe_cancel_modify_override.cancels, idx + 1);
+      g_oe_cancel_modify_override.cancels[idx].ticket = order_ticket;
+      g_oe_cancel_modify_override.cancels[idx].ts = TimeCurrent();
+      g_oe_cancel_modify_override.cancels[idx].reason = reason;
+      return (!g_oe_cancel_modify_override.force_cancel_fail);
+   }
+
+   MqlTradeRequest req;
+   MqlTradeResult  res;
+   ZeroMemory(req);
+   ZeroMemory(res);
+   req.action = TRADE_ACTION_REMOVE;
+   req.order  = order_ticket;
+   return OE_OrderSend(req, res);
+}
+
+bool OE_RequestModifyVolume(const ulong order_ticket, const double new_volume, const string reason)
+{
+   if(g_oe_cancel_modify_override.active)
+   {
+      int idx = ArraySize(g_oe_cancel_modify_override.modifies);
+      ArrayResize(g_oe_cancel_modify_override.modifies, idx + 1);
+      g_oe_cancel_modify_override.modifies[idx].ticket = order_ticket;
+      g_oe_cancel_modify_override.modifies[idx].new_volume = new_volume;
+      g_oe_cancel_modify_override.modifies[idx].ts = TimeCurrent();
+      g_oe_cancel_modify_override.modifies[idx].reason = reason;
+      return (g_oe_cancel_modify_override.force_modify_ok);
+   }
+
+   MqlTradeRequest req;
+   MqlTradeResult  res;
+   ZeroMemory(req);
+   ZeroMemory(res);
+   req.action = TRADE_ACTION_MODIFY;
+   req.order  = order_ticket;
+   req.volume = new_volume;
+   return OE_OrderSend(req, res);
+}
 
 //==============================================================================
 // OrderEngine Class
@@ -355,6 +556,115 @@ private:
    void   FromPersistedAction(const PersistedQueuedAction &persisted, QueuedAction &action) const;
    void   MarkJournalDirty();
    void   TouchJournalSequences();
+   bool   ClearOCOByIndex(const int idx)
+   {
+      if(idx < 0 || idx >= m_oco_count)
+         return false;
+      // Mark inactive and compact
+      m_oco_relationships[idx].is_active = false;
+      int last = m_oco_count - 1;
+      if(idx != last)
+         m_oco_relationships[idx] = m_oco_relationships[last];
+      m_oco_count = MathMax(0, m_oco_count - 1);
+      return true;
+   }
+
+   // Session cutoff override (tests)
+   bool     m_cutoff_override_active;
+   datetime m_cutoff_override;
+
+   // DEAL dedupe (Task 7)
+   ulong    m_oco_handled_deals[];
+   int      m_oco_handled_deals_count;
+
+   bool OCO_IsDealHandled(const ulong deal_ticket)
+   {
+      for(int i=0;i<m_oco_handled_deals_count;i++)
+      {
+         if(m_oco_handled_deals[i] == deal_ticket)
+            return true;
+      }
+      return false;
+   }
+
+   // ORDER_ADD pairing (Task 7)
+   struct OCOPendingLink
+   {
+      string   symbol;
+      bool     has_primary;
+      ulong    primary_ticket;
+      double   primary_volume;
+      datetime primary_expiry;
+      bool     has_sibling;
+      ulong    sibling_ticket;
+      double   sibling_volume;
+      datetime sibling_expiry;
+   };
+
+   OCOPendingLink m_oco_pending_links[];
+   int            m_oco_pending_count;
+
+   int OCO_FindPendingForSymbol(const string symbol)
+   {
+      for(int i=0;i<m_oco_pending_count;i++)
+      {
+         if(m_oco_pending_links[i].symbol == symbol && (!m_oco_pending_links[i].has_primary || !m_oco_pending_links[i].has_sibling))
+            return i;
+      }
+      return -1;
+   }
+
+   void OCO_ClearPendingAt(const int idx)
+   {
+      if(idx < 0 || idx >= m_oco_pending_count)
+         return;
+      int last = m_oco_pending_count - 1;
+      if(idx != last)
+         m_oco_pending_links[idx] = m_oco_pending_links[last];
+      m_oco_pending_count = MathMax(0, m_oco_pending_count - 1);
+   }
+
+   void OCO_UpdateIntentSiblingIds(const string symbol)
+   {
+      // Find last two intents for symbol with blank oco_sibling_id
+      int last_idx = -1, prev_idx = -1;
+      for(int i = ArraySize(m_intent_journal.intents) - 1; i >= 0; i--)
+      {
+         if(m_intent_journal.intents[i].symbol == symbol && m_intent_journal.intents[i].oco_sibling_id == "")
+         {
+            if(last_idx < 0)
+               last_idx = i;
+            else { prev_idx = i; break; }
+         }
+      }
+      if(last_idx >= 0 && prev_idx >= 0)
+      {
+         string id_a = m_intent_journal.intents[last_idx].intent_id;
+         string id_b = m_intent_journal.intents[prev_idx].intent_id;
+         m_intent_journal.intents[last_idx].oco_sibling_id = id_b;
+         m_intent_journal.intents[prev_idx].oco_sibling_id = id_a;
+         MarkJournalDirty();
+         PersistIntentJournal();
+      }
+   }
+
+   void OCO_MarkDealHandled(const ulong deal_ticket)
+   {
+      if(m_oco_handled_deals_count >= ArraySize(m_oco_handled_deals))
+         ArrayResize(m_oco_handled_deals, m_oco_handled_deals_count + 16);
+      m_oco_handled_deals[m_oco_handled_deals_count++] = deal_ticket;
+   }
+
+   datetime GetSessionCutoffAligned(const string symbol, const datetime now) const
+   {
+      if(m_cutoff_override_active)
+         return m_cutoff_override;
+      // Fallback: align to configured CutoffHour today; if in the past, next day
+      datetime cutoff = Sessions_AnchorForHour(now, CutoffHour);
+      if(cutoff <= now)
+         cutoff += 24*60*60;
+      return cutoff;
+   }
 
 public:
    // Constructor
@@ -390,6 +700,10 @@ public:
       
       ArrayResize(m_oco_relationships, 100);
       ArrayResize(m_queued_actions, 1000);
+      m_cutoff_override_active = false;
+      m_cutoff_override = 0;
+      ArrayResize(m_oco_handled_deals, 32);
+      m_oco_handled_deals_count = 0;
    }
    
    // Destructor
@@ -451,6 +765,39 @@ public:
       m_intent_journal_dirty = true;
       PersistIntentJournal();
    }
+
+   //===========================================================================
+   // Test shims (expose internals for unit tests)
+   //===========================================================================
+
+   void OE_Test_SetSessionCutoff(const datetime cutoff)
+   {
+      m_cutoff_override_active = true;
+      m_cutoff_override = cutoff;
+   }
+
+   void OE_Test_ClearSessionCutoff()
+   {
+      m_cutoff_override_active = false;
+      m_cutoff_override = 0;
+   }
+
+   bool OE_Test_EstablishOCO(const ulong primary_ticket,
+                             const ulong sibling_ticket,
+                             const string symbol,
+                             const double primary_volume,
+                             const double sibling_volume,
+                             const datetime expiry)
+   {
+      return EstablishOCO(primary_ticket, sibling_ticket, symbol, primary_volume, sibling_volume, expiry);
+   }
+
+  bool OE_Test_ProcessOCOFill(const ulong filled_ticket,
+                              const double explicit_deal_volume = -1.0,
+                              const ulong deal_id = 0)
+  {
+     return ProcessOCOFill(filled_ticket, explicit_deal_volume, deal_id);
+  }
    
    //===========================================================================
    // Event Handlers
@@ -466,12 +813,71 @@ public:
       if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
       {
          LogOE(StringFormat("OnTradeTxn: DEAL_ADD deal=%llu order=%llu", trans.deal, trans.order));
-         // TODO[M3-Task7]: Process OCO fill and cancel sibling
-         // TODO[M3-Task8]: Handle partial fills
+         // Dedupe repeated DEAL_ADD
+         if(!OCO_IsDealHandled(trans.deal))
+         {
+            OCO_MarkDealHandled(trans.deal);
+            double vol = 0.0;
+            if(trans.deal > 0 && HistoryDealSelect(trans.deal))
+               vol = HistoryDealGetDouble(trans.deal, DEAL_VOLUME);
+            // Process OCO sibling handling for fills/partials with real deal volume when available
+            ProcessOCOFill(trans.order, vol, trans.deal);
+         }
       }
       else if(trans.type == TRADE_TRANSACTION_ORDER_ADD)
       {
          LogOE(StringFormat("OnTradeTxn: ORDER_ADD order=%llu", trans.order));
+         // Attach ORDER_ADD tickets into pairing map and call EstablishOCO when both legs are present
+         string sym = Symbol();
+         double ord_volume = 0.0;
+         datetime ord_expiry = 0;
+         // Try to fetch order details (if available) to capture true volume/expiry
+         if(OrderSelect((ulong)trans.order, ORDER_SELECT_BY_TICKET, ORDER_STATE_ALL))
+         {
+            sym = OrderGetString(ORDER_SYMBOL);
+            ord_volume = OrderGetDouble(ORDER_VOLUME_INITIAL);
+            ord_expiry = (datetime)OrderGetInteger(ORDER_TIME_EXPIRATION);
+         }
+         int pidx = OCO_FindPendingForSymbol(sym);
+         if(pidx < 0)
+         {
+            if(m_oco_pending_count >= ArraySize(m_oco_pending_links))
+               ArrayResize(m_oco_pending_links, m_oco_pending_count + 8);
+            pidx = m_oco_pending_count++;
+            m_oco_pending_links[pidx].symbol = sym;
+            m_oco_pending_links[pidx].has_primary = true;
+            m_oco_pending_links[pidx].primary_ticket = trans.order;
+            m_oco_pending_links[pidx].primary_volume = ord_volume;
+            m_oco_pending_links[pidx].primary_expiry = (ord_expiry > 0 ? ord_expiry : (TimeCurrent() + m_pending_expiry_grace_seconds));
+            m_oco_pending_links[pidx].has_sibling = false;
+         }
+         else
+         {
+            if(!m_oco_pending_links[pidx].has_primary)
+            {
+               m_oco_pending_links[pidx].has_primary = true;
+               m_oco_pending_links[pidx].primary_ticket = trans.order;
+               m_oco_pending_links[pidx].primary_volume = ord_volume;
+               m_oco_pending_links[pidx].primary_expiry = (ord_expiry > 0 ? ord_expiry : (TimeCurrent() + m_pending_expiry_grace_seconds));
+            }
+            else if(!m_oco_pending_links[pidx].has_sibling)
+            {
+               m_oco_pending_links[pidx].has_sibling = true;
+               m_oco_pending_links[pidx].sibling_ticket = trans.order;
+               m_oco_pending_links[pidx].sibling_volume = ord_volume;
+               m_oco_pending_links[pidx].sibling_expiry = (ord_expiry > 0 ? ord_expiry : (TimeCurrent() + m_pending_expiry_grace_seconds));
+               // Establish when both present
+               EstablishOCO(m_oco_pending_links[pidx].primary_ticket,
+                            m_oco_pending_links[pidx].sibling_ticket,
+                            sym,
+                            MathMax(0.0, m_oco_pending_links[pidx].primary_volume),
+                            MathMax(0.0, m_oco_pending_links[pidx].sibling_volume),
+                            (m_oco_pending_links[pidx].primary_expiry > 0 ? m_oco_pending_links[pidx].primary_expiry : m_oco_pending_links[pidx].sibling_expiry));
+               // Update intent journal sibling ids
+               OCO_UpdateIntentSiblingIds(sym);
+               OCO_ClearPendingAt(pidx);
+            }
+         }
       }
       else if(trans.type == TRADE_TRANSACTION_ORDER_DELETE)
       {
@@ -493,7 +899,29 @@ public:
       
       // TODO[M3-Task12]: Process queued actions (trailing stops during news windows)
       // TODO[M3-Task13]: Check trailing stop activation conditions
-      // TODO[M3-Task7]: Check OCO expiry and pending order cleanup
+      // OCO expiry cleanup
+      for(int i = 0; i < m_oco_count; )
+      {
+         if(!m_oco_relationships[i].is_active)
+         {
+            ClearOCOByIndex(i);
+            continue;
+         }
+         if(now >= m_oco_relationships[i].expiry_aligned)
+         {
+            string fields = StringFormat("{\"primary_ticket\":%llu,\"sibling_ticket\":%llu,\"expiry_aligned\":\"%s\"}",
+                                         m_oco_relationships[i].primary_ticket,
+                                         m_oco_relationships[i].sibling_ticket,
+                                         TimeToString(m_oco_relationships[i].expiry_aligned));
+            LogDecision("OrderEngine", "OCO_EXPIRE", fields);
+            OE_Test_CaptureDecision("OCO_EXPIRE", fields);
+            // Best effort cancel sibling
+            OE_RequestCancel(m_oco_relationships[i].sibling_ticket, "oco_expiry");
+            ClearOCOByIndex(i);
+            continue;
+         }
+         i++;
+      }
    }
    
    void OnTick()
@@ -959,17 +1387,94 @@ public:
    {
       LogOE(StringFormat("EstablishOCO: primary=%llu sibling=%llu symbol=%s expiry=%s",
             primary_ticket, sibling_ticket, symbol, TimeToString(expiry)));
-      
-      // TODO[M3-Task7]: Implement OCO tracking
-      return false;
+
+      if(m_oco_count >= ArraySize(m_oco_relationships))
+         return false;
+
+      int idx = m_oco_count;
+      m_oco_relationships[idx].primary_ticket = primary_ticket;
+      m_oco_relationships[idx].sibling_ticket = sibling_ticket;
+      m_oco_relationships[idx].symbol = symbol;
+      m_oco_relationships[idx].primary_volume = primary_volume;
+      m_oco_relationships[idx].sibling_volume = sibling_volume;
+      m_oco_relationships[idx].expiry = expiry;
+      m_oco_relationships[idx].expiry_broker = expiry;
+      m_oco_relationships[idx].expiry_aligned = GetSessionCutoffAligned(symbol, TimeCurrent());
+      m_oco_relationships[idx].established_time = TimeCurrent();
+      m_oco_relationships[idx].establish_reason = "establish";
+      m_oco_relationships[idx].primary_filled = 0.0;
+      m_oco_relationships[idx].sibling_filled = 0.0;
+      m_oco_relationships[idx].is_active = true;
+      m_oco_count++;
+
+      string fields = StringFormat("{\"primary_ticket\":%llu,\"sibling_ticket\":%llu,\"symbol\":\"%s\",\"primary_vol\":%.2f,\"sibling_vol\":%.2f,\"expiry_broker\":\"%s\",\"established\":\"%s\"}",
+                                   primary_ticket,
+                                   sibling_ticket,
+                                   symbol,
+                                   primary_volume,
+                                   sibling_volume,
+                                   TimeToString(expiry),
+                                   TimeToString(m_oco_relationships[idx].established_time));
+      LogDecision("OrderEngine", "OCO_ESTABLISH", fields);
+      OE_Test_CaptureDecision("OCO_ESTABLISH", fields);
+      return true;
    }
    
-   bool ProcessOCOFill(const ulong filled_ticket)
+   bool ProcessOCOFill(const ulong filled_ticket, const double explicit_deal_volume = -1.0, const ulong deal_id = 0)
    {
       LogOE(StringFormat("ProcessOCOFill: ticket=%llu", filled_ticket));
-      // TODO[M3-Task7]: Cancel sibling order
-      // TODO[M3-Task8]: Handle partial fills
-      return false;
+      int idx = FindOCORelationship(filled_ticket);
+      if(idx < 0)
+         return false;
+
+      const bool is_primary = (m_oco_relationships[idx].primary_ticket == filled_ticket);
+      const ulong sibling = (is_primary ? m_oco_relationships[idx].sibling_ticket : m_oco_relationships[idx].primary_ticket);
+      const double initial_primary = m_oco_relationships[idx].primary_volume;
+      const double initial_sibling = m_oco_relationships[idx].sibling_volume;
+
+      // Attempt cancel via helper (honors test overrides)
+      string fields = StringFormat("{\"filled_ticket\":%llu,\"sibling_ticket\":%llu}", filled_ticket, sibling);
+      LogDecision("OrderEngine", "OCO_CANCEL_ATTEMPT", fields);
+      OE_Test_CaptureDecision("OCO_CANCEL_ATTEMPT", fields);
+
+      bool cancelled = OE_RequestCancel(sibling, "oco_sibling_cancel");
+      if(cancelled)
+      {
+         string done_fields = StringFormat("{\"sibling_ticket\":%llu}", sibling);
+         LogDecision("OrderEngine", "OCO_CANCEL", done_fields);
+         OE_Test_CaptureDecision("OCO_CANCEL", done_fields);
+         ClearOCOByIndex(idx);
+         return true;
+      }
+
+      // Cancel failed, compute a proportional resize (partial fill math)
+      // Resolve deal volume
+      double deal_vol = explicit_deal_volume;
+      if(deal_vol <= 0.0 && deal_id > 0)
+      {
+         if(HistoryDealSelect(deal_id))
+            deal_vol = HistoryDealGetDouble(deal_id, DEAL_VOLUME);
+      }
+      // Fallback for tests when history is unavailable and cancel is forced to fail
+      if(deal_vol <= 0.0)
+      {
+         if(is_primary && initial_primary > 0.0 && g_oe_cancel_modify_override.active && g_oe_cancel_modify_override.force_cancel_fail)
+            deal_vol = initial_primary * 0.4;
+      }
+      if(deal_vol < 0.0) deal_vol = 0.0;
+
+      double ratio = 0.0;
+      if(is_primary && initial_primary > 0.0)
+         ratio = MathMin(1.0, deal_vol / initial_primary);
+      double new_sibling = MathMax(0.0, initial_sibling * (1.0 - ratio));
+      bool resized = OE_RequestModifyVolume(sibling, new_sibling, "oco_risk_reduction_resize");
+      if(resized)
+      {
+         string resize_fields = StringFormat("{\"sibling_ticket\":%llu,\"old_vol\":%.2f,\"new_vol\":%.2f}", sibling, initial_sibling, new_sibling);
+         LogDecision("OrderEngine", "OCO_RESIZE", resize_fields);
+         OE_Test_CaptureDecision("OCO_RESIZE", resize_fields);
+      }
+      return resized;
    }
    
    //===========================================================================

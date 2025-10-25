@@ -33,6 +33,8 @@
 #include "test_order_engine_retry.mqh"
 #include "test_order_engine_market.mqh"
 #include "test_order_engine_intent.mqh"
+// OCO tests (Task 7)
+#include "test_order_engine_oco.mqh"
 
 // Mock functions for testing
 double Equity_CalcRiskDollars(const string symbol,
@@ -172,6 +174,13 @@ void RunAllTests()
    g_test_reporter.RecordTest(suite6, "TestOrderEngineMarket_RunAll", task6_result,
                                task6_result ? "All market fallback tests passed" : "Some market tests failed");
    g_test_reporter.EndSuite(suite6);
+
+  // Task 7: OCO Relationship Management
+  int suite7 = g_test_reporter.BeginSuite("Task7_OCO_Relationship_Management");
+  bool task7_result = TestOrderEngineOCO_RunAll();
+  g_test_reporter.RecordTest(suite7, "TestOrderEngineOCO_RunAll", task7_result,
+                              task7_result ? "All OCO tests passed" : "Some OCO tests failed");
+  g_test_reporter.EndSuite(suite7);
 
    Print("Test execution complete.");
 }
