@@ -35,8 +35,13 @@
 #include <RPEA/telemetry.mqh>
 // sessions.mqh and scheduler.mqh are included after AppContext is defined
 
+// order_engine.mqh defines a default CutoffHour macro for unit tests; undefine so we can expose an input
+#ifdef CutoffHour
+#undef CutoffHour
+#endif
+
 //+------------------------------------------------------------------+
-// Inputs (consolidated) — names and defaults per finalspec.md
+// Inputs (consolidated) – names and defaults per finalspec.md
 // Risk & governance
 input double DailyLossCapPct            = 4.0;
 input double OverallLossCapPct          = 6.0;

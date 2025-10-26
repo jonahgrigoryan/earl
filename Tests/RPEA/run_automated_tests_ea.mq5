@@ -36,6 +36,8 @@
 #include "test_order_engine_intent.mqh"
 // OCO tests (Task 7)
 #include "test_order_engine_oco.mqh"
+// Partial fill tests (Task 8)
+#include "test_order_engine_partialfills.mqh"
 
 // Mock functions for testing
 double Equity_CalcRiskDollars(const string symbol,
@@ -182,6 +184,13 @@ void RunAllTests()
   g_test_reporter.RecordTest(suite7, "TestOrderEngineOCO_RunAll", task7_result,
                               task7_result ? "All OCO tests passed" : "Some OCO tests failed");
   g_test_reporter.EndSuite(suite7);
+
+   // Task 8: Partial Fill Handler
+   int suite8 = g_test_reporter.BeginSuite("Task8_Partial_Fill_Handler");
+   bool task8_result = TestOrderEnginePartialFills_RunAll();
+   g_test_reporter.RecordTest(suite8, "TestOrderEnginePartialFills_RunAll", task8_result,
+                               task8_result ? "All partial fill tests passed" : "Some partial fill tests failed");
+   g_test_reporter.EndSuite(suite8);
 
    Print("Test execution complete.");
 }

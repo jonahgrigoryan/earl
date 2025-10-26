@@ -96,6 +96,8 @@ struct OCORelationship
    string   symbol;
    double   primary_volume;
    double   sibling_volume;
+   double   primary_volume_original;  // Never modified, baseline for partial fill math (Task 8)
+   double   sibling_volume_original;  // Never modified, baseline for partial fill math (Task 8)
    // Original single expiry retained for compatibility; superseded by broker/aligned fields
    datetime expiry;
    // Extended metadata (Task 7)
@@ -106,6 +108,27 @@ struct OCORelationship
    double   primary_filled;
    double   sibling_filled;
    bool     is_active;
+};
+
+// Partial fill tracking (Task 8)
+struct PartialFillEvent
+{
+   double   volume;
+   double   sibling_volume_after;
+   datetime timestamp;
+   ulong    deal_id;
+};
+
+struct PartialFillState
+{
+   ulong             ticket;
+   double            requested_volume;
+   double            filled_volume;
+   double            remaining_volume;
+   datetime          first_fill_time;
+   datetime          last_fill_time;
+   int               fill_count;
+   PartialFillEvent  fills[50];
 };
 
 //==============================================================================
@@ -464,6 +487,10 @@ private:
    bool            m_intent_journal_dirty;
    int             m_intent_sequence;
    int             m_action_sequence;
+   
+   // Partial fill tracking (Task 8)
+   PartialFillState m_partial_fill_states[];
+   int              m_partial_fill_count;
 
    // Helper methods
    void LogOE(const string message)
@@ -558,6 +585,11 @@ private:
    string HashToHex(const ulong value) const;
    bool   IntentExists(const string accept_key, int &out_index) const;
    bool   ActionExists(const string accept_key, int &out_index) const;
+   // Partial fill state helpers (Task 8)
+   int    FindPartialFillState(const ulong ticket) const;
+   int    FindOrCreatePartialFillState(const ulong ticket, const double requested_volume);
+   void   ClearPartialFillState(const int index);
+   void   ClearPartialFillStateByTicket(const ulong ticket);
    void   CleanupExpiredJournalEntries(const datetime now);
    PersistedQueuedAction ToPersistedAction(const QueuedAction &action) const;
    void   FromPersistedAction(const PersistedQueuedAction &persisted, QueuedAction &action) const;
@@ -567,6 +599,9 @@ private:
    {
       if(idx < 0 || idx >= m_oco_count)
          return false;
+      // Clear partial fill states for both tickets (Task 8)
+      ClearPartialFillStateByTicket(m_oco_relationships[idx].primary_ticket);
+      ClearPartialFillStateByTicket(m_oco_relationships[idx].sibling_ticket);
       // Mark inactive and compact
       m_oco_relationships[idx].is_active = false;
       int last = m_oco_count - 1;
@@ -745,6 +780,9 @@ public:
    {
       LogOE("OrderEngine::Init() - Initializing Order Engine");
       ResetState();
+      // Initialize partial fill tracking (Task 8)
+      m_partial_fill_count = 0;
+      ArrayResize(m_partial_fill_states, 100);
       m_log_buffer_count = 0;
       m_log_buffer_dirty = false;
       ArrayResize(m_log_buffer, 0);
@@ -1346,8 +1384,21 @@ public:
             record.status = "EXECUTED";
             ArrayResize(record.executed_tickets, 1);
             record.executed_tickets[0] = result.ticket;
-            ArrayResize(record.partial_fills, 1);
-            record.partial_fills[0] = result.executed_volume;
+            // Store actual partial fill volumes (Task 8)
+            int pf_idx = FindPartialFillState(result.ticket);
+            if(pf_idx >= 0 && m_partial_fill_states[pf_idx].fill_count > 0)
+            {
+               ArrayResize(record.partial_fills, m_partial_fill_states[pf_idx].fill_count);
+               for(int pf = 0; pf < m_partial_fill_states[pf_idx].fill_count; pf++)
+               {
+                  record.partial_fills[pf] = m_partial_fill_states[pf_idx].fills[pf].volume;
+               }
+            }
+            else
+            {
+               ArrayResize(record.partial_fills, 1);
+               record.partial_fills[0] = result.executed_volume;
+            }
             string success_fields = StringFormat("{\"intent_id\":\"%s\",\"ticket\":%llu,\"executed_price\":%.5f,\"executed_volume\":%.4f}",
                                                  record.intent_id,
                                                  result.ticket,
@@ -1418,6 +1469,8 @@ public:
       m_oco_relationships[idx].symbol = symbol;
       m_oco_relationships[idx].primary_volume = primary_volume;
       m_oco_relationships[idx].sibling_volume = sibling_volume;
+      m_oco_relationships[idx].primary_volume_original = primary_volume;  // Task 8: Never modified
+      m_oco_relationships[idx].sibling_volume_original = sibling_volume;  // Task 8: Never modified
       m_oco_relationships[idx].expiry = expiry;
       m_oco_relationships[idx].expiry_broker = expiry;
       m_oco_relationships[idx].expiry_aligned = GetSessionCutoffAligned(symbol, TimeCurrent());
@@ -1449,26 +1502,16 @@ public:
          return false;
 
       const bool is_primary = (m_oco_relationships[idx].primary_ticket == filled_ticket);
-      const ulong sibling = (is_primary ? m_oco_relationships[idx].sibling_ticket : m_oco_relationships[idx].primary_ticket);
-      const double initial_primary = m_oco_relationships[idx].primary_volume;
-      const double initial_sibling = m_oco_relationships[idx].sibling_volume;
+      const ulong filled = filled_ticket;
+      const ulong opposite = (is_primary ? m_oco_relationships[idx].sibling_ticket : m_oco_relationships[idx].primary_ticket);
+      
+      // Use ORIGINAL volumes (never modified) - Task 8
+      const double filled_original = (is_primary ? m_oco_relationships[idx].primary_volume_original : m_oco_relationships[idx].sibling_volume_original);
+      const double opposite_original = (is_primary ? m_oco_relationships[idx].sibling_volume_original : m_oco_relationships[idx].primary_volume_original);
+      
+      // Current opposite volume for logging
+      double current_opposite = (is_primary ? m_oco_relationships[idx].sibling_volume : m_oco_relationships[idx].primary_volume);
 
-      // Attempt cancel via helper (honors test overrides)
-      string fields = StringFormat("{\"filled_ticket\":%llu,\"sibling_ticket\":%llu}", filled_ticket, sibling);
-      LogDecision("OrderEngine", "OCO_CANCEL_ATTEMPT", fields);
-      OE_Test_CaptureDecision("OCO_CANCEL_ATTEMPT", fields);
-
-      bool cancelled = OE_RequestCancel(sibling, "oco_sibling_cancel");
-      if(cancelled)
-      {
-         string done_fields = StringFormat("{\"sibling_ticket\":%llu}", sibling);
-         LogDecision("OrderEngine", "OCO_CANCEL", done_fields);
-         OE_Test_CaptureDecision("OCO_CANCEL", done_fields);
-         ClearOCOByIndex(idx);
-         return true;
-      }
-
-      // Cancel failed, compute a proportional resize (partial fill math)
       // Resolve deal volume
       double deal_vol = explicit_deal_volume;
       if(deal_vol <= 0.0 && deal_id > 0)
@@ -1476,25 +1519,114 @@ public:
          if(HistoryDealSelect(deal_id))
             deal_vol = HistoryDealGetDouble(deal_id, DEAL_VOLUME);
       }
-      // Fallback for tests when history is unavailable and cancel is forced to fail
+      // Fallback for tests
       if(deal_vol <= 0.0)
       {
-         if(is_primary && initial_primary > 0.0 && g_oe_cancel_modify_override.active && g_oe_cancel_modify_override.force_cancel_fail)
-            deal_vol = initial_primary * 0.4;
+         if(is_primary && filled_original > 0.0 && g_oe_cancel_modify_override.active && g_oe_cancel_modify_override.force_cancel_fail)
+            deal_vol = filled_original * 0.4;
       }
       if(deal_vol < 0.0) deal_vol = 0.0;
 
+      // Compute cumulative filled
+      double cumulative_filled = (is_primary ? m_oco_relationships[idx].primary_filled : m_oco_relationships[idx].sibling_filled) + deal_vol;
+
+      // Compute ratio using ORIGINAL filled leg volume
       double ratio = 0.0;
-      if(is_primary && initial_primary > 0.0)
-         ratio = MathMin(1.0, deal_vol / initial_primary);
-      double new_sibling = MathMax(0.0, initial_sibling * (1.0 - ratio));
-      bool resized = OE_RequestModifyVolume(sibling, new_sibling, "oco_risk_reduction_resize");
+      if(filled_original > 0.0)
+         ratio = MathMin(1.0, cumulative_filled / filled_original);
+         
+      // Calculate new opposite volume using ORIGINAL opposite volume
+      double new_opposite = MathMax(0.0, opposite_original * (1.0 - ratio));
+
+      // Guard: log warning if opposite missing but continue
+      if(opposite == 0 || !OrderSelect((ulong)opposite))
+      {
+         string warn_fields = StringFormat("{\"filled_ticket\":%llu,\"opposite_ticket\":%llu}", filled, opposite);
+         LogOE(StringFormat("ProcessOCOFill: No valid opposite for ticket %llu", filled));
+         LogDecision("OrderEngine", "OCO_SIBLING_MISSING", warn_fields);
+         OE_Test_CaptureDecision("OCO_SIBLING_MISSING", warn_fields);
+      }
+
+      // Attempt cancel
+      string fields = StringFormat("{\"filled_ticket\":%llu,\"opposite_ticket\":%llu}", filled, opposite);
+      LogDecision("OrderEngine", "OCO_CANCEL_ATTEMPT", fields);
+      OE_Test_CaptureDecision("OCO_CANCEL_ATTEMPT", fields);
+
+      bool cancelled = OE_RequestCancel(opposite, "oco_sibling_cancel");
+      if(cancelled)
+      {
+         string done_fields = StringFormat("{\"opposite_ticket\":%llu}", opposite);
+         LogDecision("OrderEngine", "OCO_CANCEL", done_fields);
+         OE_Test_CaptureDecision("OCO_CANCEL", done_fields);
+         ClearPartialFillStateByTicket(filled);
+         ClearPartialFillStateByTicket(opposite);
+         ClearOCOByIndex(idx);
+         return true;
+      }
+
+      // Cancel failed, resize opposite
+      bool resized = OE_RequestModifyVolume(opposite, new_opposite, "oco_risk_reduction_resize");
       if(resized)
       {
-         string resize_fields = StringFormat("{\"sibling_ticket\":%llu,\"old_vol\":%.2f,\"new_vol\":%.2f}", sibling, initial_sibling, new_sibling);
+         // Update opposite leg volume (sibling if primary filled, primary if sibling filled) - Task 8
+         if(is_primary)
+            m_oco_relationships[idx].sibling_volume = new_opposite;
+         else
+            m_oco_relationships[idx].primary_volume = new_opposite;
+         
+         string resize_fields = StringFormat("{\"opposite_ticket\":%llu,\"old_vol\":%.2f,\"new_vol\":%.2f}", opposite, current_opposite, new_opposite);
          LogDecision("OrderEngine", "OCO_RESIZE", resize_fields);
          OE_Test_CaptureDecision("OCO_RESIZE", resize_fields);
       }
+
+      // Track partial fill state - Task 8
+      int pf_idx = FindOrCreatePartialFillState(filled, filled_original);
+      if(pf_idx >= 0)
+      {
+         m_partial_fill_states[pf_idx].filled_volume += deal_vol;
+         m_partial_fill_states[pf_idx].remaining_volume = filled_original - m_partial_fill_states[pf_idx].filled_volume;
+         m_partial_fill_states[pf_idx].last_fill_time = TimeCurrent();
+         
+         // Store event with cap check
+         if(m_partial_fill_states[pf_idx].fill_count < 50)
+         {
+            int fc = m_partial_fill_states[pf_idx].fill_count;
+            m_partial_fill_states[pf_idx].fills[fc].volume = deal_vol;
+            m_partial_fill_states[pf_idx].fills[fc].sibling_volume_after = new_opposite;
+            m_partial_fill_states[pf_idx].fills[fc].timestamp = TimeCurrent();
+            m_partial_fill_states[pf_idx].fills[fc].deal_id = deal_id;
+            m_partial_fill_states[pf_idx].fill_count++;
+         }
+         
+         string pf_fields = StringFormat("{\"ticket\":%llu,\"fill_vol\":%.4f,\"total_filled\":%.4f,\"remaining\":%.4f,\"fill_count\":%d,\"opposite\":%llu,\"opposite_new_vol\":%.4f}",
+                                         filled, deal_vol,
+                                         m_partial_fill_states[pf_idx].filled_volume,
+                                         m_partial_fill_states[pf_idx].remaining_volume,
+                                         m_partial_fill_states[pf_idx].fill_count,
+                                         opposite, new_opposite);
+         LogDecision("OrderEngine", "PARTIAL_FILL_ADJUST", pf_fields);
+         OE_Test_CaptureDecision("PARTIAL_FILL_ADJUST", pf_fields);
+         
+         // Check completion
+         bool is_complete = (m_partial_fill_states[pf_idx].remaining_volume <= 0.001);
+         if(is_complete)
+         {
+            string complete_fields = StringFormat("{\"ticket\":%llu,\"final_vol\":%.4f}", filled, m_partial_fill_states[pf_idx].filled_volume);
+            LogDecision("OrderEngine", "PARTIAL_FILL_COMPLETE", complete_fields);
+            OE_Test_CaptureDecision("PARTIAL_FILL_COMPLETE", complete_fields);
+            ClearPartialFillStateByTicket(filled);
+            ClearPartialFillStateByTicket(opposite);
+            ClearOCOByIndex(idx);
+            return true;  // CRITICAL: Return immediately - idx is now invalid after array compaction
+         }
+      }
+
+      // Update OCO filled volumes (only if not complete)
+      if(is_primary)
+         m_oco_relationships[idx].primary_filled += deal_vol;
+      else
+         m_oco_relationships[idx].sibling_filled += deal_vol;
+         
       return resized;
    }
    
@@ -2629,6 +2761,61 @@ string OrderEngine::BuildActionAcceptKey(const QueuedAction &action) const
    ulong hash = HashString64(base);
    string accept_key = "action_" + HashToHex(hash);
    return accept_key;
+}
+
+// Partial fill state management helpers (Task 8)
+int OrderEngine::FindPartialFillState(const ulong ticket) const
+{
+   for(int i = 0; i < m_partial_fill_count; i++)
+   {
+      if(m_partial_fill_states[i].ticket == ticket)
+         return i;
+   }
+   return -1;
+}
+
+int OrderEngine::FindOrCreatePartialFillState(const ulong ticket, const double requested_volume)
+{
+   int idx = FindPartialFillState(ticket);
+   if(idx >= 0)
+      return idx;
+   
+   // Grow array if needed
+   if(m_partial_fill_count >= ArraySize(m_partial_fill_states))
+   {
+      if(ArrayResize(m_partial_fill_states, m_partial_fill_count + 10) < 0)
+      {
+         LogOE("FindOrCreatePartialFillState: Failed to resize array");
+         return -1;
+      }
+   }
+   
+   m_partial_fill_states[m_partial_fill_count].ticket = ticket;
+   m_partial_fill_states[m_partial_fill_count].requested_volume = requested_volume;
+   m_partial_fill_states[m_partial_fill_count].filled_volume = 0.0;
+   m_partial_fill_states[m_partial_fill_count].remaining_volume = requested_volume;
+   m_partial_fill_states[m_partial_fill_count].first_fill_time = TimeCurrent();
+   m_partial_fill_states[m_partial_fill_count].last_fill_time = TimeCurrent();
+   m_partial_fill_states[m_partial_fill_count].fill_count = 0;
+   return m_partial_fill_count++;
+}
+
+void OrderEngine::ClearPartialFillState(const int index)
+{
+   if(index < 0 || index >= m_partial_fill_count)
+      return;
+   
+   // Shift array down
+   for(int i = index; i < m_partial_fill_count - 1; i++)
+      m_partial_fill_states[i] = m_partial_fill_states[i + 1];
+   m_partial_fill_count--;
+}
+
+void OrderEngine::ClearPartialFillStateByTicket(const ulong ticket)
+{
+   int idx = FindPartialFillState(ticket);
+   if(idx >= 0)
+      ClearPartialFillState(idx);
 }
 
 bool OrderEngine::IntentExists(const string accept_key, int &out_index) const
