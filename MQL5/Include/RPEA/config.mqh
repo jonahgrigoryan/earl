@@ -94,6 +94,7 @@
 #define DEFAULT_NewsCSVPath                  "Files/RPEA/news/calendar_high_impact.csv"
 #define DEFAULT_NewsCSVMaxAgeHours           24
 #define DEFAULT_BudgetGateLockMs             1000
+#define DEFAULT_RiskGateHeadroom             0.90
 #define DEFAULT_MaxQueueSize                 1000
 #define DEFAULT_QueueTTLMinutes              5
 #define DEFAULT_EnableQueuePrioritization    true

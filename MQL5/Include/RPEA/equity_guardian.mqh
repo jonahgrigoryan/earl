@@ -15,8 +15,12 @@ struct EquityRooms
 
 struct EquityBudgetGateResult
 {
-   bool   approved;
-   double room_available;
+   bool   approved;           // Keep for backward compatibility
+   bool   gate_pass;          // Primary boolean for pass/fail
+   string gating_reason;      // "pass", "insufficient_room", "lock_timeout", "calc_error"
+   double room_available;     // Keep existing
+   double room_today;         // Separate field
+   double room_overall;       // Separate field
    double open_risk;
    double pending_risk;
    double next_worst_case;
@@ -48,6 +52,47 @@ static EquitySessionState g_equity_session_state = {false,false,false,false,true
 static bool          g_equity_session_initialized = false;
 static double        g_equity_open_risk       = 0.0;
 static double        g_equity_pending_risk    = 0.0;
+
+// Budget Gate Snapshot Structures
+struct PositionSnapshot
+{
+   string symbol;
+   ENUM_POSITION_TYPE type;
+   double volume;
+   double price_open;
+   double sl;
+   ulong ticket;
+};
+
+struct PendingSnapshot
+{
+   string symbol;
+   ENUM_ORDER_TYPE type;
+   double volume;
+   double price;
+   double sl;
+   ulong ticket;
+};
+
+struct BudgetGateSnapshot
+{
+   datetime snapshot_time;
+   double open_risk;
+   double pending_risk;
+   double room_today;
+   double room_overall;
+   PositionSnapshot position_snapshots[];
+   PendingSnapshot pending_snapshots[];
+   bool is_locked;
+   bool open_risk_ok;
+   bool pending_risk_ok;
+   bool rooms_valid;
+   bool state_valid;
+};
+
+// Budget Gate Lock State
+static bool  g_budget_gate_locked = false;
+static ulong g_budget_gate_lock_time_ms = 0;
 
 double Equity_FetchAccountEquity()
 {
@@ -459,62 +504,320 @@ bool Equity_CheckFloors(const AppContext& ctx)
    return ok;
 }
 
-EquityBudgetGateResult Equity_EvaluateBudgetGate(const AppContext& ctx, const double next_trade_worst_case)
+// Budget Gate Helper Functions
+double Equity_CalculateOpenRiskFromSnapshot(const PositionSnapshot &snapshots[], bool &calc_ok)
 {
+   calc_ok = true;
+   double total = 0.0;
+   int count = ArraySize(snapshots);
+   for(int i = 0; i < count; i++)
+   {
+      if(snapshots[i].symbol == NULL || snapshots[i].symbol == "")
+      {
+         calc_ok = false;
+         continue;
+      }
+      bool risk_ok = false;
+      double risk = Equity_CalcRiskDollars(snapshots[i].symbol,
+                                          snapshots[i].volume,
+                                          snapshots[i].price_open,
+                                          snapshots[i].sl,
+                                          risk_ok);
+      if(!risk_ok)
+      {
+         calc_ok = false;
+         continue;
+      }
+      total += risk;
+   }
+   if(!MathIsValidNumber(total) || total < 0.0)
+      total = 0.0;
+   return total;
+}
+
+double Equity_CalculatePendingRiskFromSnapshot(const PendingSnapshot &snapshots[], bool &calc_ok)
+{
+   calc_ok = true;
+   double total = 0.0;
+   int count = ArraySize(snapshots);
+   for(int i = 0; i < count; i++)
+   {
+      if(snapshots[i].symbol == NULL || snapshots[i].symbol == "")
+      {
+         calc_ok = false;
+         continue;
+      }
+      bool risk_ok = false;
+      double risk = Equity_CalcRiskDollars(snapshots[i].symbol,
+                                          snapshots[i].volume,
+                                          snapshots[i].price,
+                                          snapshots[i].sl,
+                                          risk_ok);
+      if(!risk_ok)
+      {
+         calc_ok = false;
+         continue;
+      }
+      total += risk;
+   }
+   if(!MathIsValidNumber(total) || total < 0.0)
+      total = 0.0;
+   return total;
+}
+
+// Budget Gate Snapshot Capture
+BudgetGateSnapshot Equity_TakePositionSnapshot(const AppContext& ctx)
+{
+   BudgetGateSnapshot snapshot;
+   snapshot.snapshot_time = TimeCurrent();
+   snapshot.is_locked = false;
+   snapshot.open_risk_ok = true;
+   snapshot.pending_risk_ok = true;
+   snapshot.rooms_valid = false;
+   snapshot.state_valid = g_equity_state_valid;
+   snapshot.open_risk = 0.0;
+   snapshot.pending_risk = 0.0;
+   snapshot.room_today = 0.0;
+   snapshot.room_overall = 0.0;
+   ArrayResize(snapshot.position_snapshots, 0);
+   ArrayResize(snapshot.pending_snapshots, 0);
+   
+   // Ensure rooms computed
    if(g_equity_state_time != ctx.current_server_time)
       Equity_ComputeRooms(ctx);
+   
+   // Capture rooms from snapshot (frozen state)
+   snapshot.room_today = g_equity_last_rooms.room_today;
+   snapshot.room_overall = g_equity_last_rooms.room_overall;
+   snapshot.rooms_valid = (MathIsValidNumber(snapshot.room_today) && snapshot.room_today >= 0.0 &&
+                           MathIsValidNumber(snapshot.room_overall) && snapshot.room_overall >= 0.0);
+   
+   // Capture all open positions
+   int pos_count = PositionsTotal();
+   ArrayResize(snapshot.position_snapshots, pos_count);
+   for(int i = 0; i < pos_count; i++)
+   {
+      if(PositionGetSymbol(i) == "")
+         continue;
+      
+      PositionSnapshot ps;
+      ps.symbol = PositionGetString(POSITION_SYMBOL);
+      ps.ticket = PositionGetInteger(POSITION_TICKET);
+      ps.type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      ps.volume = PositionGetDouble(POSITION_VOLUME);
+      ps.price_open = PositionGetDouble(POSITION_PRICE_OPEN);
+      ps.sl = PositionGetDouble(POSITION_SL);
+      
+      snapshot.position_snapshots[i] = ps;
+   }
+   
+   // Capture all pending orders
+   int order_count = OrdersTotal();
+   int pending_idx = 0;
+   ArrayResize(snapshot.pending_snapshots, order_count);
+   for(int i = 0; i < order_count; i++)
+   {
+      if(OrderGetTicket(i) == 0)
+         continue;
+      
+      int type = (int)OrderGetInteger(ORDER_TYPE);
+      if(!Equity_IsPendingOrderType(type))
+         continue;
+      
+      PendingSnapshot ps;
+      ps.symbol = OrderGetString(ORDER_SYMBOL);
+      ps.ticket = OrderGetInteger(ORDER_TICKET);
+      ps.type = (ENUM_ORDER_TYPE)type;
+      ps.volume = OrderGetDouble(ORDER_VOLUME_CURRENT);
+      ps.price = OrderGetDouble(ORDER_PRICE_OPEN);
+      ps.sl = OrderGetDouble(ORDER_SL);
+      
+      snapshot.pending_snapshots[pending_idx] = ps;
+      pending_idx++;
+   }
+   ArrayResize(snapshot.pending_snapshots, pending_idx);
+   
+   // Calculate risks from snapshot arrays
+   bool open_ok = true;
+   bool pending_ok = true;
+   snapshot.open_risk = Equity_CalculateOpenRiskFromSnapshot(snapshot.position_snapshots, open_ok);
+   snapshot.pending_risk = Equity_CalculatePendingRiskFromSnapshot(snapshot.pending_snapshots, pending_ok);
+   snapshot.open_risk_ok = open_ok;
+   snapshot.pending_risk_ok = pending_ok;
+   if(!snapshot.open_risk_ok)
+      snapshot.open_risk = 0.0;
+   if(!snapshot.pending_risk_ok)
+      snapshot.pending_risk = 0.0;
+   
+   return snapshot;
+}
 
+// Budget Gate Lock Management
+bool Equity_AcquireBudgetGateLock(const int timeout_ms)
+{
+   if(g_budget_gate_locked == true)
+   {
+      ulong elapsed = GetTickCount64() - g_budget_gate_lock_time_ms;
+      if(elapsed <= (ulong)timeout_ms)
+      {
+         return false; // Lock timeout
+      }
+      // Lock timed out, allow takeover
+   }
+   
+   g_budget_gate_locked = true;
+   g_budget_gate_lock_time_ms = GetTickCount64();
+   return true;
+}
+
+void Equity_ReleaseBudgetGateLock()
+{
+   g_budget_gate_locked = false;
+   g_budget_gate_lock_time_ms = 0;
+}
+
+EquityBudgetGateResult Equity_EvaluateBudgetGate(const AppContext& ctx, const double next_trade_worst_case)
+{
    EquityBudgetGateResult result;
    result.approved = false;
+   result.gate_pass = false;
+   result.gating_reason = "";
    result.room_available = 0.0;
+   result.room_today = 0.0;
+   result.room_overall = 0.0;
    result.open_risk = 0.0;
    result.pending_risk = 0.0;
    result.next_worst_case = (MathIsValidNumber(next_trade_worst_case) && next_trade_worst_case > 0.0 ? next_trade_worst_case : 0.0);
    result.calculation_error = false;
-
-   bool open_ok = true;
-   bool pending_ok = true;
-   double open_risk = Equity_SumOpenRisk(open_ok);
-   double pending_risk = Equity_SumPendingRisk(pending_ok);
-
-   g_equity_open_risk = open_risk;
-   g_equity_pending_risk = pending_risk;
-
-   if(!open_ok || !pending_ok || !g_equity_state_valid)
+   bool lock_acquired = false;
+   
+   // Resolve input parameters with fallback to defaults
+   int lock_ms = BudgetGateLockMs;
+   if(lock_ms <= 0)
+      lock_ms = DEFAULT_BudgetGateLockMs;
+   
+   double headroom = RiskGateHeadroom;
+   if(headroom <= 0.0 || !MathIsValidNumber(headroom))
+      headroom = DEFAULT_RiskGateHeadroom;
+   
+   // Acquire lock
+   if(!Equity_AcquireBudgetGateLock(lock_ms))
+   {
+      result.gate_pass = false;
+      result.gating_reason = "lock_timeout";
+      result.approved = false;
+      string timeout_log = StringFormat("{\"lock_timeout_ms\":%d,\"gate_pass\":false,\"gating_reason\":\"lock_timeout\"}", lock_ms);
+      LogDecision("Equity", "BUDGET_GATE", timeout_log);
+      return result;
+   }
+   lock_acquired = true;
+   
+   // Ensure rooms computed before snapshot
+   if(g_equity_state_time != ctx.current_server_time)
+      Equity_ComputeRooms(ctx);
+   
+   // Take position snapshot
+   BudgetGateSnapshot snapshot = Equity_TakePositionSnapshot(ctx);
+   snapshot.is_locked = true; // Mark snapshot as locked (frozen state)
+   
+   // Use snapshot data (not live broker state)
+   result.open_risk = snapshot.open_risk;
+   result.pending_risk = snapshot.pending_risk;
+   result.room_today = snapshot.room_today;
+   result.room_overall = snapshot.room_overall;
+   if(!MathIsValidNumber(result.open_risk) || result.open_risk < 0.0)
+      result.open_risk = 0.0;
+   if(!MathIsValidNumber(result.pending_risk) || result.pending_risk < 0.0)
+      result.pending_risk = 0.0;
+   if(!MathIsValidNumber(result.room_today) || result.room_today < 0.0)
+      result.room_today = 0.0;
+   if(!MathIsValidNumber(result.room_overall) || result.room_overall < 0.0)
+      result.room_overall = 0.0;
+   
+   // Validate snapshot calculations
+   bool snapshot_valid = (snapshot.open_risk_ok && snapshot.pending_risk_ok && snapshot.rooms_valid && snapshot.state_valid);
+   if(!snapshot_valid)
+   {
       result.calculation_error = true;
-
-   result.open_risk = open_risk;
-   result.pending_risk = pending_risk;
-
-   double min_room = MathMin(g_equity_last_rooms.room_today, g_equity_last_rooms.room_overall);
+      result.gate_pass = false;
+      result.approved = false;
+      result.gating_reason = "calc_error";
+      string error_log = StringFormat("{\"open_risk\":%.2f,\"pending_risk\":%.2f,\"next_trade\":%.2f,\"room_today\":%.2f,\"room_overall\":%.2f,\"gate_pass\":false,\"gating_reason\":\"calc_error\",\"calc_error\":true}",
+                                      result.open_risk,
+                                      result.pending_risk,
+                                      result.next_worst_case,
+                                      result.room_today,
+                                      result.room_overall);
+      LogDecision("Equity", "BUDGET_GATE", error_log);
+      if(lock_acquired)
+      {
+         Equity_ReleaseBudgetGateLock();
+         lock_acquired = false;
+      }
+      return result;
+   }
+   
+   // Update global state for backward compatibility
+   g_equity_open_risk = snapshot.open_risk;
+   g_equity_pending_risk = snapshot.pending_risk;
+   
+   // Calculate gate threshold
+   double min_room = MathMin(snapshot.room_today, snapshot.room_overall);
    if(!MathIsValidNumber(min_room) || min_room < 0.0)
    {
       min_room = 0.0;
       result.calculation_error = true;
    }
-   result.room_available = 0.9 * min_room;
+   
+   double gate_threshold = headroom * min_room;
+   result.room_available = gate_threshold; // Keep for backward compatibility
    if(result.room_available < 0.0)
       result.room_available = 0.0;
-
-   double total_required = result.open_risk + result.pending_risk + result.next_worst_case;
+   
+   // Calculate total required
+   double total_required = snapshot.open_risk + snapshot.pending_risk + result.next_worst_case;
    if(!MathIsValidNumber(total_required) || total_required < 0.0)
    {
-      total_required = result.room_available + 1.0;
+      total_required = gate_threshold + 1.0;
       result.calculation_error = true;
    }
-
-   result.approved = (!result.calculation_error && total_required <= result.room_available + 1e-6);
-
-   string extra = result.calculation_error ? ",\"calc_error\":true" : "";
-   string log_fields = StringFormat("{\"open_risk\":%.2f,\"pending_risk\":%.2f,\"next_worst_case\":%.2f,\"room_available\":%.2f,\"approved\":%s%s}",
+   
+   // Determine gate_pass
+   result.gate_pass = (!result.calculation_error && total_required <= gate_threshold + 1e-6);
+   result.approved = result.gate_pass; // Backward compatibility
+   
+   // Set gating_reason
+   if(result.calculation_error)
+   {
+      result.gating_reason = "calc_error";
+   }
+   else if(result.gate_pass)
+   {
+      result.gating_reason = "pass";
+   }
+   else
+   {
+      result.gating_reason = "insufficient_room";
+   }
+   
+   // Log structured JSON with all 5 inputs + gate_pass + gating_reason
+   string log_fields = StringFormat("{\"open_risk\":%.2f,\"pending_risk\":%.2f,\"next_trade\":%.2f,\"room_today\":%.2f,\"room_overall\":%.2f,\"gate_pass\":%s,\"gating_reason\":\"%s\"}",
                                     result.open_risk,
                                     result.pending_risk,
                                     result.next_worst_case,
-                                    result.room_available,
-                                    result.approved ? "true" : "false",
-                                    extra);
+                                    result.room_today,
+                                    result.room_overall,
+                                    result.gate_pass ? "true" : "false",
+                                    result.gating_reason);
    LogDecision("Equity", "BUDGET_GATE", log_fields);
-
+   
+   // Release lock (finally-style guard)
+   if(lock_acquired)
+   {
+      Equity_ReleaseBudgetGateLock();
+      lock_acquired = false;
+   }
+   
    return result;
 }
 
@@ -611,4 +914,3 @@ bool Equity_IsSmallRoomPause(const AppContext& ctx)
 }
 
 #endif // EQUITY_GUARDIAN_MQH
-

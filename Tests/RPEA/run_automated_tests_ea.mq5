@@ -7,6 +7,9 @@
 #property version   "1.00"
 #property strict
 
+input int    BudgetGateLockMs           = 1000;
+input double RiskGateHeadroom           = 0.90;
+
 // EA mode for automated testing
 #define MaxOpenPositionsTotal  2
 #define MaxOpenPerSymbol       1
@@ -38,8 +41,11 @@
 #include "test_order_engine_oco.mqh"
 // Partial fill tests (Task 8)
 #include "test_order_engine_partialfills.mqh"
+// Budget gate tests (Task 9)
+#include "test_order_engine_budgetgate.mqh"
 
-// Mock functions for testing
+#ifndef EQUITY_GUARDIAN_MQH
+// Mock functions for testing (only when equity guardian not included)
 double Equity_CalcRiskDollars(const string symbol,
                               const double volume,
                               const double price_entry,
@@ -75,6 +81,7 @@ bool Equity_IsPendingOrderType(const int type)
    }
    return false;
 }
+#endif
 
 // Global flag to track if tests have been run
 bool g_tests_executed = false;
@@ -191,6 +198,13 @@ void RunAllTests()
    g_test_reporter.RecordTest(suite8, "TestOrderEnginePartialFills_RunAll", task8_result,
                                task8_result ? "All partial fill tests passed" : "Some partial fill tests failed");
    g_test_reporter.EndSuite(suite8);
+
+   // Task 9: Budget Gate with Position Snapshot Locking
+   int suite9 = g_test_reporter.BeginSuite("Task9_Budget_Gate_Snapshot_Locking");
+   bool task9_result = TestOrderEngineBudgetGate_RunAll();
+   g_test_reporter.RecordTest(suite9, "TestOrderEngineBudgetGate_RunAll", task9_result,
+                               task9_result ? "All budget gate tests passed" : "Some budget gate tests failed");
+   g_test_reporter.EndSuite(suite9);
 
    Print("Test execution complete.");
 }

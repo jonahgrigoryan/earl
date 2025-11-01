@@ -68,6 +68,8 @@ input int    MaxSpreadPoints            = 40;
 input int    MaxSlippagePoints          = 10;
 input int    MinHoldSeconds             = 120;
 input int    QueuedActionTTLMin         = 5;
+input int    BudgetGateLockMs           = 1000;
+input double RiskGateHeadroom           = 0.90;
 
 // Timezone
 input bool   UseServerMidnightBaseline  = true;
