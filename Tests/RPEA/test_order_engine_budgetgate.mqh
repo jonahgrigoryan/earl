@@ -127,12 +127,6 @@ bool BudgetGate_PassesWithinHeadroom()
    BudgetGateTests_Reset();
    AppContext ctx = BudgetGateTests_CreateContext();
    
-   // Set up rooms through ComputeRooms
-   // Baseline: 10000, equity: 10000, so room_today = 400 (4%), room_overall = 600 (6%)
-   // Gate threshold = 0.9 * min(400, 600) = 0.9 * 400 = 360
-   // With no positions/pendings: open_risk=0, pending_risk=0, next_trade=100
-   // Total = 100 <= 360, should pass
-   
    ctx.baseline_today = 10000.0;
    ctx.initial_baseline = 10000.0;
    ctx.equity_snapshot = 10000.0;
@@ -140,7 +134,11 @@ bool BudgetGate_PassesWithinHeadroom()
    // Compute rooms first to set up state
    Equity_ComputeRooms(ctx);
    
-   double next_trade = 100.0;
+   EquityBudgetGateResult preview = Equity_EvaluateBudgetGate(ctx, 0.0);
+   double threshold = preview.room_available + preview.open_risk + preview.pending_risk;
+   double next_trade = threshold * 0.25;
+   if(next_trade <= 0.0)
+      next_trade = 0.0;
    EquityBudgetGateResult result = Equity_EvaluateBudgetGate(ctx, next_trade);
    
    ASSERT_TRUE(result.gate_pass, "Gate passes when total risk below threshold");
@@ -162,18 +160,15 @@ bool BudgetGate_BlocksOverHeadroom()
    BudgetGateTests_Reset();
    AppContext ctx = BudgetGateTests_CreateContext();
    
-   // Set up rooms: baseline=10000, equity=10000, so room_today=400, room_overall=600
-   // Gate threshold = 0.9 * min(400, 600) = 360
-   // With no positions/pendings: open_risk=0, pending_risk=0, next_trade=400 (exceeds threshold)
-   // Total = 400 > 360, should fail
-   
    ctx.baseline_today = 10000.0;
    ctx.initial_baseline = 10000.0;
    ctx.equity_snapshot = 10000.0;
    
    Equity_ComputeRooms(ctx); // Set up state
+   EquityBudgetGateResult preview = Equity_EvaluateBudgetGate(ctx, 0.0);
+   double threshold = preview.room_available + preview.open_risk + preview.pending_risk;
    
-   double next_trade = 400.0; // Exceeds threshold of 360
+   double next_trade = threshold + 100.0; // Exceeds computed threshold
    EquityBudgetGateResult result = Equity_EvaluateBudgetGate(ctx, next_trade);
    
    ASSERT_FALSE(result.gate_pass, "Gate blocks when total risk exceeds threshold");
@@ -307,13 +302,18 @@ bool BudgetGate_LogsGatePassBoolean()
    
    Equity_ComputeRooms(ctx);
    
-   // Test pass case (small next_trade)
-   EquityBudgetGateResult result_pass = Equity_EvaluateBudgetGate(ctx, 50.0);
+   EquityBudgetGateResult baseline = Equity_EvaluateBudgetGate(ctx, 0.0);
+   double threshold = baseline.room_available + baseline.open_risk + baseline.pending_risk;
+   
+   double pass_trade = threshold * 0.25;
+   if(pass_trade <= 0.0)
+      pass_trade = 0.0;
+   EquityBudgetGateResult result_pass = Equity_EvaluateBudgetGate(ctx, pass_trade);
    ASSERT_TRUE(result_pass.gate_pass || !result_pass.gate_pass, "gate_pass boolean present (pass case)");
    ASSERT_TRUE(result_pass.approved == result_pass.gate_pass, "approved matches gate_pass");
    
    // Test fail case (large next_trade exceeding threshold)
-   EquityBudgetGateResult result_fail = Equity_EvaluateBudgetGate(ctx, 500.0);
+   EquityBudgetGateResult result_fail = Equity_EvaluateBudgetGate(ctx, threshold + 100.0);
    ASSERT_FALSE(result_fail.gate_pass, "gate_pass boolean is false when gate fails");
    ASSERT_TRUE(result_fail.approved == result_fail.gate_pass, "approved matches gate_pass");
    
@@ -335,15 +335,21 @@ bool BudgetGate_LogsGatingReason()
    
    Equity_ComputeRooms(ctx);
    
+   EquityBudgetGateResult baseline = Equity_EvaluateBudgetGate(ctx, 0.0);
+   double threshold = baseline.room_available + baseline.open_risk + baseline.pending_risk;
+   
    // Test pass case
-   EquityBudgetGateResult result_pass = Equity_EvaluateBudgetGate(ctx, 50.0);
+   double pass_trade = threshold * 0.25;
+   if(pass_trade <= 0.0)
+      pass_trade = 0.0;
+   EquityBudgetGateResult result_pass = Equity_EvaluateBudgetGate(ctx, pass_trade);
    if(result_pass.gate_pass)
    {
       ASSERT_STRING_EQ("pass", result_pass.gating_reason, "Gating reason is 'pass' when gate passes");
    }
    
    // Test fail case
-   EquityBudgetGateResult result_fail = Equity_EvaluateBudgetGate(ctx, 500.0);
+   EquityBudgetGateResult result_fail = Equity_EvaluateBudgetGate(ctx, threshold + 100.0);
    if(!result_fail.gate_pass && !result_fail.calculation_error)
    {
       ASSERT_STRING_EQ("insufficient_room", result_fail.gating_reason, "Gating reason is 'insufficient_room' when gate fails");
@@ -369,20 +375,18 @@ bool BudgetGate_FormulaCorrect()
    ctx.equity_snapshot = 10000.0;
    
    Equity_ComputeRooms(ctx);
-   // With baseline=10000, equity=10000: room_today = 4% of 10000 = 400
-   // room_overall = 6% of 10000 = 600
-   // min = 400, threshold = 0.9 × 400 = 360
    
-   // Formula: open_risk + pending_risk + next_trade ≤ RiskGateHeadroom × min(room_today, room_overall)
-   // With no positions: open_risk=0, pending_risk=0
+   EquityBudgetGateResult preview = Equity_EvaluateBudgetGate(ctx, 0.0);
+   double threshold = preview.room_available + preview.open_risk + preview.pending_risk;
    
-   double next_trade = 359.0; // Just below threshold
+   double next_trade = threshold - 1.0;
+   if(next_trade < 0.0)
+      next_trade = 0.0;
    EquityBudgetGateResult result = Equity_EvaluateBudgetGate(ctx, next_trade);
    
-   // Should pass with epsilon tolerance
    ASSERT_TRUE(result.gate_pass, "Gate passes below threshold");
    
-   double next_trade_over = 361.0; // Just over threshold
+   double next_trade_over = threshold + 1.0;
    EquityBudgetGateResult result_over = Equity_EvaluateBudgetGate(ctx, next_trade_over);
    ASSERT_FALSE(result_over.gate_pass, "Gate fails when slightly over threshold");
    

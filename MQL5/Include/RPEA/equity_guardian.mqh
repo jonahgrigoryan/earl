@@ -574,7 +574,7 @@ BudgetGateSnapshot Equity_TakePositionSnapshot(const AppContext& ctx)
    snapshot.open_risk_ok = true;
    snapshot.pending_risk_ok = true;
    snapshot.rooms_valid = false;
-   snapshot.state_valid = g_equity_state_valid;
+   snapshot.state_valid = false;
    snapshot.open_risk = 0.0;
    snapshot.pending_risk = 0.0;
    snapshot.room_today = 0.0;
@@ -585,6 +585,8 @@ BudgetGateSnapshot Equity_TakePositionSnapshot(const AppContext& ctx)
    // Ensure rooms computed
    if(g_equity_state_time != ctx.current_server_time)
       Equity_ComputeRooms(ctx);
+   // Refresh state validity after potential recompute
+   snapshot.state_valid = g_equity_state_valid;
    
    // Capture rooms from snapshot (frozen state)
    snapshot.room_today = g_equity_last_rooms.room_today;
@@ -770,9 +772,10 @@ EquityBudgetGateResult Equity_EvaluateBudgetGate(const AppContext& ctx, const do
    }
    
    double gate_threshold = headroom * min_room;
-   result.room_available = gate_threshold; // Keep for backward compatibility
-   if(result.room_available < 0.0)
-      result.room_available = 0.0;
+   double remaining_headroom = gate_threshold - (snapshot.open_risk + snapshot.pending_risk);
+   if(!MathIsValidNumber(remaining_headroom))
+      remaining_headroom = 0.0;
+   result.room_available = (remaining_headroom > 0.0 ? remaining_headroom : 0.0);
    
    // Calculate total required
    double total_required = snapshot.open_risk + snapshot.pending_risk + result.next_worst_case;
