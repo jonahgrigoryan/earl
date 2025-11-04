@@ -1,11 +1,9 @@
 #ifndef RPEA_NEWS_MQH
 #define RPEA_NEWS_MQH
-// news.mqh - News filter with CSV fallback (M3 Task 10)
-// References: finalspec.md (News Compliance), .kiro/specs/rpea-m3/tasks.md §10
+// news.mqh - News CSV fallback loader and blocking helpers (M3 Task 10)
+// References: .kiro/specs/rpea-m3/tasks.md §10, requirements.md §10
 
 #include <RPEA/config.mqh>
-
-extern int NewsBufferS;
 
 struct NewsEvent
 {
@@ -13,600 +11,504 @@ struct NewsEvent
    string   symbol;
    string   impact;
    string   source;
-   string   event;
+   string   event_desc;
    int      prebuffer_min;
    int      postbuffer_min;
-   datetime block_start;
-   datetime block_end;
+   datetime block_start_utc;
+   datetime block_end_utc;
    bool     is_valid;
+};
+
+struct NewsCsvSchema
+{
+   int column_count;
+   int idx_timestamp;
+   int idx_symbol;
+   int idx_impact;
+   int idx_source;
+   int idx_event;
+   int idx_prebuffer;
+   int idx_postbuffer;
 };
 
 static NewsEvent g_news_events[];
 static int       g_news_event_count = 0;
-static datetime  g_news_last_mtime = 0;
+static datetime  g_news_cached_mtime = 0;
 static bool      g_news_cache_valid = false;
-static int       g_news_last_load_code = 0;
+static string    g_news_cached_path = "";
 static bool      g_news_force_reload = false;
+static string    g_news_test_override_path = "";
+static int       g_news_test_override_max_age = -1;
+static bool      g_news_time_override_active = false;
+static datetime  g_news_override_server_now = 0;
+static datetime  g_news_override_utc_now = 0;
 
 //------------------------------------------------------------------------------
-// Helpers
+// Helper utilities
 //------------------------------------------------------------------------------
+
+string News_Trim(const string value)
+{
+   string copy = value;
+   StringTrimLeft(copy);
+   StringTrimRight(copy);
+   return copy;
+}
 
 void News_ClearCache()
 {
    ArrayResize(g_news_events, 0);
    g_news_event_count = 0;
    g_news_cache_valid = false;
-   g_news_last_load_code = -1;
 }
 
-string News_Trim(const string value)
+string News_GetConfiguredCsvPath()
 {
-   string tmp = value;
-   StringReplace(tmp, "\r", "");
-   StringTrimLeft(tmp);
-   StringTrimRight(tmp);
-   return tmp;
+   if(StringLen(g_news_test_override_path) > 0)
+      return g_news_test_override_path;
+   if(StringLen(NewsCSVPath) > 0)
+      return NewsCSVPath;
+   return DEFAULT_NewsCSVPath;
 }
 
-string News_ResolveRelativePath(const string path)
+int News_GetConfiguredMaxAgeHours()
 {
-   if(StringLen(path) >= 6 && StringSubstr(path, 0, 6) == "Files/")
-      return StringSubstr(path, 6);
-   return path;
+   if(g_news_test_override_max_age >= 0)
+      return g_news_test_override_max_age;
+   return (NewsCSVMaxAgeHours > 0 ? NewsCSVMaxAgeHours : DEFAULT_NewsCSVMaxAgeHours);
 }
 
-string News_NormalizeSymbol(const string raw)
+datetime News_GetNowServer()
 {
-   string sym = News_Trim(raw);
-   sym = StringToUpper(sym);
-   int len = StringLen(sym);
-   if(len == 0)
-      return "";
-
-   string normalized = "";
-   for(int i = 0; i < len; ++i)
-   {
-      ushort ch = StringGetCharacter(sym, i);
-      if(ch == '.')
-         break;
-      if(ch == '_' || ch == '-' || ch == ' ')
-         continue;
-      if((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9'))
-         normalized += (string)ch;
-   }
-
-   if(normalized == "")
-      normalized = sym;
-   return normalized;
+   if(g_news_time_override_active)
+      return g_news_override_server_now;
+   return TimeCurrent();
 }
 
-string News_NormalizeImpact(const string raw, bool &ok)
+datetime News_GetNowUtc()
 {
-   string impact = StringToUpper(News_Trim(raw));
-   if(impact == "HIGH" || impact == "MEDIUM" || impact == "LOW")
-   {
-      ok = true;
-      return impact;
-   }
-   ok = false;
-   return impact;
+   if(g_news_time_override_active)
+      return g_news_override_utc_now;
+   return TimeGMT();
 }
 
-bool News_ParseIso8601Utc(const string text, datetime &out_value)
+bool News_GetFileMTime(const string path, datetime &out_mtime)
 {
-   string value = News_Trim(text);
-   if(value == "")
+   int handle = FileOpen(path, FILE_READ|FILE_BIN);
+   if(handle == INVALID_HANDLE)
       return false;
-
-   int pos_t = StringFind(value, "T");
-   if(pos_t < 0)
-      pos_t = StringFind(value, " ");
-   if(pos_t <= 0)
-      return false;
-
-   string date_part = StringSubstr(value, 0, pos_t);
-   string time_part = StringSubstr(value, pos_t + 1);
-
-   string tz_suffix = "Z";
-   int pos_z = StringFind(time_part, "Z");
-   int pos_plus = StringFind(time_part, "+");
-   int pos_minus = -1;
-   for(int i = 0; i < StringLen(time_part); ++i)
-   {
-      ushort ch = StringGetCharacter(time_part, i);
-      if(ch == '-')
-      {
-         pos_minus = i;
-         break;
-      }
-   }
-
-   if(pos_z >= 0)
-   {
-      tz_suffix = "Z";
-      time_part = StringSubstr(time_part, 0, pos_z);
-   }
-   else if(pos_plus >= 0 || pos_minus >= 0)
-   {
-      int pos = pos_plus >= 0 ? pos_plus : pos_minus;
-      tz_suffix = StringSubstr(time_part, pos);
-      time_part = StringSubstr(time_part, 0, pos);
-   }
-
-   string date_fields[];
-   if(StringSplit(date_part, '-', date_fields) != 3)
-      return false;
-
-   string time_fields[];
-   if(StringSplit(time_part, ':', time_fields) < 2)
-      return false;
-
-   int year = (int)StringToInteger(date_fields[0]);
-   int month = (int)StringToInteger(date_fields[1]);
-   int day = (int)StringToInteger(date_fields[2]);
-   int hour = (int)StringToInteger(time_fields[0]);
-   int minute = (int)StringToInteger(time_fields[1]);
-   int second = 0;
-   if(ArraySize(time_fields) >= 3)
-      second = (int)StringToInteger(time_fields[2]);
-
-   if(year < 1970 || month < 1 || month > 12 || day < 1 || day > 31)
-      return false;
-   if(hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59)
-      return false;
-
-   MqlDateTime tm = {year, month, day, hour, minute, second};
-   datetime calculated = StructToTime(tm);
-   if(calculated <= 0)
-      return false;
-
-   int offset_sign = 0;
-   int offset_seconds = 0;
-   if(tz_suffix == "" || tz_suffix == "Z")
-   {
-      offset_sign = 0;
-      offset_seconds = 0;
-   }
-   else
-   {
-      offset_sign = (StringGetCharacter(tz_suffix, 0) == '-') ? -1 : 1;
-      string tz_body = StringSubstr(tz_suffix, 1);
-      string tz_fields[];
-      if(StringSplit(tz_body, ':', tz_fields) < 1)
-         return false;
-      int tz_hour = (int)StringToInteger(tz_fields[0]);
-      int tz_min = 0;
-      if(ArraySize(tz_fields) >= 2)
-         tz_min = (int)StringToInteger(tz_fields[1]);
-      if(tz_hour < 0 || tz_hour > 23 || tz_min < 0 || tz_min > 59)
-         return false;
-      offset_seconds = offset_sign * (tz_hour * 3600 + tz_min * 60);
-   }
-
-   datetime utc_time = calculated - offset_seconds;
-   if(utc_time <= 0)
-      return false;
-
-   out_value = utc_time;
-   return true;
+   out_mtime = (datetime)FileGetInteger(handle, FILE_MODIFY_DATE);
+   FileClose(handle);
+   return (out_mtime > 0);
 }
 
-bool News_ParseMinutes(const string text, int &out_value)
+double News_CalcFileAgeHours(const datetime mtime, const datetime now_value)
 {
-   string trimmed = News_Trim(text);
-   if(trimmed == "")
-      return false;
-
-   int start = 0;
-   bool negative_allowed = false;
-   if(StringLen(trimmed) > 0)
-   {
-      ushort first = StringGetCharacter(trimmed, 0);
-      if(first == '+')
-         start = 1;
-      else if(first == '-')
-      {
-         start = 1;
-         negative_allowed = true;
-      }
-   }
-
-   if(start >= StringLen(trimmed))
-      return false;
-
-   for(int i = start; i < StringLen(trimmed); ++i)
-   {
-      ushort ch = StringGetCharacter(trimmed, i);
-      if(ch < '0' || ch > '9')
-         return false;
-   }
-
-   int value = (int)StringToInteger(trimmed);
-   if(!negative_allowed && value < 0)
-      return false;
-
-   out_value = value;
-   return true;
+   if(mtime <= 0 || now_value <= 0 || now_value < mtime)
+      return 0.0;
+   return (double)(now_value - mtime) / 3600.0;
 }
 
-bool News_ValidateCsvSchema(const string header_line,
-                            int &idx_timestamp,
-                            int &idx_symbol,
-                            int &idx_impact,
-                            int &idx_source,
-                            int &idx_event,
-                            int &idx_prebuffer,
-                            int &idx_postbuffer)
+bool News_IsCsvFresh(const datetime mtime, const int max_age_hours)
 {
-   idx_timestamp = -1;
-   idx_symbol = -1;
-   idx_impact = -1;
-   idx_source = -1;
-   idx_event = -1;
-   idx_prebuffer = -1;
-   idx_postbuffer = -1;
-
-   string fields[];
-   int count = StringSplit(header_line, ',', fields);
-   if(count <= 0)
-      return false;
-
-   for(int i = 0; i < count; ++i)
-   {
-      string field = StringToLower(News_Trim(fields[i]));
-      if(field == "timestamp_utc")
-         idx_timestamp = i;
-      else if(field == "symbol")
-         idx_symbol = i;
-      else if(field == "impact")
-         idx_impact = i;
-      else if(field == "source")
-         idx_source = i;
-      else if(field == "event")
-         idx_event = i;
-      else if(field == "prebuffer_min")
-         idx_prebuffer = i;
-      else if(field == "postbuffer_min")
-         idx_postbuffer = i;
-   }
-
-   bool ok = (idx_timestamp >= 0 && idx_symbol >= 0 && idx_impact >= 0 &&
-              idx_source >= 0 && idx_event >= 0 && idx_prebuffer >= 0 && idx_postbuffer >= 0);
-   return ok;
-}
-
-bool News_GetFileMTime(const string path, datetime &mtime)
-{
-   mtime = 0;
-   string name = "";
-   int attributes = 0;
-   datetime found_time = 0;
-   string mask = News_ResolveRelativePath(path);
-   int find_handle = FileFindFirst(mask, name, attributes, found_time);
-   if(find_handle == INVALID_HANDLE)
-   {
-      PrintFormat("[News] CSV missing: %s", path);
-      return false;
-   }
-   FileFindClose(find_handle);
-   mtime = found_time;
-   return true;
-}
-
-bool News_IsCsvFresh(const datetime mtime, const int max_age_hours, const string path)
-{
-   if(mtime <= 0)
-      return false;
    if(max_age_hours <= 0)
       return true;
+   const datetime now_value = News_GetNowServer();
+   const double age_hours = News_CalcFileAgeHours(mtime, now_value);
+   return (age_hours <= (double)max_age_hours + 1e-6);
+}
 
-   datetime now = TimeCurrent();
-   if(now <= 0)
-      now = mtime;
-   double age_hours = (double)(now - mtime) / 3600.0;
-   if(age_hours > (double)max_age_hours)
+string News_NormalizeImpact(const string impact_raw)
+{
+   string value = News_Trim(impact_raw);
+   StringToUpper(value);
+   if(StringFind(value, "HIGH") == 0)
+      return "HIGH";
+   if(StringFind(value, "MED") == 0)
+      return "MEDIUM";
+   if(StringFind(value, "LOW") == 0)
+      return "LOW";
+   return "";
+}
+
+string News_NormalizeSymbol(const string symbol_raw)
+{
+   string value = News_Trim(symbol_raw);
+   if(StringLen(value) == 0)
+      return "";
+   StringToUpper(value);
+   int suffix_pos = StringFind(value, ".");
+   if(suffix_pos >= 0)
+      value = StringSubstr(value, 0, suffix_pos);
+   StringTrimLeft(value);
+   StringTrimRight(value);
+   return value;
+}
+
+int News_SplitSymbols(const string field, string &tokens[])
+{
+   ArrayResize(tokens, 0);
+   string buffer = "";
+   const int len = StringLen(field);
+   for(int i = 0; i < len; i++)
    {
-      PrintFormat("[News] CSV stale (age %.1f h > max %d): %s", age_hours, max_age_hours, path);
+      const string ch = StringSubstr(field, i, 1);
+      if(ch == ";" || ch == "," || ch == "|" || ch == " " || ch == "/")
+      {
+         string token = News_NormalizeSymbol(buffer);
+         if(StringLen(token) > 0)
+         {
+            const int idx = ArraySize(tokens);
+            ArrayResize(tokens, idx + 1);
+            tokens[idx] = token;
+         }
+         buffer = "";
+         continue;
+      }
+      buffer += ch;
+   }
+   string trailing = News_NormalizeSymbol(buffer);
+   if(StringLen(trailing) > 0)
+   {
+      const int idx = ArraySize(tokens);
+      ArrayResize(tokens, idx + 1);
+      tokens[idx] = trailing;
+   }
+   return ArraySize(tokens);
+}
+
+datetime News_ParseTimestamp(const string timestamp_str, bool &ok)
+{
+   ok = false;
+   string value = News_Trim(timestamp_str);
+   if(StringLen(value) < 20)
+      return 0;
+   string clean = value;
+   if(StringGetCharacter(clean, (int)StringLen(clean) - 1) == 'Z')
+      clean = StringSubstr(clean, 0, StringLen(clean) - 1);
+   int split_pos = StringFind(clean, "T");
+   if(split_pos < 0)
+      split_pos = StringFind(clean, " ");
+   if(split_pos < 0)
+      return 0;
+   string date_part = StringSubstr(clean, 0, split_pos);
+   string time_part = StringSubstr(clean, split_pos + 1);
+   MqlDateTime dt;
+   ZeroMemory(dt);
+   if(StringLen(date_part) != 10 || StringLen(time_part) < 8)
+      return 0;
+   dt.year  = (int)StringToInteger(StringSubstr(date_part, 0, 4));
+   dt.mon   = (int)StringToInteger(StringSubstr(date_part, 5, 2));
+   dt.day   = (int)StringToInteger(StringSubstr(date_part, 8, 2));
+   dt.hour  = (int)StringToInteger(StringSubstr(time_part, 0, 2));
+   dt.min   = (int)StringToInteger(StringSubstr(time_part, 3, 2));
+   dt.sec   = (int)StringToInteger(StringSubstr(time_part, 6, 2));
+   if(dt.year < 1970 || dt.mon < 1 || dt.day < 1)
+      return 0;
+   ok = true;
+   return StructToTime(dt);
+}
+
+void News_ComputeBlockWindow(NewsEvent &event)
+{
+   int prebuffer_seconds = 0;
+   int postbuffer_seconds = 0;
+   if(event.prebuffer_min > 0)
+      prebuffer_seconds = event.prebuffer_min * 60;
+   if(event.postbuffer_min > 0)
+      postbuffer_seconds = event.postbuffer_min * 60;
+   const int global_seconds = (NewsBufferS > 0 ? NewsBufferS : 0);
+   if(global_seconds > prebuffer_seconds)
+      prebuffer_seconds = global_seconds;
+   if(global_seconds > postbuffer_seconds)
+      postbuffer_seconds = global_seconds;
+   event.block_start_utc = event.timestamp_utc - prebuffer_seconds;
+   event.block_end_utc = event.timestamp_utc + postbuffer_seconds;
+}
+
+int News_FindColumn(string &columns[], const string target)
+{
+   string expected = target;
+   StringToLower(expected);
+   for(int i = 0; i < ArraySize(columns); i++)
+   {
+      string col = News_Trim(columns[i]);
+      StringToLower(col);
+      if(col == expected)
+         return i;
+   }
+   return -1;
+}
+
+bool News_ParseHeader(const string header_line, NewsCsvSchema &schema)
+{
+   string columns[];
+   const int count = StringSplit(header_line, ',', columns);
+   if(count < 7)
+      return false;
+   schema.column_count = count;
+   schema.idx_timestamp = News_FindColumn(columns, "timestamp_utc");
+   schema.idx_symbol = News_FindColumn(columns, "symbol");
+   schema.idx_impact = News_FindColumn(columns, "impact");
+   schema.idx_source = News_FindColumn(columns, "source");
+   schema.idx_event = News_FindColumn(columns, "event");
+   schema.idx_prebuffer = News_FindColumn(columns, "prebuffer_min");
+   schema.idx_postbuffer = News_FindColumn(columns, "postbuffer_min");
+   return (schema.idx_timestamp >= 0 &&
+           schema.idx_symbol >= 0 &&
+           schema.idx_impact >= 0 &&
+           schema.idx_source >= 0 &&
+           schema.idx_event >= 0 &&
+           schema.idx_prebuffer >= 0 &&
+           schema.idx_postbuffer >= 0);
+}
+
+bool News_ProcessCsvLine(const string line,
+                         const NewsCsvSchema &schema,
+                         NewsEvent &collector[],
+                         int &collector_count,
+                         string &error_msg)
+{
+   string trimmed = News_Trim(line);
+   if(trimmed == "" || StringGetCharacter(trimmed, 0) == '#')
+      return true;
+
+   string columns[];
+   const int count = StringSplit(trimmed, ',', columns);
+   if(count < schema.column_count)
+   {
+      error_msg = "insufficient columns";
+      return false;
+   }
+
+   bool timestamp_ok = false;
+   datetime event_time = News_ParseTimestamp(columns[schema.idx_timestamp], timestamp_ok);
+   if(!timestamp_ok)
+   {
+      error_msg = "invalid timestamp";
+      return false;
+   }
+
+   const string impact = News_NormalizeImpact(columns[schema.idx_impact]);
+   if(impact == "")
+   {
+      error_msg = "unknown impact";
+      return false;
+   }
+
+   string symbol_tokens[];
+   const int symbol_count = News_SplitSymbols(columns[schema.idx_symbol], symbol_tokens);
+   if(symbol_count <= 0)
+   {
+      error_msg = "symbol column empty";
+      return false;
+   }
+
+   bool pre_ok = true;
+   bool post_ok = true;
+   const double prebuffer_value = StringToDouble(News_Trim(columns[schema.idx_prebuffer]));
+   const double postbuffer_value = StringToDouble(News_Trim(columns[schema.idx_postbuffer]));
+   pre_ok = MathIsValidNumber(prebuffer_value);
+   post_ok = MathIsValidNumber(postbuffer_value);
+   if(!pre_ok || !post_ok)
+   {
+      error_msg = "invalid buffer minutes";
+      return false;
+   }
+
+   NewsEvent base;
+   base.timestamp_utc = event_time;
+   base.impact = impact;
+   base.source = News_Trim(columns[schema.idx_source]);
+   base.event_desc = News_Trim(columns[schema.idx_event]);
+   base.prebuffer_min = (int)MathMax(0.0, prebuffer_value);
+   base.postbuffer_min = (int)MathMax(0.0, postbuffer_value);
+   base.is_valid = true;
+
+   const int before = collector_count;
+   for(int i = 0; i < symbol_count; i++)
+   {
+      string normalized_symbol = symbol_tokens[i];
+      if(StringLen(normalized_symbol) == 0)
+         continue;
+      NewsEvent instance = base;
+      instance.symbol = normalized_symbol;
+      News_ComputeBlockWindow(instance);
+      const int idx = collector_count;
+      if(ArrayResize(collector, collector_count + 1) < 0)
+      {
+         error_msg = "unable to grow collector array";
+         return false;
+      }
+      collector[idx] = instance;
+      collector_count++;
+   }
+
+   if(collector_count == before)
+   {
+      error_msg = "no usable symbol tokens";
       return false;
    }
    return true;
 }
 
-int News_GlobalBufferSeconds()
-{
-   if(NewsBufferS <= 0)
-      return 0;
-   return NewsBufferS;
-}
-
 //------------------------------------------------------------------------------
-// Public API
+// CSV Loading and caching
 //------------------------------------------------------------------------------
 
-bool News_LoadCsvFallback()
+bool News_ReadCsvInternal(const string path, const datetime mtime)
 {
-   // Task 10 assumption: hard-coded defaults until configurable inputs are added.
-   string path = DEFAULT_NewsCSVPath;
-   string relative_path = News_ResolveRelativePath(path);
-
-   datetime mtime = 0;
-   if(!News_GetFileMTime(path, mtime))
+   const int max_age = News_GetConfiguredMaxAgeHours();
+   if(mtime <= 0 || !News_IsCsvFresh(mtime, max_age))
    {
+      const double age_hours = News_CalcFileAgeHours(mtime, News_GetNowServer());
+      PrintFormat("[News] CSV stale (age %.1f h > max %d): %s", age_hours, max_age, path);
       News_ClearCache();
-      g_news_last_mtime = 0;
-      g_news_last_load_code = 1;
       return false;
    }
 
-   if(!g_news_force_reload && g_news_cache_valid && g_news_last_mtime == mtime)
-      return true;
-
-   if(!News_IsCsvFresh(mtime, DEFAULT_NewsCSVMaxAgeHours, path))
-   {
-      News_ClearCache();
-      g_news_last_mtime = mtime;
-      g_news_last_load_code = 2;
-      return false;
-   }
-
-   int handle = FileOpen(relative_path, FILE_READ|FILE_TXT|FILE_ANSI);
+   int handle = FileOpen(path, FILE_READ|FILE_TXT|FILE_ANSI);
    if(handle == INVALID_HANDLE)
    {
-      PrintFormat("[News] CSV missing: %s", path);
+      const int err = GetLastError();
+      PrintFormat("[News] CSV open failed (%d): %s", err, path);
+      ResetLastError();
       News_ClearCache();
-      g_news_last_mtime = 0;
-      g_news_last_load_code = 3;
       return false;
    }
 
    if(FileIsEnding(handle))
    {
+      PrintFormat("[News] CSV empty: %s", path);
       FileClose(handle);
       News_ClearCache();
-      g_news_last_mtime = mtime;
-      g_news_cache_valid = true;
-      g_news_last_load_code = 0;
-      PrintFormat("[News] Loaded %d events (skipped %d) from fallback CSV", 0, 0);
-      g_news_force_reload = false;
-      return true;
+      return false;
    }
 
-   string header = FileReadString(handle);
-   header = News_Trim(header);
-
-   int idx_timestamp = -1;
-   int idx_symbol = -1;
-   int idx_impact = -1;
-   int idx_source = -1;
-   int idx_event = -1;
-   int idx_prebuffer = -1;
-   int idx_postbuffer = -1;
-
-   if(!News_ValidateCsvSchema(header,
-                              idx_timestamp,
-                              idx_symbol,
-                              idx_impact,
-                              idx_source,
-                              idx_event,
-                              idx_prebuffer,
-                              idx_postbuffer))
+   string header_line = News_Trim(FileReadString(handle));
+   NewsCsvSchema schema;
+   if(!News_ParseHeader(header_line, schema))
    {
       Print("[News] CSV invalid headers: expected timestamp_utc,symbol,impact,source,event,prebuffer_min,postbuffer_min");
       FileClose(handle);
       News_ClearCache();
-      g_news_last_mtime = mtime;
-      g_news_last_load_code = 4;
       return false;
    }
 
-   NewsEvent parsed_events[];
-   int accepted = 0;
+   NewsEvent parsed[];
+   int parsed_count = 0;
    int skipped = 0;
-   int line_number = 1;
-
+   int line_no = 1;
    while(!FileIsEnding(handle))
    {
-      string line = FileReadString(handle);
-      line_number++;
-      line = News_Trim(line);
-      if(line == "")
-         continue;
-
-      string columns[];
-      int column_count = StringSplit(line, ',', columns);
-      if(column_count <= idx_postbuffer)
+      string raw_line = FileReadString(handle);
+      line_no++;
+      string error_reason = "";
+      if(!News_ProcessCsvLine(raw_line, schema, parsed, parsed_count, error_reason))
       {
+         if(error_reason != "")
+            PrintFormat("[News] CSV parse error on line %d: %s", line_no, error_reason);
          skipped++;
-         PrintFormat("[News] CSV parse error on line %d: insufficient columns", line_number);
-         continue;
       }
-
-      NewsEvent event;
-      event.timestamp_utc = 0;
-      event.symbol = "";
-      event.impact = "";
-      event.source = "";
-      event.event = "";
-      event.prebuffer_min = 0;
-      event.postbuffer_min = 0;
-      event.block_start = 0;
-      event.block_end = 0;
-      event.is_valid = false;
-
-      if(!News_ParseIso8601Utc(columns[idx_timestamp], event.timestamp_utc))
-      {
-         skipped++;
-         PrintFormat("[News] CSV parse error on line %d: invalid timestamp", line_number);
-         continue;
-      }
-
-      event.symbol = News_NormalizeSymbol(columns[idx_symbol]);
-      if(event.symbol == "")
-      {
-         skipped++;
-         PrintFormat("[News] CSV parse error on line %d: invalid symbol", line_number);
-         continue;
-      }
-
-      bool impact_ok = false;
-      event.impact = News_NormalizeImpact(columns[idx_impact], impact_ok);
-      if(!impact_ok)
-      {
-         skipped++;
-         PrintFormat("[News] CSV parse error on line %d: invalid impact", line_number);
-         continue;
-      }
-
-      event.source = News_Trim(columns[idx_source]);
-      event.event = News_Trim(columns[idx_event]);
-
-      int prebuffer = 0;
-      int postbuffer = 0;
-      if(!News_ParseMinutes(columns[idx_prebuffer], prebuffer))
-      {
-         skipped++;
-         PrintFormat("[News] CSV parse error on line %d: invalid prebuffer", line_number);
-         continue;
-      }
-      if(!News_ParseMinutes(columns[idx_postbuffer], postbuffer))
-      {
-         skipped++;
-         PrintFormat("[News] CSV parse error on line %d: invalid postbuffer", line_number);
-         continue;
-      }
-
-      if(prebuffer < 0)
-         prebuffer = 0;
-      if(postbuffer < 0)
-         postbuffer = 0;
-
-      event.prebuffer_min = prebuffer;
-      event.postbuffer_min = postbuffer;
-
-      int global_buffer_sec = News_GlobalBufferSeconds();
-      int effective_pre_sec = prebuffer * 60;
-      int effective_post_sec = postbuffer * 60;
-      if(global_buffer_sec > effective_pre_sec)
-         effective_pre_sec = global_buffer_sec;
-      if(global_buffer_sec > effective_post_sec)
-         effective_post_sec = global_buffer_sec;
-
-      event.block_start = event.timestamp_utc - effective_pre_sec;
-      if(event.block_start < 0)
-         event.block_start = 0;
-      event.block_end = event.timestamp_utc + effective_post_sec;
-      event.is_valid = true;
-
-      int next_index = ArraySize(parsed_events);
-      ArrayResize(parsed_events, next_index + 1);
-      parsed_events[next_index] = event;
-      accepted++;
    }
-
    FileClose(handle);
 
-   if(accepted == 0 && skipped > 0)
+   if(parsed_count <= 0)
    {
+      PrintFormat("[News] CSV contained no usable rows: %s", path);
       News_ClearCache();
-      g_news_last_mtime = mtime;
-      g_news_last_load_code = 5;
       return false;
    }
 
-   ArrayResize(g_news_events, accepted);
-   for(int k = 0; k < accepted; ++k)
-      g_news_events[k] = parsed_events[k];
-
-   g_news_event_count = accepted;
+   ArrayResize(g_news_events, parsed_count);
+   for(int i = 0; i < parsed_count; i++)
+      g_news_events[i] = parsed[i];
+   g_news_event_count = parsed_count;
+   g_news_cached_mtime = mtime;
+   g_news_cached_path = path;
    g_news_cache_valid = true;
-   g_news_last_mtime = mtime;
-   g_news_last_load_code = 0;
    g_news_force_reload = false;
-
-   PrintFormat("[News] Loaded %d events (skipped %d) from fallback CSV", accepted, skipped);
+   PrintFormat("[News] Loaded %d events (skipped %d) from fallback CSV", parsed_count, skipped);
    return true;
 }
 
 bool News_ReloadIfChanged()
 {
-   if(g_news_force_reload)
+   const string path = News_GetConfiguredCsvPath();
+   datetime mtime = 0;
+   if(!News_GetFileMTime(path, mtime))
    {
-      return News_LoadCsvFallback();
-   }
-
-   string path = DEFAULT_NewsCSVPath;
-   datetime current_mtime = 0;
-   if(!News_GetFileMTime(path, current_mtime))
-   {
+      if(g_news_cache_valid)
+         PrintFormat("[News] CSV missing: %s", path);
       News_ClearCache();
-      g_news_last_mtime = 0;
-      g_news_last_load_code = 1;
       return false;
    }
 
-   if(g_news_cache_valid && g_news_last_mtime == current_mtime)
+   if(g_news_cache_valid && !g_news_force_reload &&
+      g_news_cached_mtime == mtime && g_news_cached_path == path)
+   {
       return true;
+   }
 
-   return News_LoadCsvFallback();
+   return News_ReadCsvInternal(path, mtime);
+}
+
+bool News_LoadCsvFallback()
+{
+   g_news_force_reload = true;
+   return News_ReloadIfChanged();
 }
 
 void News_ForceReload()
 {
    g_news_force_reload = true;
    g_news_cache_valid = false;
-   g_news_last_mtime = 0;
 }
 
-bool News_GetEventsForSymbol(const string symbol, NewsEvent &out[])
+//------------------------------------------------------------------------------
+// Public helpers
+//------------------------------------------------------------------------------
+
+bool News_GetEventsForSymbol(const string symbol, NewsEvent &out_events[])
 {
-   ArrayResize(out, 0);
-   if(!g_news_cache_valid || g_news_event_count <= 0)
+   ArrayResize(out_events, 0);
+   if(StringLen(symbol) == 0)
+      return false;
+   if(!News_ReloadIfChanged())
       return false;
 
    string normalized = News_NormalizeSymbol(symbol);
-   if(normalized == "")
+   if(StringLen(normalized) == 0)
       return false;
 
-   int matches = 0;
-   for(int i = 0; i < g_news_event_count; ++i)
+   for(int i = 0; i < g_news_event_count; i++)
    {
-      if(!g_news_events[i].is_valid)
-         continue;
       if(g_news_events[i].symbol != normalized)
          continue;
-      int idx = ArraySize(out);
-      ArrayResize(out, idx + 1);
-      out[idx] = g_news_events[i];
-      matches++;
+      const int idx = ArraySize(out_events);
+      ArrayResize(out_events, idx + 1);
+      out_events[idx] = g_news_events[i];
    }
-   return (matches > 0);
+   return (ArraySize(out_events) > 0);
 }
 
 bool News_IsBlocked(const string symbol)
 {
-   if(symbol == "")
+   if(StringLen(symbol) == 0)
+      return false;
+   if(!News_ReloadIfChanged())
       return false;
 
-   News_ReloadIfChanged();
-   if(!g_news_cache_valid || g_news_event_count <= 0)
-      return false;
-
+   const datetime now_utc = News_GetNowUtc();
    string normalized = News_NormalizeSymbol(symbol);
-   if(normalized == "")
-      return false;
-
-   datetime now_utc = TimeGMT();
-   for(int i = 0; i < g_news_event_count; ++i)
+   for(int i = 0; i < g_news_event_count; i++)
    {
-      NewsEvent event = g_news_events[i];
-      if(!event.is_valid)
-         continue;
+      const NewsEvent event = g_news_events[i];
       if(event.symbol != normalized)
          continue;
       if(event.impact != "HIGH")
          continue;
-      if(now_utc >= event.block_start && now_utc <= event.block_end)
+      if(now_utc >= event.block_start_utc && now_utc <= event.block_end_utc)
          return true;
    }
    return false;
@@ -614,7 +516,45 @@ bool News_IsBlocked(const string symbol)
 
 void News_PostNewsStabilization()
 {
-   // TODO[M4]: post-news stabilization checks
+   // Placeholder for future Task 13 integration
+}
+
+//------------------------------------------------------------------------------
+// Test hooks
+//------------------------------------------------------------------------------
+
+void News_Test_SetOverridePath(const string path)
+{
+   g_news_test_override_path = path;
+   News_ForceReload();
+}
+
+void News_Test_SetOverrideMaxAgeHours(const int hours)
+{
+   g_news_test_override_max_age = hours;
+   News_ForceReload();
+}
+
+void News_Test_SetCurrentTimes(const datetime server_now, const datetime utc_now)
+{
+   g_news_time_override_active = true;
+   g_news_override_server_now = server_now;
+   g_news_override_utc_now = utc_now;
+}
+
+void News_Test_ClearCurrentTimeOverride()
+{
+   g_news_time_override_active = false;
+   g_news_override_server_now = 0;
+   g_news_override_utc_now = 0;
+}
+
+void News_Test_ClearOverrides()
+{
+   g_news_test_override_path = "";
+   g_news_test_override_max_age = -1;
+   News_Test_ClearCurrentTimeOverride();
+   News_ForceReload();
 }
 
 #endif // RPEA_NEWS_MQH

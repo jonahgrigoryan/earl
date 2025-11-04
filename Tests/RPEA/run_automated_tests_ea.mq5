@@ -10,9 +10,6 @@
 input int    BudgetGateLockMs           = 1000;
 input double RiskGateHeadroom           = 0.90;
 
-// Global news buffer for unit tests (non-input so tests can mutate)
-int NewsBufferS = 300;
-
 // EA mode for automated testing
 #define MaxOpenPositionsTotal  2
 #define MaxOpenPerSymbol       1
@@ -26,6 +23,9 @@ int NewsBufferS = 300;
 #define MicroRiskPct           0.10
 #define GivebackCapDayPct      0.50
 #define MinStopPoints          1
+#define NewsBufferS            300
+#define NewsCSVPath            "Files/RPEA/news/calendar_high_impact.csv"
+#define NewsCSVMaxAgeHours     24
 #define RPEA_ORDER_ENGINE_SKIP_RISK
 #define RPEA_ORDER_ENGINE_SKIP_EQUITY
 #define RPEA_ORDER_ENGINE_SKIP_SESSIONS
@@ -47,7 +47,7 @@ int NewsBufferS = 300;
 // Budget gate tests (Task 9)
 #include "test_order_engine_budgetgate.mqh"
 // News CSV fallback tests (Task 10)
-#include "test_news_csv_fallback.mqh"
+#include "test_news_csv.mqh"
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -204,19 +204,19 @@ void RunAllTests()
                                task8_result ? "All partial fill tests passed" : "Some partial fill tests failed");
    g_test_reporter.EndSuite(suite8);
 
-    // Task 9: Budget Gate with Position Snapshot Locking
-    int suite9 = g_test_reporter.BeginSuite("Task9_Budget_Gate_Snapshot_Locking");
-    bool task9_result = TestOrderEngineBudgetGate_RunAll();
-    g_test_reporter.RecordTest(suite9, "TestOrderEngineBudgetGate_RunAll", task9_result,
-                                 task9_result ? "All budget gate tests passed" : "Some budget gate tests failed");
-    g_test_reporter.EndSuite(suite9);
+   // Task 9: Budget Gate with Position Snapshot Locking
+   int suite9 = g_test_reporter.BeginSuite("Task9_Budget_Gate_Snapshot_Locking");
+   bool task9_result = TestOrderEngineBudgetGate_RunAll();
+   g_test_reporter.RecordTest(suite9, "TestOrderEngineBudgetGate_RunAll", task9_result,
+                               task9_result ? "All budget gate tests passed" : "Some budget gate tests failed");
+   g_test_reporter.EndSuite(suite9);
 
-    // Task 10: News CSV Fallback System
-    int suite10 = g_test_reporter.BeginSuite("Task10_News_CSV_Fallback");
-    bool task10_result = TestNewsCsvFallback_RunAll();
-    g_test_reporter.RecordTest(suite10, "TestNewsCsvFallback_RunAll", task10_result,
-                                 task10_result ? "All news CSV fallback tests passed" : "Some news CSV fallback tests failed");
-    g_test_reporter.EndSuite(suite10);
+   // Task 10: News CSV fallback
+   int suite10 = g_test_reporter.BeginSuite("Task10_News_CSV_Fallback");
+   bool task10_result = TestNewsCsvFallback_RunAll();
+   g_test_reporter.RecordTest(suite10, "TestNewsCsvFallback_RunAll", task10_result,
+                               task10_result ? "News CSV fallback tests passed" : "News CSV fallback tests failed");
+   g_test_reporter.EndSuite(suite10);
 
    Print("Test execution complete.");
 }
