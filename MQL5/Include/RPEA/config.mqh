@@ -76,7 +76,7 @@
 #define DEFAULT_AuditLogPath                 "Files/RPEA/logs/"
 #define DEFAULT_LogBufferSize                1000
 
-// Synthetic Manager Configuration
+// Synthetic Manager Configuration (Task 11 acceptance §Synthetic Manager Interface)
 #define DEFAULT_UseXAUEURProxy               true
 #define DEFAULT_ReplicationMarginThreshold   0.6
 #define DEFAULT_SyntheticBarCacheSize        1000
