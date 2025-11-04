@@ -42,6 +42,7 @@ static int       g_news_test_override_max_age = -1;
 static bool      g_news_time_override_active = false;
 static datetime  g_news_override_server_now = 0;
 static datetime  g_news_override_utc_now = 0;
+static int       g_news_test_read_count = 0;
 
 //------------------------------------------------------------------------------
 // Helper utilities
@@ -60,6 +61,8 @@ void News_ClearCache()
    ArrayResize(g_news_events, 0);
    g_news_event_count = 0;
    g_news_cache_valid = false;
+   g_news_cached_mtime = 0;
+   g_news_cached_path = "";
 }
 
 string News_GetConfiguredCsvPath()
@@ -75,7 +78,11 @@ int News_GetConfiguredMaxAgeHours()
 {
    if(g_news_test_override_max_age >= 0)
       return g_news_test_override_max_age;
-   return (NewsCSVMaxAgeHours > 0 ? NewsCSVMaxAgeHours : DEFAULT_NewsCSVMaxAgeHours);
+   if(NewsCSVMaxAgeHours > 0)
+      return NewsCSVMaxAgeHours;
+   if(NewsCSVMaxAgeHours == 0)
+      return 0;
+   return DEFAULT_NewsCSVMaxAgeHours;
 }
 
 datetime News_GetNowServer()
@@ -90,6 +97,15 @@ datetime News_GetNowUtc()
    if(g_news_time_override_active)
       return g_news_override_utc_now;
    return TimeGMT();
+}
+
+int News_GetLocalUtcOffsetSeconds()
+{
+   const datetime local_now = TimeLocal();
+   const datetime utc_now = TimeGMT();
+   if(local_now > 0 && utc_now > 0)
+      return (int)(local_now - utc_now);
+   return 0;
 }
 
 bool News_GetFileMTime(const string path, datetime &out_mtime)
@@ -205,8 +221,13 @@ datetime News_ParseTimestamp(const string timestamp_str, bool &ok)
    dt.sec   = (int)StringToInteger(StringSubstr(time_part, 6, 2));
    if(dt.year < 1970 || dt.mon < 1 || dt.day < 1)
       return 0;
+   datetime terminal_time = StructToTime(dt);
+   if(terminal_time <= 0)
+      return 0;
+   const int terminal_offset = News_GetLocalUtcOffsetSeconds();
+   datetime utc_time = terminal_time + terminal_offset;
    ok = true;
-   return StructToTime(dt);
+   return utc_time;
 }
 
 void News_ComputeBlockWindow(NewsEvent &event)
@@ -358,6 +379,7 @@ bool News_ProcessCsvLine(const string line,
 
 bool News_ReadCsvInternal(const string path, const datetime mtime)
 {
+   g_news_test_read_count++;
    const int max_age = News_GetConfiguredMaxAgeHours();
    if(mtime <= 0 || !News_IsCsvFresh(mtime, max_age))
    {
@@ -438,8 +460,7 @@ bool News_ReloadIfChanged()
    datetime mtime = 0;
    if(!News_GetFileMTime(path, mtime))
    {
-      if(g_news_cache_valid)
-         PrintFormat("[News] CSV missing: %s", path);
+      PrintFormat("[News] CSV missing: %s", path);
       News_ClearCache();
       return false;
    }
@@ -555,6 +576,16 @@ void News_Test_ClearOverrides()
    g_news_test_override_max_age = -1;
    News_Test_ClearCurrentTimeOverride();
    News_ForceReload();
+}
+
+int News_Test_GetReadCount()
+{
+   return g_news_test_read_count;
+}
+
+void News_Test_ResetReadCount()
+{
+   g_news_test_read_count = 0;
 }
 
 #endif // RPEA_NEWS_MQH
