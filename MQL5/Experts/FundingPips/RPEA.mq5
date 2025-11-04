@@ -68,6 +68,8 @@ input int    MaxSpreadPoints            = 40;
 input int    MaxSlippagePoints          = 10;
 input int    MinHoldSeconds             = 120;
 input int    QueuedActionTTLMin         = 5;
+input string NewsCSVPath                = DEFAULT_NewsCSVPath;
+input int    NewsCSVMaxAgeHours         = DEFAULT_NewsCSVMaxAgeHours;
 input int    BudgetGateLockMs           = 1000;
 input double RiskGateHeadroom           = 0.90;
 
