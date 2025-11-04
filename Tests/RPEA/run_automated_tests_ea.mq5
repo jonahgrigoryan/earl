@@ -10,6 +10,9 @@
 input int    BudgetGateLockMs           = 1000;
 input double RiskGateHeadroom           = 0.90;
 
+// Global news buffer for unit tests (non-input so tests can mutate)
+int NewsBufferS = 300;
+
 // EA mode for automated testing
 #define MaxOpenPositionsTotal  2
 #define MaxOpenPerSymbol       1
@@ -43,6 +46,8 @@ input double RiskGateHeadroom           = 0.90;
 #include "test_order_engine_partialfills.mqh"
 // Budget gate tests (Task 9)
 #include "test_order_engine_budgetgate.mqh"
+// News CSV fallback tests (Task 10)
+#include "test_news_csv_fallback.mqh"
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -199,12 +204,19 @@ void RunAllTests()
                                task8_result ? "All partial fill tests passed" : "Some partial fill tests failed");
    g_test_reporter.EndSuite(suite8);
 
-   // Task 9: Budget Gate with Position Snapshot Locking
-   int suite9 = g_test_reporter.BeginSuite("Task9_Budget_Gate_Snapshot_Locking");
-   bool task9_result = TestOrderEngineBudgetGate_RunAll();
-   g_test_reporter.RecordTest(suite9, "TestOrderEngineBudgetGate_RunAll", task9_result,
-                               task9_result ? "All budget gate tests passed" : "Some budget gate tests failed");
-   g_test_reporter.EndSuite(suite9);
+    // Task 9: Budget Gate with Position Snapshot Locking
+    int suite9 = g_test_reporter.BeginSuite("Task9_Budget_Gate_Snapshot_Locking");
+    bool task9_result = TestOrderEngineBudgetGate_RunAll();
+    g_test_reporter.RecordTest(suite9, "TestOrderEngineBudgetGate_RunAll", task9_result,
+                                 task9_result ? "All budget gate tests passed" : "Some budget gate tests failed");
+    g_test_reporter.EndSuite(suite9);
+
+    // Task 10: News CSV Fallback System
+    int suite10 = g_test_reporter.BeginSuite("Task10_News_CSV_Fallback");
+    bool task10_result = TestNewsCsvFallback_RunAll();
+    g_test_reporter.RecordTest(suite10, "TestNewsCsvFallback_RunAll", task10_result,
+                                 task10_result ? "All news CSV fallback tests passed" : "Some news CSV fallback tests failed");
+    g_test_reporter.EndSuite(suite10);
 
    Print("Test execution complete.");
 }
