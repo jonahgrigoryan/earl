@@ -245,17 +245,18 @@ bool SyntheticBars_BuildsWithForwardFill()
 
    datetime base = TimeCurrent() - 120;
    MqlRates xau_rates[3];
-   MqlRates eur_rates[2];
+   MqlRates eur_rates[3];
 
    xau_rates[0] = SyntheticTest_MakeRate(base, 2000, 2002, 1998, 2001, 100);
    xau_rates[1] = SyntheticTest_MakeRate(base + 60, 2001, 2004, 1999, 2003, 120);
    xau_rates[2] = SyntheticTest_MakeRate(base + 120, 2003, 2005, 2001, 2004, 110);
 
-   eur_rates[0] = SyntheticTest_MakeRate(base, 1.10, 1.11, 1.09, 1.105, 90);
-   eur_rates[1] = SyntheticTest_MakeRate(base + 120, 1.11, 1.12, 1.10, 1.115, 95);
+   eur_rates[0] = SyntheticTest_MakeRate(base - 60, 1.09, 1.10, 1.08, 1.095, 85);
+   eur_rates[1] = SyntheticTest_MakeRate(base, 1.10, 1.11, 1.09, 1.105, 90);
+   eur_rates[2] = SyntheticTest_MakeRate(base + 120, 1.11, 1.12, 1.10, 1.115, 95);
 
    SyntheticTest_SetRates(SYNTH_LEG_XAUUSD, PERIOD_M1, xau_rates, 3);
-   SyntheticTest_SetRates(SYNTH_LEG_EURUSD, PERIOD_M1, eur_rates, 2);
+   SyntheticTest_SetRates(SYNTH_LEG_EURUSD, PERIOD_M1, eur_rates, 3);
 
    bool built = g_synthetic_manager.BuildSyntheticBars(SYNTH_SYMBOL_XAUEUR, PERIOD_M1, 3);
    ASSERT_TRUE(built, "Build succeeds with forward fill");
@@ -264,8 +265,11 @@ bool SyntheticBars_BuildsWithForwardFill()
    ASSERT_TRUE(g_synthetic_manager.GetCachedBars(SYNTH_SYMBOL_XAUEUR, PERIOD_M1, bars, 3), "Cached bars retrieved");
    ASSERT_TRUE(ArraySize(bars) == 3, "Three synthetic bars returned");
 
-   double expected_fill_close = xau_rates[1].close / eur_rates[0].close;
-   SyntheticTest_AssertNear(expected_fill_close, bars[1].close, 1e-6, "Forward-filled bar uses previous EURUSD close");
+   if(ArraySize(bars) >= 2)
+   {
+      double expected_fill_close = xau_rates[1].close / eur_rates[1].close;
+      SyntheticTest_AssertNear(expected_fill_close, bars[1].close, 1e-6, "Forward-filled bar uses previous EURUSD close");
+   }
 
    SyntheticTest_ResetEnvironment();
    return SyntheticTest_End(failures_before);
