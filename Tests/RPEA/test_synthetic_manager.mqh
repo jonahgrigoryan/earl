@@ -442,6 +442,9 @@ bool SyntheticBWISC_IndicatorCompatibility()
 
 bool TestSyntheticManager_RunAll()
 {
+   Print("=================================================================");
+   Print("RPEA Synthetic Manager Tests - Task 11");
+   Print("=================================================================");
    bool all_passed = true;
    all_passed &= SyntheticPrice_ComputesXAUEUR();
    all_passed &= SyntheticBars_BuildsWithForwardFill();
