@@ -213,10 +213,14 @@ double SyntheticManager::ExtractAppliedPrice(const MqlTick &tick, const ENUM_APP
 
    switch(price_type)
    {
+#ifdef PRICE_BID
       case PRICE_BID:
          return bid;
+#endif
+#ifdef PRICE_ASK
       case PRICE_ASK:
          return ask;
+#endif
       case PRICE_MEDIAN:
          return (bid + ask) * 0.5;
       case PRICE_TYPICAL:

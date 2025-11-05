@@ -23,18 +23,18 @@ extern string g_current_test;
 
 #define ASSERT_FALSE(condition, message) ASSERT_TRUE(!(condition), message)
 
-#define ASSERT_DOUBLE_NEAR(expected, actual, epsilon, message) \
-   do { \
-      double __diff = MathAbs((expected) - (actual)); \
-      if(__diff <= (epsilon)) { \
-         g_test_passed++; \
-         PrintFormat("[PASS] %s: %s (expected=%.6f, actual=%.6f)", g_current_test, message, (expected), (actual)); \
-      } else { \
-         g_test_failed++; \
-         PrintFormat("[FAIL] %s: %s (expected=%.6f, actual=%.6f, diff=%.6f)", g_current_test, message, (expected), (actual), __diff); \
-      } \
-   } while(false)
 #endif // TEST_FRAMEWORK_DEFINED
+
+void SyntheticTest_AssertNear(const double expected,
+                              const double actual,
+                              const double epsilon,
+                              const string message)
+{
+   const double diff = MathAbs(expected - actual);
+   string detail = StringFormat("%s (expected=%.6f, actual=%.6f, diff=%.6f, eps=%.6f)",
+                                message, expected, actual, diff, epsilon);
+   ASSERT_TRUE(diff <= epsilon, detail);
+}
 
 // Provide configuration globals for SyntheticManager in test environment
 int  SyntheticBarCacheSize = DEFAULT_SyntheticBarCacheSize;
@@ -229,7 +229,7 @@ bool SyntheticPrice_ComputesXAUEUR()
 
    double expected = 2000.15 / 1.1001;
    double price = g_synthetic_manager.GetSyntheticPrice(SYNTH_SYMBOL_XAUEUR, PRICE_CLOSE);
-   ASSERT_DOUBLE_NEAR(expected, price, 1e-6, "XAUEUR price computed from ticks");
+   SyntheticTest_AssertNear(expected, price, 1e-6, "XAUEUR price computed from ticks");
 
    SyntheticTest_ResetEnvironment();
    return SyntheticTest_End(failures_before);
@@ -265,7 +265,7 @@ bool SyntheticBars_BuildsWithForwardFill()
    ASSERT_TRUE(ArraySize(bars) == 3, "Three synthetic bars returned");
 
    double expected_fill_close = xau_rates[1].close / eur_rates[0].close;
-   ASSERT_DOUBLE_NEAR(expected_fill_close, bars[1].close, 1e-6, "Forward-filled bar uses previous EURUSD close");
+   SyntheticTest_AssertNear(expected_fill_close, bars[1].close, 1e-6, "Forward-filled bar uses previous EURUSD close");
 
    SyntheticTest_ResetEnvironment();
    return SyntheticTest_End(failures_before);
@@ -357,7 +357,7 @@ bool SyntheticCache_ReusesData()
 
    SyntheticBar cached_again[];
    ASSERT_TRUE(g_synthetic_manager.GetCachedBars(SYNTH_SYMBOL_XAUEUR, PERIOD_M1, cached_again, 2), "Cache reused before rebuild");
-   ASSERT_DOUBLE_NEAR(first_close, cached_again[1].close, 1e-6, "Cache returned old synthetic values");
+   SyntheticTest_AssertNear(first_close, cached_again[1].close, 1e-6, "Cache returned old synthetic values");
 
    ASSERT_TRUE(g_synthetic_manager.BuildSyntheticBars(SYNTH_SYMBOL_XAUEUR, PERIOD_M1, 2), "Rebuild after data change");
    ASSERT_TRUE(g_synthetic_manager.GetCachedBars(SYNTH_SYMBOL_XAUEUR, PERIOD_M1, cached_again, 2), "Cache updated after rebuild");
@@ -373,7 +373,7 @@ bool SyntheticDistance_ScalesWithEURUSD()
    int failures_before = SyntheticTest_Begin("SyntheticDistance_ScalesWithEURUSD");
 
    double scaled = g_synthetic_manager.ScaleSyntheticDistance(50.0, 1.08);
-   ASSERT_DOUBLE_NEAR(54.0, scaled, 1e-6, "Distance scaling multiplies by EURUSD rate");
+   SyntheticTest_AssertNear(54.0, scaled, 1e-6, "Distance scaling multiplies by EURUSD rate");
 
    SyntheticTest_ResetEnvironment();
    return SyntheticTest_End(failures_before);
@@ -387,8 +387,10 @@ bool SyntheticBWISC_IndicatorCompatibility()
    g_synthetic_manager.SetRatesProvider(SyntheticTest_RatesProvider);
 
    const int daily_count = 16;
-   MqlRates xau_d1[daily_count];
-   MqlRates eur_d1[daily_count];
+   MqlRates xau_d1[];
+   MqlRates eur_d1[];
+   ArrayResize(xau_d1, daily_count);
+   ArrayResize(eur_d1, daily_count);
    datetime now = TimeCurrent();
    datetime day_base = now - daily_count * 86400;
    for(int i=0;i<daily_count;i++)
@@ -401,8 +403,10 @@ bool SyntheticBWISC_IndicatorCompatibility()
    }
 
    const int hourly_count = 30;
-   MqlRates xau_h1[hourly_count];
-   MqlRates eur_h1[hourly_count];
+   MqlRates xau_h1[];
+   MqlRates eur_h1[];
+   ArrayResize(xau_h1, hourly_count);
+   ArrayResize(eur_h1, hourly_count);
    datetime hour_base = now - hourly_count * 3600;
    for(int j=0;j<hourly_count;j++)
    {
