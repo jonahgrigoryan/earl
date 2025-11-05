@@ -83,6 +83,12 @@ input bool   UseXAUEURProxy             = true;
 input int    LeverageOverrideFX         = 50;   // 0 → use account
 input int    LeverageOverrideMetals     = 20;
 
+// Synthetic manager (Task 11 acceptance §Synthetic Manager Interface)
+input int    SyntheticBarCacheSize      = DEFAULT_SyntheticBarCacheSize;
+input bool   ForwardFillGaps            = DEFAULT_ForwardFillGaps;
+input int    MaxGapBars                 = DEFAULT_MaxGapBars;
+input int    QuoteMaxAgeMs              = DEFAULT_QuoteMaxAgeMs;
+
 // Targets & mechanics
 input double RtargetBC                  = 2.2;
 input double RtargetMSC                 = 2.0;
@@ -182,8 +188,9 @@ int OnInit()
    g_ctx.baseline_today_e0 = s.baseline_today_e0;
    g_ctx.baseline_today_b0 = s.baseline_today_b0;
 
-   // 4) Initialize indicators
-   Indicators_Init(g_ctx);
+    // 4) Initialize indicators
+    Indicators_Init(g_ctx);
+    g_synthetic_manager.Clear();
 
    // 5) Ensure folders/logs exist and write boot line
    Persistence_EnsureFolders();
@@ -212,7 +219,9 @@ int OnInit()
 // OnDeinit: flush, stop timer, log shutdown
 void OnDeinit(const int reason)
 {
-   g_order_engine.OnShutdown();
+    g_order_engine.OnShutdown();
+
+    g_synthetic_manager.Clear();
 
    EventKillTimer();
    Persistence_Flush();
@@ -248,7 +257,20 @@ void OnTimer()
    }
    g_ctx.timer_last_check = g_ctx.current_server_time;
 
-   // Refresh indicators per symbol (lightweight in M1)
+    // Refresh indicators per symbol (lightweight in M1)
+    int synth_idx = Indicators_FindSlot(SYNTH_SYMBOL_XAUEUR);
+    if(synth_idx >= 0)
+    {
+       SyntheticBar warmup[];
+        const int daily_required = 15;
+        const int hourly_required = 40;
+        if(!g_synthetic_manager.GetCachedBars(SYNTH_SYMBOL_XAUEUR, PERIOD_D1, warmup, daily_required))
+           g_synthetic_manager.BuildSyntheticBars(SYNTH_SYMBOL_XAUEUR, PERIOD_D1, daily_required);
+        ArrayResize(warmup, 0);
+        if(!g_synthetic_manager.GetCachedBars(SYNTH_SYMBOL_XAUEUR, PERIOD_H1, warmup, hourly_required))
+           g_synthetic_manager.BuildSyntheticBars(SYNTH_SYMBOL_XAUEUR, PERIOD_H1, hourly_required);
+    }
+
    for(int i=0;i<g_ctx.symbols_count;i++)
    {
       string sym = g_ctx.symbols[i];

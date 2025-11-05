@@ -48,6 +48,8 @@ input double RiskGateHeadroom           = 0.90;
 #include "test_order_engine_budgetgate.mqh"
 // News CSV fallback tests (Task 10)
 #include "test_news_csv.mqh"
+// Synthetic manager tests (Task 11)
+#include "test_synthetic_manager.mqh"
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -217,6 +219,13 @@ void RunAllTests()
    g_test_reporter.RecordTest(suite10, "TestNewsCsvFallback_RunAll", task10_result,
                                task10_result ? "News CSV fallback tests passed" : "News CSV fallback tests failed");
    g_test_reporter.EndSuite(suite10);
+
+    // Task 11: Synthetic Manager (XAUEUR)
+    int suite11 = g_test_reporter.BeginSuite("Task11_Synthetic_Manager");
+    bool task11_result = TestSyntheticManager_RunAll();
+    g_test_reporter.RecordTest(suite11, "TestSyntheticManager_RunAll", task11_result,
+                                task11_result ? "Synthetic manager tests passed" : "Synthetic manager tests failed");
+    g_test_reporter.EndSuite(suite11);
 
    Print("Test execution complete.");
 }
