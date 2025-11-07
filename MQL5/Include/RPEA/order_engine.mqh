@@ -7,10 +7,15 @@
 #include <RPEA/config.mqh>
 #include <RPEA/logging.mqh>
 #include <RPEA/persistence.mqh>
+#include <RPEA/queue.mqh>
+#include <RPEA/trailing.mqh>
 #ifndef RPEA_ORDER_ENGINE_SKIP_SESSIONS
 // Sessions used for cutoff alignment (read-only helpers)
 #include <RPEA/sessions.mqh>
 #endif
+
+static bool   g_order_engine_global_lock = false;
+static string g_order_engine_lock_reason = "";
 
 #ifndef CutoffHour
 // Default NY cutoff hour used when running in unit-test harness without input bindings
@@ -72,20 +77,6 @@ struct OrderResult
    int      last_retcode;
    string   intent_id;
    string   accept_once_key;
-};
-
-// Queued action structure
-struct QueuedAction
-{
-   string   action_id;
-   string   accept_once_key;
-   string   type;               // "TRAIL", "MODIFY_SL", "MODIFY_TP", "CANCEL"
-   ulong    ticket;
-   double   new_value;
-   double   validation_threshold;
-   datetime queued_time;
-   datetime expires_time;
-   string   trigger_condition;
 };
 
 // OCO relationship tracking
@@ -459,17 +450,14 @@ class OrderEngine
 {
 private:
    // State management
-   OCORelationship m_oco_relationships[];
-   int             m_oco_count;
-   QueuedAction    m_queued_actions[];
-   int             m_queue_count;
-   bool            m_execution_locked;
+    OCORelationship m_oco_relationships[];
+    int             m_oco_count;
+    bool            m_execution_locked;
    
    // Configuration (from inputs)
    int             m_max_retry_attempts;
    int             m_initial_retry_delay_ms;
    double          m_retry_backoff_multiplier;
-   int             m_queued_action_ttl_min;
    double          m_max_slippage_points;
    int             m_min_hold_seconds;
    bool            m_enable_execution_lock;
@@ -516,39 +504,6 @@ private:
       return -1;
    }
    
-   void RemoveExpiredQueuedActions(const datetime now)
-   {
-      int new_count = 0;
-      bool removed_any = false;
-      for(int i = 0; i < m_queue_count; i++)
-      {
-         if(m_queued_actions[i].expires_time > now)
-         {
-            if(new_count != i)
-            {
-               m_queued_actions[new_count] = m_queued_actions[i];
-            }
-            new_count++;
-         }
-         else
-         {
-            LogOE(StringFormat("Removed expired queued action: %s ticket=%llu", 
-                  m_queued_actions[i].type, m_queued_actions[i].ticket));
-            if(m_queued_actions[i].action_id != "")
-            {
-               if(IntentJournal_RemoveActionById(m_intent_journal, m_queued_actions[i].action_id))
-                  removed_any = true;
-            }
-         }
-      }
-      m_queue_count = new_count;
-      if(removed_any)
-      {
-         MarkJournalDirty();
-         PersistIntentJournal();
-      }
-   }
-
    bool IsMarketOrderType(const ENUM_ORDER_TYPE type);
    bool IsPendingOrderType(const ENUM_ORDER_TYPE type);
    bool EvaluatePositionCaps(const OrderRequest &request,
@@ -574,25 +529,22 @@ private:
    void FlushLogBuffer();
    void PersistIntentJournal();
    void LoadIntentJournal();
-   void RestoreQueuedActionsFromJournal();
    void ResetState();
    string FormatLogLine(const string message);
    string GenerateIntentId(const datetime now);
-   string GenerateActionId(const datetime now);
    string BuildIntentAcceptKey(const OrderRequest &request) const;
-   string BuildActionAcceptKey(const QueuedAction &action) const;
    ulong  HashString64(const string text) const;
    string HashToHex(const ulong value) const;
    bool   IntentExists(const string accept_key, int &out_index) const;
-   bool   ActionExists(const string accept_key, int &out_index) const;
+   bool   FindIntentByTicket(const ulong ticket,
+                             string &out_intent_id,
+                             string &out_accept_key) const;
    // Partial fill state helpers (Task 8)
    int    FindPartialFillState(const ulong ticket) const;
    int    FindOrCreatePartialFillState(const ulong ticket, const double requested_volume);
    void   ClearPartialFillState(const int index);
    void   ClearPartialFillStateByTicket(const ulong ticket);
    void   CleanupExpiredJournalEntries(const datetime now);
-   PersistedQueuedAction ToPersistedAction(const QueuedAction &action) const;
-   void   FromPersistedAction(const PersistedQueuedAction &persisted, QueuedAction &action) const;
    void   MarkJournalDirty();
    void   TouchJournalSequences();
    bool   ClearOCOByIndex(const int idx)
@@ -723,18 +675,23 @@ private:
    }
 
 public:
+   bool GetIntentMetadata(const ulong ticket,
+                          string &out_intent_id,
+                          string &out_accept_key) const
+   {
+      return FindIntentByTicket(ticket, out_intent_id, out_accept_key);
+   }
+   
    // Constructor
    OrderEngine()
    {
       m_oco_count = 0;
-      m_queue_count = 0;
       m_execution_locked = false;
       
       // Initialize with defaults from config.mqh
       m_max_retry_attempts = DEFAULT_MaxRetryAttempts;
       m_initial_retry_delay_ms = DEFAULT_InitialRetryDelayMs;
       m_retry_backoff_multiplier = DEFAULT_RetryBackoffMultiplier;
-      m_queued_action_ttl_min = DEFAULT_QueuedActionTTLMin;
       m_max_slippage_points = DEFAULT_MaxSlippagePoints;
       m_min_hold_seconds = DEFAULT_MinHoldSeconds;
       m_enable_execution_lock = DEFAULT_EnableExecutionLock;
@@ -754,8 +711,7 @@ public:
       m_intent_sequence = 0;
       m_action_sequence = 0;
       
-      ArrayResize(m_oco_relationships, 100);
-      ArrayResize(m_queued_actions, 1000);
+       ArrayResize(m_oco_relationships, 100);
       m_cutoff_override_active = false;
       m_cutoff_override = 0;
       ArrayResize(m_oco_handled_deals, 32);
@@ -766,7 +722,6 @@ public:
    ~OrderEngine()
    {
       ArrayFree(m_oco_relationships);
-      ArrayFree(m_queued_actions);
       ArrayFree(m_log_buffer);
       m_log_buffer_count = 0;
       m_log_buffer_dirty = false;
@@ -792,7 +747,6 @@ public:
       LoadIntentJournal();
       CleanupExpiredJournalEntries(TimeCurrent());
       PersistIntentJournal();
-      RestoreQueuedActionsFromJournal();
       LogOE("OrderEngine::Init() - Initialization complete");
       return true;
    }
@@ -803,7 +757,6 @@ public:
       
       // Log final state
       LogOE(StringFormat("OrderEngine::OnShutdown() - Active OCO relationships: %d", m_oco_count));
-      LogOE(StringFormat("OrderEngine::OnShutdown() - Queued actions: %d", m_queue_count));
       LogOE("OrderEngine::OnShutdown() - Shutdown complete");
 
       PersistIntentJournal();
@@ -818,7 +771,6 @@ public:
    void TestResetIntentJournal()
    {
       IntentJournal_Clear(m_intent_journal);
-      m_queue_count = 0;
       m_intent_sequence = 0;
       m_action_sequence = 0;
       m_intent_journal_dirty = true;
@@ -952,12 +904,6 @@ public:
    void OnTimerTick(const datetime now)
    {
       // Housekeeping tasks - runs after OnTradeTransaction processing
-      
-      // Remove expired queued actions
-      RemoveExpiredQueuedActions(now);
-      
-      // TODO[M3-Task12]: Process queued actions (trailing stops during news windows)
-      // TODO[M3-Task13]: Check trailing stop activation conditions
       // OCO expiry cleanup
       for(int i = 0; i < m_oco_count; )
       {
@@ -1642,77 +1588,6 @@ public:
    }
    
    //===========================================================================
-   // Queue Management Methods (Stubs for M3 Task 12)
-   //===========================================================================
-   
-   bool QueueAction(const QueuedAction& action)
-   {
-      LogOE(StringFormat("QueueAction: type=%s ticket=%llu expires=%s",
-            action.type, action.ticket, TimeToString(action.expires_time)));
-
-      QueuedAction queued = action;
-      datetime now = TimeCurrent();
-      if(queued.queued_time <= 0)
-         queued.queued_time = now;
-      if(queued.expires_time <= 0)
-         queued.expires_time = queued.queued_time + m_queued_action_ttl_min * 60;
-      if(queued.action_id == "")
-         queued.action_id = GenerateActionId(now);
-      queued.accept_once_key = BuildActionAcceptKey(queued);
-
-      int duplicate_index = -1;
-      if(ActionExists(queued.accept_once_key, duplicate_index))
-      {
-         LogOE(StringFormat("QueueAction duplicate ignored: type=%s ticket=%llu accept_key=%s",
-                            queued.type, queued.ticket, queued.accept_once_key));
-         string dup_fields = StringFormat("{\"action_id\":\"%s\",\"type\":\"%s\",\"ticket\":%llu,\"accept_once_key\":\"%s\"}",
-                                          queued.action_id,
-                                          queued.type,
-                                          queued.ticket,
-                                          queued.accept_once_key);
-         LogDecision("OrderEngine", "QUEUE_ACTION_DUP", dup_fields);
-         LogAuditRow("QUEUED_ACTION_DUP", "OrderEngine", LOG_WARN, "Duplicate queued action", dup_fields);
-         return false;
-      }
-
-      if(m_queue_count >= ArraySize(m_queued_actions))
-      {
-         LogOE("QueueAction: Queue full, cannot add action");
-         return false;
-      }
-
-      m_queued_actions[m_queue_count] = queued;
-      m_queue_count++;
-
-      PersistedQueuedAction persisted = ToPersistedAction(queued);
-      int persisted_index = IntentJournal_FindActionById(m_intent_journal, persisted.action_id);
-      if(persisted_index < 0)
-      {
-         persisted_index = ArraySize(m_intent_journal.queued_actions);
-         ArrayResize(m_intent_journal.queued_actions, persisted_index + 1);
-      }
-      m_intent_journal.queued_actions[persisted_index] = persisted;
-      MarkJournalDirty();
-      PersistIntentJournal();
-
-      string queue_fields = StringFormat("{\"action_id\":\"%s\",\"type\":\"%s\",\"ticket\":%llu,\"accept_once_key\":\"%s\",\"expires\":\"%s\"}",
-                                         queued.action_id,
-                                         queued.type,
-                                         queued.ticket,
-                                         queued.accept_once_key,
-                                         TimeToString(queued.expires_time));
-      LogDecision("OrderEngine", "QUEUE_ACTION_ACCEPT", queue_fields);
-      LogAuditRow("QUEUED_ACTION", "OrderEngine", LOG_INFO, "Action queued", queue_fields);
-      return true;
-   }
-   
-   void ProcessQueuedActions(const datetime now)
-   {
-      LogOE(StringFormat("ProcessQueuedActions: Processing %d queued actions", m_queue_count));
-      // TODO[M3-Task12]: Implement precondition validation and execution
-   }
-   
-   //===========================================================================
    // Execution Lock Methods
    //===========================================================================
    
@@ -2115,7 +1990,7 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
 
       ZeroMemory(trade_result);
       const bool send_ok = OE_OrderSend(trade_request, trade_result);
-      result.last_retcode = trade_result.retcode;
+      result.last_retcode = (int)trade_result.retcode;
 
       const double attempt_slippage = (is_market_request ? last_slippage_points : 0.0);
 
@@ -2138,7 +2013,7 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
          result.executed_price = trade_result.price;
          result.executed_volume = trade_result.volume;
          result.retry_count = retries_performed;
-         result.last_retcode = trade_result.retcode;
+         result.last_retcode = (int)trade_result.retcode;
          result.error_message = "";
 
          double executed_slippage_pts = 0.0;
@@ -2591,28 +2466,6 @@ void OrderEngine::LoadIntentJournal()
    m_intent_journal_dirty = false;
 }
 
-void OrderEngine::RestoreQueuedActionsFromJournal()
-{
-   m_queue_count = 0;
-   datetime now = TimeCurrent();
-   const int capacity = ArraySize(m_queued_actions);
-
-   for(int i = 0; i < ArraySize(m_intent_journal.queued_actions); ++i)
-   {
-      PersistedQueuedAction persisted = m_intent_journal.queued_actions[i];
-      if(persisted.expires_time > 0 && persisted.expires_time < now)
-         continue;
-      if(m_queue_count >= capacity)
-      {
-         Print("[OrderEngine] RestoreQueuedActionsFromJournal: queue capacity reached during restore");
-         break;
-      }
-      QueuedAction runtime;
-      FromPersistedAction(persisted, runtime);
-      m_queued_actions[m_queue_count++] = runtime;
-   }
-}
-
 void OrderEngine::CleanupExpiredJournalEntries(const datetime now)
 {
    const datetime intent_cutoff = now - OE_INTENT_TTL_MINUTES * 60;
@@ -2689,19 +2542,6 @@ string OrderEngine::GenerateIntentId(const datetime now)
                        m_intent_sequence);
 }
 
-string OrderEngine::GenerateActionId(const datetime now)
-{
-   if(m_action_sequence >= 999)
-      m_action_sequence = 0;
-   m_action_sequence++;
-   MqlDateTime dt;
-   TimeToStruct(now, dt);
-   return StringFormat("rpea_action_%04d%02d%02d_%02d%02d%02d_%03d",
-                       dt.year, dt.mon, dt.day,
-                       dt.hour, dt.min, dt.sec,
-                       m_action_sequence);
-}
-
 ulong OrderEngine::HashString64(const string text) const
 {
    const ulong FNV_OFFSET = 1469598103934665603;
@@ -2746,20 +2586,6 @@ string OrderEngine::BuildIntentAcceptKey(const OrderRequest &request) const
                               request.magic);
    ulong hash = HashString64(base);
    string accept_key = "intent_" + HashToHex(hash);
-   return accept_key;
-}
-
-string OrderEngine::BuildActionAcceptKey(const QueuedAction &action) const
-{
-   string base = StringFormat("%llu|%s|%.8f|%.4f|%lld|%s",
-                              action.ticket,
-                              action.type,
-                              action.new_value,
-                              action.validation_threshold,
-                              (long)action.queued_time,
-                              action.trigger_condition);
-   ulong hash = HashString64(base);
-   string accept_key = "action_" + HashToHex(hash);
    return accept_key;
 }
 
@@ -2824,44 +2650,31 @@ bool OrderEngine::IntentExists(const string accept_key, int &out_index) const
    return (out_index >= 0);
 }
 
-bool OrderEngine::ActionExists(const string accept_key, int &out_index) const
+bool OrderEngine::FindIntentByTicket(const ulong ticket,
+                                     string &out_intent_id,
+                                     string &out_accept_key) const
 {
-   out_index = IntentJournal_FindActionByAcceptKey(m_intent_journal, accept_key);
-   return (out_index >= 0);
-}
-
-PersistedQueuedAction OrderEngine::ToPersistedAction(const QueuedAction &action) const
-{
-   PersistedQueuedAction persisted;
-   persisted.action_id = action.action_id;
-   persisted.accept_once_key = action.accept_once_key;
-   persisted.ticket = action.ticket;
-   persisted.action_type = action.type;
-   persisted.new_value = action.new_value;
-   persisted.validation_threshold = action.validation_threshold;
-   persisted.queued_time = action.queued_time;
-   persisted.expires_time = action.expires_time;
-   persisted.trigger_condition = action.trigger_condition;
-   return persisted;
-}
-
-void OrderEngine::FromPersistedAction(const PersistedQueuedAction &persisted, QueuedAction &action) const
-{
-   action.action_id = persisted.action_id;
-   action.accept_once_key = persisted.accept_once_key;
-   action.type = persisted.action_type;
-   action.ticket = persisted.ticket;
-   action.new_value = persisted.new_value;
-   action.validation_threshold = persisted.validation_threshold;
-   action.queued_time = persisted.queued_time;
-   action.expires_time = persisted.expires_time;
-   action.trigger_condition = persisted.trigger_condition;
+   out_intent_id = "";
+   out_accept_key = "";
+   for(int i = 0; i < ArraySize(m_intent_journal.intents); ++i)
+   {
+      OrderIntent intent = m_intent_journal.intents[i];
+      for(int j = 0; j < ArraySize(intent.executed_tickets); ++j)
+      {
+         if(intent.executed_tickets[j] == ticket)
+         {
+            out_intent_id = intent.intent_id;
+            out_accept_key = intent.accept_once_key;
+            return true;
+         }
+      }
+   }
+   return false;
 }
 
 void OrderEngine::ResetState()
 {
    m_oco_count = 0;
-   m_queue_count = 0;
    m_execution_locked = false;
 }
 
@@ -2882,6 +2695,13 @@ string OrderEngine::FormatLogLine(const string message)
 // Global OrderEngine Instance
 //==============================================================================
 extern OrderEngine g_order_engine;
+
+bool OrderEngine_GetIntentMetadata(const ulong ticket,
+                                   string &out_intent_id,
+                                   string &out_accept_key)
+{
+   return g_order_engine.GetIntentMetadata(ticket, out_intent_id, out_accept_key);
+}
 
 //------------------------------------------------------------------------------
 // Normalization overrides - used for deterministic unit testing (Task 3)
@@ -3670,20 +3490,358 @@ double OE_NormalizePrice(const string symbol, const double price)
    return NormalizeDouble(normalized, digits > 0 ? digits : 8);
 }
 
-void OE_QueueTrailIfBlocked(const ulong position_ticket,
-                            const double new_sl,
-                            const datetime now)
+bool OrderEngine_EnterCritical(const string reason)
 {
-   // TODO[M3-Task13]: enqueue SL move during news window; enforce TTL and preconditions
+   if(g_order_engine_global_lock)
+   {
+      string fields = StringFormat("{\"reason\":\"%s\",\"current\":\"%s\"}", reason, g_order_engine_lock_reason);
+      LogAuditRow("QUEUE", "OrderEngine", LOG_INFO, "LOCK_SKIP_BUSY", fields);
+      return false;
+   }
+   g_order_engine_global_lock = true;
+   g_order_engine_lock_reason = reason;
+   return true;
 }
 
-void OE_TrailingMaybeActivate(const ulong position_ticket,
-                              const double entry_price,
-                              const double sl_price,
-                              const double r_multiple,
-                              const double atr_points)
+void OrderEngine_ExitCritical(const string reason)
 {
-   // TODO[M3-Task13]: activate trailing at >= +1R and move SL by ATR*TrailMult
+   if(reason == "")
+   {
+      // no-op
+   }
+   g_order_engine_global_lock = false;
+   g_order_engine_lock_reason = "";
+}
+
+double Queue_OrderEngine_GetMinStopDistancePoints(const string symbol)
+{
+   long stops_level = 0;
+   if(SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL, stops_level))
+   {
+      if(stops_level < 0)
+         stops_level = 0;
+      return (double)stops_level;
+   }
+   return 0.0;
+}
+
+bool Queue_OrderEngine_IsRiskReducing(const QueuedAction &qa,
+                                      const double current_sl,
+                                      const double current_tp,
+                                      bool &out_is_risk_reducing)
+{
+   out_is_risk_reducing = false;
+
+   if(qa.action_type == QA_CLOSE)
+   {
+      out_is_risk_reducing = true;
+      return true;
+   }
+
+   if(qa.action_type == QA_SL_MODIFY)
+   {
+      if(!PositionSelectByTicket((ulong)qa.ticket))
+         return false;
+      ENUM_POSITION_TYPE pos_type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      if(pos_type == POSITION_TYPE_BUY)
+         out_is_risk_reducing = (qa.new_sl >= current_sl - 1e-6);
+      else
+         out_is_risk_reducing = (qa.new_sl <= current_sl + 1e-6);
+      return true;
+   }
+
+   if(qa.action_type == QA_TP_MODIFY)
+   {
+      out_is_risk_reducing = false;
+      return true;
+   }
+
+   return true;
+}
+
+int OrderEngine_MaxDeviationPoints()
+{
+   int deviation = MaxSlippagePoints;
+   if(deviation <= 0)
+      deviation = (int)MathRound(DEFAULT_MaxSlippagePoints);
+   if(deviation < 0)
+      deviation = 0;
+   return deviation;
+}
+
+bool Queue_OrderEngine_ApplyAction(const QueuedAction &qa,
+                                   string &out_reason_code,
+                                   bool &out_permanent_failure)
+{
+   out_permanent_failure = false;
+   out_reason_code = "APPLY_OK";
+
+   if(qa.ticket <= 0 || StringLen(qa.symbol) == 0)
+   {
+      out_permanent_failure = true;
+      out_reason_code = "APPLY_FAIL_PERMANENT";
+      return false;
+   }
+
+   if(qa.action_type != QA_CLOSE && !PositionSelectByTicket((ulong)qa.ticket))
+   {
+      out_permanent_failure = true;
+      out_reason_code = "APPLY_FAIL_PERMANENT";
+      return false;
+   }
+
+   MqlTradeRequest req;
+   MqlTradeResult  res;
+   ZeroMemory(req);
+   ZeroMemory(res);
+
+   if(qa.action_type == QA_SL_MODIFY || qa.action_type == QA_TP_MODIFY)
+   {
+      double current_sl = PositionGetDouble(POSITION_SL);
+      double current_tp = PositionGetDouble(POSITION_TP);
+      req.action = TRADE_ACTION_SLTP;
+      req.symbol = qa.symbol;
+      req.position = (ulong)qa.ticket;
+      req.sl = (qa.new_sl > 0.0 ? qa.new_sl : current_sl);
+      req.tp = (qa.new_tp > 0.0 ? qa.new_tp : current_tp);
+      req.deviation = OrderEngine_MaxDeviationPoints();
+      req.type_time = ORDER_TIME_GTC;
+   }
+   else if(qa.action_type == QA_CLOSE)
+   {
+      if(!PositionSelectByTicket((ulong)qa.ticket))
+      {
+         out_permanent_failure = true;
+         out_reason_code = "APPLY_FAIL_PERMANENT";
+         return false;
+      }
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      if(volume <= 0.0)
+      {
+         out_permanent_failure = true;
+         out_reason_code = "APPLY_FAIL_PERMANENT";
+         return false;
+      }
+      ENUM_POSITION_TYPE pos_type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      req.action = TRADE_ACTION_DEAL;
+      req.symbol = qa.symbol;
+      req.position = (ulong)qa.ticket;
+      req.volume = volume;
+      req.type = (pos_type == POSITION_TYPE_BUY ? ORDER_TYPE_SELL : ORDER_TYPE_BUY);
+      req.deviation = OrderEngine_MaxDeviationPoints();
+      req.type_time = ORDER_TIME_GTC;
+      double price = 0.0;
+      if(req.type == ORDER_TYPE_SELL)
+         SymbolInfoDouble(req.symbol, SYMBOL_BID, price);
+      else
+         SymbolInfoDouble(req.symbol, SYMBOL_ASK, price);
+      req.price = price;
+   }
+   else
+   {
+      out_permanent_failure = true;
+      out_reason_code = "APPLY_FAIL_PERMANENT";
+      return false;
+   }
+
+   const int max_attempts = 3;
+   for(int attempt = 0; attempt < max_attempts; attempt++)
+   {
+      if(OE_OrderSend(req, res))
+      {
+         out_reason_code = "APPLY_OK";
+         return true;
+      }
+
+      int ret = (int)res.retcode;
+      if(ret == TRADE_RETCODE_REQUOTE ||
+         ret == TRADE_RETCODE_PRICE_CHANGED ||
+         ret == TRADE_RETCODE_PRICE_OFF)
+      {
+         if(attempt + 1 < max_attempts)
+         {
+            Sleep(300);
+            out_reason_code = "APPLY_RETRY";
+            continue;
+         }
+      }
+      if(ret == TRADE_RETCODE_TRADE_DISABLED ||
+         ret == TRADE_RETCODE_NO_MONEY)
+      {
+         out_permanent_failure = true;
+         out_reason_code = "APPLY_FAIL_PERMANENT";
+         return false;
+      }
+
+      if(attempt + 1 < max_attempts)
+      {
+         Sleep(300);
+         out_reason_code = "APPLY_RETRY";
+         continue;
+      }
+
+      out_reason_code = "APPLY_RETRY";
+      return false;
+   }
+
+   out_permanent_failure = true;
+   out_reason_code = "APPLY_FAIL_PERMANENT";
+   return false;
+}
+
+bool OrderEngine_RequestModifySLTP(const string symbol,
+                                   const long ticket,
+                                   const double new_sl,
+                                   const double new_tp,
+                                   const string context)
+{
+   if(ticket <= 0 || StringLen(symbol) == 0)
+      return false;
+
+   if(!PositionSelectByTicket((ulong)ticket))
+      return false;
+
+   double current_sl = PositionGetDouble(POSITION_SL);
+   double current_tp = PositionGetDouble(POSITION_TP);
+
+   QueueActionType action_type = QA_SL_MODIFY;
+   if(new_sl <= 0.0 && new_tp > 0.0)
+      action_type = QA_TP_MODIFY;
+
+   QueuedAction qa;
+   qa.id = 0;
+   qa.ticket = ticket;
+   qa.symbol = symbol;
+   qa.action_type = action_type;
+   qa.new_sl = new_sl > 0.0 ? new_sl : 0.0;
+   qa.new_tp = new_tp > 0.0 ? new_tp : 0.0;
+   qa.priority = QP_OTHER;
+   qa.retry_count = 0;
+   qa.context_hex = "";
+
+   bool risk_reducing = false;
+   Queue_OrderEngine_IsRiskReducing(qa, current_sl, current_tp, risk_reducing);
+
+   string linked_intent_id = "";
+   string linked_accept_key = "";
+   OrderEngine_GetIntentMetadata((ulong)ticket, linked_intent_id, linked_accept_key);
+
+   if(News_IsBlocked(symbol) && action_type != QA_CLOSE)
+   {
+      long queued_id = 0;
+      bool queued = Queue_Add(symbol,
+                              ticket,
+                              action_type,
+                              qa.new_sl,
+                              qa.new_tp,
+                              context,
+                              queued_id,
+                              linked_intent_id,
+                              linked_accept_key);
+      if(queued)
+      {
+         string fields = StringFormat("{\"queue_id\":%I64d,\"ticket\":%I64d,\"reason\":\"QUEUED_NEWS\"}",
+                                      queued_id, ticket);
+         LogAuditRow("QUEUE", "OrderEngine", LOG_INFO, "QUEUED_NEWS", fields);
+      }
+      return queued;
+   }
+
+   string apply_reason = "";
+   bool permanent_failure = false;
+   bool applied = Queue_OrderEngine_ApplyAction(qa, apply_reason, permanent_failure);
+   if(!applied && permanent_failure)
+   {
+      string fields = StringFormat("{\"ticket\":%I64d,\"reason\":\"%s\"}", ticket, apply_reason);
+      LogAuditRow("QUEUE", "OrderEngine", LOG_WARN, apply_reason, fields);
+   }
+   return applied;
+}
+
+bool OrderEngine_RequestProtectiveClose(const string symbol,
+                                        const long ticket,
+                                        const string context)
+{
+   if(ticket <= 0 || StringLen(symbol) == 0)
+      return false;
+
+   QueuedAction qa;
+   qa.id = 0;
+   qa.ticket = ticket;
+   qa.symbol = symbol;
+   qa.action_type = QA_CLOSE;
+   qa.new_sl = 0.0;
+   qa.new_tp = 0.0;
+   qa.priority = QP_PROTECTIVE_EXIT;
+   qa.retry_count = 0;
+   qa.context_hex = "";
+
+   string apply_reason = "";
+   bool permanent_failure = false;
+   bool applied = Queue_OrderEngine_ApplyAction(qa, apply_reason, permanent_failure);
+   if(!applied && permanent_failure)
+   {
+      string fields = StringFormat("{\"ticket\":%I64d,\"reason\":\"%s\"}", ticket, apply_reason);
+      LogAuditRow("QUEUE", "OrderEngine", LOG_WARN, apply_reason, fields);
+   }
+   return applied;
+}
+
+void OrderEngine_ProcessQueueAndTrailing()
+{
+   if(!OrderEngine_EnterCritical("queue_process"))
+      return;
+
+   Queue_CancelExpired();
+   Queue_RevalidateAndApply();
+   Trail_HandleOnTickOrTimer();
+
+   OrderEngine_ExitCritical("queue_process");
+}
+
+void OrderEngine_OnTradeTransaction(const MqlTradeTransaction &trans,
+                                    const MqlTradeRequest &request,
+                                    const MqlTradeResult &result)
+{
+   g_order_engine.OnTradeTxn(trans, request, result);
+
+   if(trans.type == TRADE_TRANSACTION_DEAL_ADD && trans.deal > 0)
+   {
+      ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
+      long position_id = (long)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
+      if(entry == DEAL_ENTRY_OUT && position_id > 0)
+      {
+         Queue_ClearForTicket(position_id);
+         Trail_OnPositionClosed(position_id);
+      }
+   }
+
+   if(trans.position > 0)
+   {
+      ulong pos_ticket = trans.position;
+      if(PositionSelectByTicket(pos_ticket))
+      {
+         double pos_sl = PositionGetDouble(POSITION_SL);
+         double pos_tp = PositionGetDouble(POSITION_TP);
+         Queue_CoalesceIfRedundant((long)pos_ticket, pos_sl, pos_tp);
+      }
+   }
+}
+
+void OrderEngine_RestoreStateOnInit(const int queue_ttl_minutes,
+                                    const int max_queue_size,
+                                    const bool enable_prioritization)
+{
+   int ttl_minutes = (queue_ttl_minutes > 0 ? queue_ttl_minutes : DEFAULT_QueueTTLMinutes);
+   int max_queue = (max_queue_size > 0 ? max_queue_size : DEFAULT_MaxQueueSize);
+   bool prioritization = enable_prioritization;
+
+   Queue_Init(ttl_minutes, max_queue, prioritization);
+   int restored = Queue_LoadFromDiskAndReconcile();
+   Trail_Init();
+
+   string fields = StringFormat("{\"restored\":%d}", restored);
+   LogAuditRow("QUEUE", "OrderEngine", LOG_INFO, "LOAD_OK", fields);
 }
 
 void OrderEngine_PlacePending(const string symbol, const double price, const double sl, const double tp)
@@ -3700,7 +3858,7 @@ void OrderEngine_OnTradeTxn(const MqlTradeTransaction& trans,
                             const MqlTradeRequest& request,
                             const MqlTradeResult& result)
 {
-   g_order_engine.OnTradeTxn(trans, request, result);
+   OrderEngine_OnTradeTransaction(trans, request, result);
 }
 
 // End include guard
