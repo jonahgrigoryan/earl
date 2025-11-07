@@ -22,8 +22,16 @@ input double RiskGateHeadroom           = 0.90;
 #define RiskPct                1.5
 #define MicroRiskPct           0.10
 #define GivebackCapDayPct      0.50
+#define UseLondonOnly          false
+#define StartHourLO            7
+#define StartHourNY            12
+#define ORMinutes              60
+#define CutoffHour             16
 #define MinStopPoints          1
+#define TrailMult              0.8
 #define NewsBufferS            300
+#define MaxSpreadPoints        40
+#define MaxSlippagePoints      10
 #define NewsCSVPath            "Files/RPEA/news/calendar_high_impact.csv"
 #define NewsCSVMaxAgeHours     24
 #define RPEA_ORDER_ENGINE_SKIP_RISK
@@ -31,7 +39,10 @@ input double RiskGateHeadroom           = 0.90;
 #define RPEA_ORDER_ENGINE_SKIP_SESSIONS
 
 // Include test reporter
+#include <RPEA/app_context.mqh>
 #include <RPEA/test_reporter.mqh>
+
+AppContext g_ctx;
 
 // Include test files
 #include "test_order_engine.mqh"
@@ -50,6 +61,10 @@ input double RiskGateHeadroom           = 0.90;
 #include "test_news_csv.mqh"
 // Synthetic manager tests (Task 11)
 #include "test_synthetic_manager.mqh"
+// Queue manager tests (Task 12)
+#include "test_queue_manager.mqh"
+// Trailing manager tests (Task 13)
+#include "test_trailing.mqh"
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -220,12 +235,26 @@ void RunAllTests()
                                task10_result ? "News CSV fallback tests passed" : "News CSV fallback tests failed");
    g_test_reporter.EndSuite(suite10);
 
-    // Task 11: Synthetic Manager (XAUEUR)
-    int suite11 = g_test_reporter.BeginSuite("Task11_Synthetic_Manager");
-    bool task11_result = TestSyntheticManager_RunAll();
-    g_test_reporter.RecordTest(suite11, "TestSyntheticManager_RunAll", task11_result,
-                                task11_result ? "Synthetic manager tests passed" : "Synthetic manager tests failed");
-    g_test_reporter.EndSuite(suite11);
+   // Task 11: Synthetic Manager (XAUEUR)
+   int suite11 = g_test_reporter.BeginSuite("Task11_Synthetic_Manager");
+   bool task11_result = TestSyntheticManager_RunAll();
+   g_test_reporter.RecordTest(suite11, "TestSyntheticManager_RunAll", task11_result,
+                               task11_result ? "Synthetic manager tests passed" : "Synthetic manager tests failed");
+   g_test_reporter.EndSuite(suite11);
+
+   // Task 12: Queue Manager
+   int suite12 = g_test_reporter.BeginSuite("Task12_Queue_Manager");
+   bool task12_result = TestQueueManager_RunAll();
+   g_test_reporter.RecordTest(suite12, "TestQueueManager_RunAll", task12_result,
+                               task12_result ? "Queue manager tests passed" : "Queue manager tests failed");
+   g_test_reporter.EndSuite(suite12);
+
+   // Task 13: Trailing Manager
+   int suite13 = g_test_reporter.BeginSuite("Task13_Trailing_Manager");
+   bool task13_result = TestTrailing_RunAll();
+   g_test_reporter.RecordTest(suite13, "TestTrailing_RunAll", task13_result,
+                               task13_result ? "Trailing manager tests passed" : "Trailing manager tests failed");
+   g_test_reporter.EndSuite(suite13);
 
    Print("Test execution complete.");
 }

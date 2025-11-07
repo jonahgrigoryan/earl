@@ -36,6 +36,7 @@
 // Files
 #define FILE_CHALLENGE_STATE     (RPEA_STATE_DIR"/challenge_state.json")
 #define FILE_INTENTS             (RPEA_STATE_DIR"/intents.json")
+#define FILE_QUEUE_ACTIONS       (RPEA_STATE_DIR"/queue_actions.csv")
 #define FILE_NEWS_FALLBACK       (RPEA_NEWS_DIR"/calendar_high_impact.csv")
 #define FILE_EMRT_CACHE          (RPEA_EMRT_DIR"/emrt_cache.json")
 #define FILE_EMRT_BETA_GRID      (RPEA_EMRT_DIR"/beta_grid.json")
@@ -64,7 +65,6 @@
 #define DEFAULT_MaxRetryAttempts              3
 #define DEFAULT_InitialRetryDelayMs          300
 #define DEFAULT_RetryBackoffMultiplier       2.0
-#define DEFAULT_QueuedActionTTLMin           5
 #define DEFAULT_MaxSlippagePoints            10.0
 #define DEFAULT_MinHoldSeconds               120
 #define DEFAULT_EnableExecutionLock          true

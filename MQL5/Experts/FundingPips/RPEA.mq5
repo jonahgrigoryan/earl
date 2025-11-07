@@ -10,6 +10,7 @@
 
 // Includes (explicit, no wildcards)
 #include <RPEA/config.mqh>
+#include <RPEA/app_context.mqh>
 #include <RPEA/state.mqh>
 #include <RPEA/timeutils.mqh>
 #include <RPEA/indicators.mqh>
@@ -67,7 +68,9 @@ input int    NewsBufferS                = 300;
 input int    MaxSpreadPoints            = 40;
 input int    MaxSlippagePoints          = 10;
 input int    MinHoldSeconds             = 120;
-input int    QueuedActionTTLMin         = 5;
+input int    QueueTTLMinutes           = DEFAULT_QueueTTLMinutes;
+input int    MaxQueueSize               = DEFAULT_MaxQueueSize;
+input bool   EnableQueuePrioritization  = DEFAULT_EnableQueuePrioritization;
 input string NewsCSVPath                = DEFAULT_NewsCSVPath;
 input int    NewsCSVMaxAgeHours         = DEFAULT_NewsCSVMaxAgeHours;
 input int    BudgetGateLockMs           = 1000;
@@ -124,33 +127,8 @@ input double QL_EpsilonTrain            = 0.10;
 input int    QL_TrainingEpisodes        = 10000;
 input int    QL_SimulationPaths         = 1000;
 
-//+------------------------------------------------------------------+
-// AppContext - runtime context for scheduler and modules
-struct AppContext
-{
-   datetime current_server_time;
-   string   symbols[];
-   int      symbols_count;
-   // session flags (updated by scheduler)
-   bool     session_london;
-   bool     session_newyork;
-   // baselines
-   double   initial_baseline;
-   double   baseline_today;
-   double   equity_snapshot;
-   // anchors for the current day
-   double   baseline_today_e0; // equity at midnight
-   double   baseline_today_b0; // balance at midnight
-   // governance flags
-   bool     trading_paused;
-   bool     permanently_disabled;
-   // persistence anchors
-   datetime server_midnight_ts;
-   datetime timer_last_check;
-};
-
 // Global context
-static AppContext g_ctx;
+AppContext g_ctx;
 OrderEngine g_order_engine;
 
 // Now that AppContext is defined, include session and scheduler modules
@@ -199,15 +177,17 @@ int OnInit()
    News_LoadCsvFallback();
    LogAuditRow("BOOT", "RPEA", 1, "EA boot", "{}");
 
-   // 6) Initialize Order Engine (M3 Task 1)
-   if(!g_order_engine.Init())
-   {
-      Print("[OrderEngine] Failed to initialize Order Engine");
-      return(INIT_FAILED);
-   }
+    // 6) Initialize Order Engine (M3 Task 1)
+    if(!g_order_engine.Init())
+    {
+       Print("[OrderEngine] Failed to initialize Order Engine");
+       return(INIT_FAILED);
+    }
 
-   // 7) Reconcile Order Engine state on startup (M3 Task 16 stub)
-   g_order_engine.ReconcileOnStartup();
+    // 7) Restore queue/trailing state
+   OrderEngine_RestoreStateOnInit(QueueTTLMinutes,
+                                   MaxQueueSize,
+                                   EnableQueuePrioritization);
 
    // 8) Initialize timer (30s)
    EventSetTimer(30);
@@ -278,8 +258,11 @@ void OnTimer()
       Indicators_Refresh(g_ctx, sym);
    }
 
-   // M3 Task 1: Order Engine timer tick (AFTER transaction processing)
-   g_order_engine.OnTimerTick(g_ctx.current_server_time);
+    // M3 Task 1: Order Engine timer tick (AFTER transaction processing)
+    g_order_engine.OnTimerTick(g_ctx.current_server_time);
+
+    // Task 12/13 queue + trailing processing
+    OrderEngine_ProcessQueueAndTrailing();
 
    // Delegate to scheduler (logging-only in M1)
    Scheduler_Tick(g_ctx);

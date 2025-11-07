@@ -3,26 +3,7 @@
 // test_order_engine_budgetgate.mqh - Unit tests for Budget Gate with Position Snapshot Locking (M3 Task 9)
 // References: .kiro/specs/rpea-m3/tasks.md (Task 9), design.md
 
-#ifndef RPEA_TEST_APP_CONTEXT_DEFINED
-#define RPEA_TEST_APP_CONTEXT_DEFINED
-struct AppContext
-{
-   datetime current_server_time;
-   string   symbols[];
-   int      symbols_count;
-   bool     session_london;
-   bool     session_newyork;
-   double   initial_baseline;
-   double   baseline_today;
-   double   equity_snapshot;
-   double   baseline_today_e0;
-   double   baseline_today_b0;
-   bool     trading_paused;
-   bool     permanently_disabled;
-   datetime server_midnight_ts;
-   datetime timer_last_check;
-};
-#endif // RPEA_TEST_APP_CONTEXT_DEFINED
+#include <RPEA/app_context.mqh>
 
 #include <RPEA/config.mqh>
 #include <RPEA/equity_guardian.mqh>
