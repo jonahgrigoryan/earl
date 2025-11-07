@@ -112,11 +112,19 @@ void Persistence_EnsurePlaceholderFiles()
 {
    // State files
    int h;
-   h = FileOpen(FILE_INTENTS, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+    h = FileOpen(FILE_INTENTS, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+    if(h!=INVALID_HANDLE)
+    {
+       if(FileSize(h)==0)
+          FileWrite(h, "{\"intents\":[],\"queued_actions\":[]}");
+       FileClose(h);
+    }
+
+   h = FileOpen(FILE_QUEUE_ACTIONS, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
    if(h!=INVALID_HANDLE)
    {
       if(FileSize(h)==0)
-         FileWrite(h, "{\"intents\":[],\"queued_actions\":[]}");
+         FileWrite(h, "id,ticket,action_type,symbol,created_at,expires_at,priority,new_sl,new_tp,context,retry_count,intent_id,intent_key");
       FileClose(h);
    }
    // News CSV fallback
@@ -174,7 +182,7 @@ void Persistence_EnsurePlaceholderFiles()
          FileWrite(h, "MaxSpreadPoints=40");
          FileWrite(h, "MaxSlippagePoints=10");
          FileWrite(h, "MinHoldSeconds=120");
-         FileWrite(h, "QueuedActionTTLMin=5");
+         FileWrite(h, "QueueTTLMinutes=5");
          FileWrite(h, "UseServerMidnightBaseline=true");
          FileWrite(h, "ServerToCEST_OffsetMinutes=0");
          FileWrite(h, "InpSymbols=EURUSD;XAUUSD");

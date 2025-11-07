@@ -36,6 +36,7 @@
 // Files
 #define FILE_CHALLENGE_STATE     (RPEA_STATE_DIR"/challenge_state.json")
 #define FILE_INTENTS             (RPEA_STATE_DIR"/intents.json")
+#define FILE_QUEUE_ACTIONS       (RPEA_STATE_DIR"/queue_actions.csv")
 #define FILE_NEWS_FALLBACK       (RPEA_NEWS_DIR"/calendar_high_impact.csv")
 #define FILE_EMRT_CACHE          (RPEA_EMRT_DIR"/emrt_cache.json")
 #define FILE_EMRT_BETA_GRID      (RPEA_EMRT_DIR"/beta_grid.json")
@@ -64,7 +65,6 @@
 #define DEFAULT_MaxRetryAttempts              3
 #define DEFAULT_InitialRetryDelayMs          300
 #define DEFAULT_RetryBackoffMultiplier       2.0
-#define DEFAULT_QueuedActionTTLMin           5
 #define DEFAULT_MaxSlippagePoints            10.0
 #define DEFAULT_MinHoldSeconds               120
 #define DEFAULT_EnableExecutionLock          true
@@ -76,7 +76,7 @@
 #define DEFAULT_AuditLogPath                 "Files/RPEA/logs/"
 #define DEFAULT_LogBufferSize                1000
 
-// Synthetic Manager Configuration
+// Synthetic Manager Configuration (Task 11 acceptance §Synthetic Manager Interface)
 #define DEFAULT_UseXAUEURProxy               true
 #define DEFAULT_ReplicationMarginThreshold   0.6
 #define DEFAULT_SyntheticBarCacheSize        1000
@@ -94,6 +94,7 @@
 #define DEFAULT_NewsCSVPath                  "Files/RPEA/news/calendar_high_impact.csv"
 #define DEFAULT_NewsCSVMaxAgeHours           24
 #define DEFAULT_BudgetGateLockMs             1000
+#define DEFAULT_RiskGateHeadroom             0.90
 #define DEFAULT_MaxQueueSize                 1000
 #define DEFAULT_QueueTTLMinutes              5
 #define DEFAULT_EnableQueuePrioritization    true

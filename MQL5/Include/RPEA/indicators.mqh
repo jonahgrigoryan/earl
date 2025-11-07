@@ -3,6 +3,8 @@
 // indicators.mqh - Indicator handles and init (M1 stubs)
 // References: finalspec.md (Session Statistics)
 
+#include <RPEA/synthetic.mqh>
+
 struct AppContext;
 
 struct IndicatorsContext
@@ -52,6 +54,166 @@ struct IndicatorSnapshot
 
 // Static storage sized by Symbols list during init
 IndicatorSymbolSlot g_indicator_slots[];
+
+bool Indicators_GetSyntheticBars(const ENUM_TIMEFRAMES tf, const int count, SyntheticBar &out[])
+{
+   if(count <= 0)
+      return false;
+
+   if(g_synthetic_manager.GetCachedBars(SYNTH_SYMBOL_XAUEUR, tf, out, count))
+      return true;
+
+   if(!g_synthetic_manager.BuildSyntheticBars(SYNTH_SYMBOL_XAUEUR, tf, count))
+      return false;
+
+   return g_synthetic_manager.GetCachedBars(SYNTH_SYMBOL_XAUEUR, tf, out, count);
+}
+
+double Indicators_ComputeATRFromBars(const SyntheticBar &bars[], const int count, const int period)
+{
+   if(period <= 0 || count <= period)
+      return 0.0;
+
+   double sum = 0.0;
+   for(int i=count - period;i<count;i++)
+   {
+      int prev = i - 1;
+      if(prev < 0)
+         return 0.0;
+      double high = bars[i].high;
+      double low = bars[i].low;
+      double prev_close = bars[prev].close;
+      double tr1 = high - low;
+      double tr2 = MathAbs(high - prev_close);
+      double tr3 = MathAbs(low - prev_close);
+      double tr = MathMax(tr1, MathMax(tr2, tr3));
+      sum += tr;
+   }
+
+   return sum / period;
+}
+
+double Indicators_ComputeEMAFromBars(const SyntheticBar &bars[], const int count, const int period)
+{
+   if(period <= 0 || count < period)
+      return 0.0;
+
+   double multiplier = 2.0 / (period + 1.0);
+   int start = count - period;
+
+   double ema = 0.0;
+   for(int i=start;i<count;i++)
+      ema += bars[i].close;
+   ema /= (double)period;
+
+   for(int j=start + 1;j<count;j++)
+   {
+      double price = bars[j].close;
+      ema = (price - ema) * multiplier + ema;
+   }
+
+   return ema;
+}
+
+double Indicators_ComputeRSIFromBars(const SyntheticBar &bars[], const int count, const int period)
+{
+   if(period <= 0 || count <= period)
+      return 0.0;
+
+   double gain = 0.0;
+   double loss = 0.0;
+   int start = count - period;
+
+   for(int i=start;i<count;i++)
+   {
+      int prev = i - 1;
+      if(prev < 0)
+         continue;
+      double change = bars[i].close - bars[prev].close;
+      if(change > 0.0)
+         gain += change;
+      else
+         loss -= change;
+   }
+
+   gain /= (double)period;
+   loss /= (double)period;
+
+   if(loss == 0.0)
+      return 100.0;
+   if(gain == 0.0)
+      return 0.0;
+
+   double rs = gain / loss;
+   return 100.0 - (100.0 / (1.0 + rs));
+}
+
+bool Indicators_RefreshSyntheticXAUEURSlot(IndicatorSymbolSlot &slot)
+{
+   const int daily_period = 14;
+   const int daily_required = daily_period + 1;
+   SyntheticBar daily_bars[];
+
+   if(!Indicators_GetSyntheticBars(PERIOD_D1, daily_required, daily_bars))
+   {
+      Print("[Synthetic] XAUEUR unavailable (D1 bars)");
+      slot.atr_d1 = 0.0;
+      slot.has_atr = false;
+      slot.open_d1_prev = 0.0;
+      slot.high_d1_prev = 0.0;
+      slot.low_d1_prev = 0.0;
+      slot.close_d1_prev = 0.0;
+      slot.has_ohlc = false;
+      return false;
+   }
+
+   int daily_count = ArraySize(daily_bars);
+   slot.atr_d1 = Indicators_ComputeATRFromBars(daily_bars, daily_count, daily_period);
+   slot.has_atr = (slot.atr_d1 > 0.0);
+
+   if(daily_count >= 2)
+   {
+      int prev_idx = daily_count - 2;
+      slot.open_d1_prev = daily_bars[prev_idx].open;
+      slot.high_d1_prev = daily_bars[prev_idx].high;
+      slot.low_d1_prev = daily_bars[prev_idx].low;
+      slot.close_d1_prev = daily_bars[prev_idx].close;
+      slot.has_ohlc = true;
+   }
+   else
+   {
+      slot.open_d1_prev = 0.0;
+      slot.high_d1_prev = 0.0;
+      slot.low_d1_prev = 0.0;
+      slot.close_d1_prev = 0.0;
+      slot.has_ohlc = false;
+   }
+
+   const int ma_period = 20;
+   const int rsi_period = 14;
+   int hourly_required = MathMax(ma_period, rsi_period) + 10;
+   SyntheticBar hourly_bars[];
+
+   if(!Indicators_GetSyntheticBars(PERIOD_H1, hourly_required, hourly_bars))
+   {
+      Print("[Synthetic] XAUEUR unavailable (H1 bars)");
+      slot.ma20_h1 = 0.0;
+      slot.has_ma = false;
+      slot.rsi_h1 = 0.0;
+      slot.has_rsi = false;
+      return false;
+   }
+
+   int hourly_count = ArraySize(hourly_bars);
+   slot.ma20_h1 = Indicators_ComputeEMAFromBars(hourly_bars, hourly_count, ma_period);
+   slot.has_ma = (slot.ma20_h1 > 0.0);
+
+   slot.rsi_h1 = Indicators_ComputeRSIFromBars(hourly_bars, hourly_count, rsi_period);
+   slot.has_rsi = (slot.rsi_h1 >= 0.0 && slot.rsi_h1 <= 100.0);
+
+   slot.last_refresh = TimeCurrent();
+   return (slot.has_atr && slot.has_ma && slot.has_rsi && slot.has_ohlc);
+}
 
 // Helper: release indicator handles for a slot index
 void Indicators_ReleaseSlot(const int idx)
@@ -123,25 +285,28 @@ void Indicators_Init(const AppContext &ctx)
 
    for(int i=0;i<ctx.symbols_count;i++)
    {
-      g_indicator_slots[i].symbol = ctx.symbols[i];
-      g_indicator_slots[i].handle_ATR_D1 = INVALID_HANDLE;
-      g_indicator_slots[i].handle_MA20_H1 = INVALID_HANDLE;
-      g_indicator_slots[i].handle_RSI_H1 = INVALID_HANDLE;
-      g_indicator_slots[i].atr_d1 = 0.0;
-      g_indicator_slots[i].ma20_h1 = 0.0;
-      g_indicator_slots[i].rsi_h1 = 0.0;
-      g_indicator_slots[i].open_d1_prev = 0.0;
-      g_indicator_slots[i].high_d1_prev = 0.0;
-      g_indicator_slots[i].low_d1_prev = 0.0;
-      g_indicator_slots[i].close_d1_prev = 0.0;
-      g_indicator_slots[i].last_refresh = 0;
-      g_indicator_slots[i].has_atr = false;
-      g_indicator_slots[i].has_ma = false;
-      g_indicator_slots[i].has_rsi = false;
-      g_indicator_slots[i].has_ohlc = false;
+        g_indicator_slots[i].symbol = ctx.symbols[i];
+        g_indicator_slots[i].handle_ATR_D1 = INVALID_HANDLE;
+        g_indicator_slots[i].handle_MA20_H1 = INVALID_HANDLE;
+        g_indicator_slots[i].handle_RSI_H1 = INVALID_HANDLE;
+        g_indicator_slots[i].atr_d1 = 0.0;
+        g_indicator_slots[i].ma20_h1 = 0.0;
+        g_indicator_slots[i].rsi_h1 = 0.0;
+        g_indicator_slots[i].open_d1_prev = 0.0;
+        g_indicator_slots[i].high_d1_prev = 0.0;
+        g_indicator_slots[i].low_d1_prev = 0.0;
+        g_indicator_slots[i].close_d1_prev = 0.0;
+        g_indicator_slots[i].last_refresh = 0;
+        g_indicator_slots[i].has_atr = false;
+        g_indicator_slots[i].has_ma = false;
+        g_indicator_slots[i].has_rsi = false;
+        g_indicator_slots[i].has_ohlc = false;
 
-      if(g_indicator_slots[i].symbol == "")
-         continue;
+        if(g_indicator_slots[i].symbol == "")
+           continue;
+
+        if(g_indicator_slots[i].symbol == SYNTH_SYMBOL_XAUEUR)
+           continue;
 
       ResetLastError();
       g_indicator_slots[i].handle_ATR_D1 = iATR(g_indicator_slots[i].symbol, PERIOD_D1, 14);
@@ -177,6 +342,13 @@ void Indicators_Refresh(const AppContext &ctx, const string symbol)
    int idx = Indicators_FindSlot(symbol);
    if(idx < 0)
       return;
+
+    if(symbol == SYNTH_SYMBOL_XAUEUR)
+    {
+       if(!Indicators_RefreshSyntheticXAUEURSlot(g_indicator_slots[idx]))
+          Print("[Synthetic] XAUEUR unavailable for indicator refresh");
+       return;
+    }
 
    double value = 0.0;
    if(Indicators_CopyLatestValue(g_indicator_slots[idx].handle_ATR_D1, value))

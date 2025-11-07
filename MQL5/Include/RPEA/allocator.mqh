@@ -316,6 +316,8 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
 
    EquityBudgetGateResult budget;
    budget.approved = false;
+   budget.gate_pass = false;
+   budget.gating_reason = "";
    budget.room_available = 0.0;
    budget.open_risk = 0.0;
    budget.pending_risk = 0.0;
@@ -326,7 +328,7 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
      budget = Equity_EvaluateBudgetGate(ctx, worst_case);
      if(budget.calculation_error)
         rejection = "budget_calc";
-     else if(!budget.approved)
+     else if(!budget.gate_pass)
      {
         // Attempt headroom-capped scaling instead of immediate reject
         if(MathIsValidNumber(budget.room_available) && budget.room_available > 0.0 && MathIsValidNumber(worst_case) && worst_case > 0.0)
@@ -352,7 +354,7 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
                  worst_case = MathAbs(volume * value_per_point * points2);
                  // Re-evaluate budget gate
                  EquityBudgetGateResult budget2 = Equity_EvaluateBudgetGate(ctx, worst_case);
-                 if(!budget2.calculation_error && budget2.approved)
+                 if(!budget2.calculation_error && budget2.gate_pass)
                  {
                     budget = budget2;
                     rejection = "";

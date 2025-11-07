@@ -19,6 +19,9 @@
 #define MicroRiskPct           0.10
 #define GivebackCapDayPct      0.50
 #define MinStopPoints          1
+#define NewsBufferS            300
+#define NewsCSVPath            "Files/RPEA/news/calendar_high_impact.csv"
+#define NewsCSVMaxAgeHours     24
 #define RPEA_ORDER_ENGINE_SKIP_RISK
 #define RPEA_ORDER_ENGINE_SKIP_EQUITY
 
@@ -31,6 +34,8 @@
 #include "test_order_engine_intent.mqh"
 #include "test_order_engine_oco.mqh"
 #include "test_order_engine_partialfills.mqh"
+#include "test_news_csv.mqh"
+#include "test_queue_manager.mqh"
 
 double Equity_CalcRiskDollars(const string symbol,
                               const double volume,
@@ -84,7 +89,10 @@ void OnStart()
    bool intent_success = TestOrderEngineIntent_RunAll();
    bool oco_success = TestOrderEngineOCO_RunAll();
    bool partialfills_success = TestOrderEnginePartialFills_RunAll();
-   if(!success || !normalization_success || !limits_success || !retry_success || !market_success || !intent_success || !oco_success || !partialfills_success)
+    bool news_success = TestNewsCsvFallback_RunAll();
+    bool queue_success = TestQueueManager_RunAll();
+    if(!success || !normalization_success || !limits_success || !retry_success ||
+       !market_success || !intent_success || !oco_success || !partialfills_success || !news_success || !queue_success)
    {
       Print("Order Engine Tests reported failures.");
    }
