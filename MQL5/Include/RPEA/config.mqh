@@ -75,6 +75,7 @@
 #define DEFAULT_EnableDetailedLogging        true
 #define DEFAULT_AuditLogPath                 "Files/RPEA/logs/"
 #define DEFAULT_LogBufferSize                1000
+#define DEFAULT_CorrelationFallbackRho       0.30
 
 // Synthetic Manager Configuration (Task 11 acceptance §Synthetic Manager Interface)
 #define DEFAULT_UseXAUEURProxy               true
