@@ -99,15 +99,6 @@ datetime News_GetNowUtc()
    return TimeGMT();
 }
 
-int News_GetLocalUtcOffsetSeconds()
-{
-   const datetime local_now = TimeLocal();
-   const datetime utc_now = TimeGMT();
-   if(local_now > 0 && utc_now > 0)
-      return (int)(local_now - utc_now);
-   return 0;
-}
-
 bool News_GetFileMTime(const string path, datetime &out_mtime)
 {
    int handle = FileOpen(path, FILE_READ|FILE_BIN);
@@ -159,6 +150,19 @@ string News_NormalizeSymbol(const string symbol_raw)
    StringTrimLeft(value);
    StringTrimRight(value);
    return value;
+}
+
+datetime News_EncodeUtc(const MqlDateTime &dt)
+{
+   if(dt.year < 1970)
+      return 0;
+   int a = (14 - dt.mon) / 12;
+   int y = dt.year + 4800 - a;
+   int m = dt.mon + 12 * a - 3;
+   int julian = dt.day + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045;
+   long days = (long)julian - 2440588;
+   long seconds = (long)dt.hour * 3600 + (long)dt.min * 60 + (long)dt.sec;
+   return (datetime)(days * 86400 + seconds);
 }
 
 int News_SplitSymbols(const string field, string &tokens[])
@@ -221,11 +225,9 @@ datetime News_ParseTimestamp(const string timestamp_str, bool &ok)
    dt.sec   = (int)StringToInteger(StringSubstr(time_part, 6, 2));
    if(dt.year < 1970 || dt.mon < 1 || dt.day < 1)
       return 0;
-   datetime terminal_time = StructToTime(dt);
-   if(terminal_time <= 0)
+   datetime utc_time = News_EncodeUtc(dt);
+   if(utc_time <= 0)
       return 0;
-   const int terminal_offset = News_GetLocalUtcOffsetSeconds();
-   datetime utc_time = terminal_time + terminal_offset;
    ok = true;
    return utc_time;
 }
@@ -533,6 +535,15 @@ bool News_IsBlocked(const string symbol)
          return true;
    }
    return false;
+}
+
+string News_GetWindowState(const string symbol, const bool is_protective)
+{
+   if(StringLen(symbol) == 0)
+      return "CLEAR";
+   if(News_IsBlocked(symbol))
+      return (is_protective ? "PROTECTIVE_ONLY" : "BLOCKED");
+   return "CLEAR";
 }
 
 void News_PostNewsStabilization()

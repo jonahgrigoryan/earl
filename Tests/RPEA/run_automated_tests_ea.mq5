@@ -41,6 +41,7 @@ input double RiskGateHeadroom           = 0.90;
 // Include test reporter
 #include <RPEA/app_context.mqh>
 #include <RPEA/test_reporter.mqh>
+#include <RPEA/logging.mqh>
 
 AppContext g_ctx;
 
@@ -65,6 +66,8 @@ AppContext g_ctx;
 #include "test_queue_manager.mqh"
 // Trailing manager tests (Task 13)
 #include "test_trailing.mqh"
+// Audit logger tests (Task 14)
+#include "test_logging.mqh"
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -116,7 +119,7 @@ int OnInit()
    Print("==========================================");
    Print("RPEA AUTOMATED TEST RUNNER");
    Print("==========================================");
-
+   AuditLogger_Init(RPEA_LOGS_DIR, DEFAULT_LogBufferSize, true);
    g_test_reporter.SetOutputPath("RPEA/test_results/test_results.json");
    g_test_reporter.SetVerbose(true);
 
@@ -150,6 +153,7 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+   AuditLogger_Shutdown();
    if(!g_tests_executed)
    {
       Print("[WARNING] Tests were not executed before shutdown");
@@ -255,6 +259,13 @@ void RunAllTests()
    g_test_reporter.RecordTest(suite13, "TestTrailing_RunAll", task13_result,
                                task13_result ? "Trailing manager tests passed" : "Trailing manager tests failed");
    g_test_reporter.EndSuite(suite13);
+
+   // Task 14: Audit Logger
+   int suite14 = g_test_reporter.BeginSuite("Task14_Audit_Logger");
+   bool task14_result = TestLogging_RunAll();
+   g_test_reporter.RecordTest(suite14, "TestLogging_RunAll", task14_result,
+                               task14_result ? "Audit logger tests passed" : "Audit logger tests failed");
+   g_test_reporter.EndSuite(suite14);
 
    Print("Test execution complete.");
 }

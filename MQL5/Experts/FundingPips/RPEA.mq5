@@ -71,6 +71,9 @@ input int    MinHoldSeconds             = 120;
 input int    QueueTTLMinutes           = DEFAULT_QueueTTLMinutes;
 input int    MaxQueueSize               = DEFAULT_MaxQueueSize;
 input bool   EnableQueuePrioritization  = DEFAULT_EnableQueuePrioritization;
+input bool   EnableDetailedLogging      = DEFAULT_EnableDetailedLogging;
+input int    LogBufferSize              = DEFAULT_LogBufferSize;
+input string AuditLogPath               = DEFAULT_AuditLogPath;
 input string NewsCSVPath                = DEFAULT_NewsCSVPath;
 input int    NewsCSVMaxAgeHours         = DEFAULT_NewsCSVMaxAgeHours;
 input int    BudgetGateLockMs           = 1000;
@@ -110,7 +113,7 @@ input int    MaxPendingsPerSymbol       = 2;
 input double BWISC_ConfCut              = 0.70;
 input double MR_ConfCut                 = 0.80;
 input int    EMRT_FastThresholdPct      = 40;
-input double CorrelationFallbackRho     = 0.50;
+input double CorrelationFallbackRho     = 0.30;
 input double MR_RiskPct_Default         = 0.90;
 input int    MR_TimeStopMin             = 60;
 input int    MR_TimeStopMax             = 90;
@@ -173,6 +176,7 @@ int OnInit()
    // 5) Ensure folders/logs exist and write boot line
    Persistence_EnsureFolders();
    Persistence_EnsurePlaceholderFiles();
+   AuditLogger_Init(AuditLogPath, LogBufferSize, EnableDetailedLogging);
    // Load news CSV fallback if present
    News_LoadCsvFallback();
    LogAuditRow("BOOT", "RPEA", 1, "EA boot", "{}");
@@ -201,11 +205,12 @@ void OnDeinit(const int reason)
 {
     g_order_engine.OnShutdown();
 
-    g_synthetic_manager.Clear();
+   g_synthetic_manager.Clear();
 
    EventKillTimer();
    Persistence_Flush();
    LogAuditRow("SHUTDOWN", "RPEA", 1, "EA deinit", "{}");
+   AuditLogger_Shutdown();
 }
 
 //+------------------------------------------------------------------+

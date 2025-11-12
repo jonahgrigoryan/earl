@@ -34,6 +34,24 @@ struct OrderIntent
    string           error_messages[];
    ulong            executed_tickets[];
    double           partial_fills[];
+   double           confidence;
+   double           efficiency;
+   double           rho_est;
+   double           est_value;
+   double           expected_hold_minutes;
+   double           gate_open_risk;
+   double           gate_pending_risk;
+   double           gate_next_risk;
+   double           room_today;
+   double           room_overall;
+   bool             gate_pass;
+   string           gating_reason;
+   string           news_window_state;
+   string           decision_context;
+   ulong            tickets_snapshot[];
+   double           last_executed_price;
+   double           last_filled_volume;
+   double           hold_time_seconds;
 };
 
 struct PersistedQueuedAction
@@ -47,6 +65,20 @@ struct PersistedQueuedAction
    datetime queued_time;
    datetime expires_time;
    string   trigger_condition;
+   string   intent_id;
+   string   intent_key;
+   double   queued_confidence;
+   double   queued_efficiency;
+   double   rho_est;
+   double   est_value;
+   double   gate_open_risk;
+   double   gate_pending_risk;
+   double   gate_next_risk;
+   double   room_today;
+   double   room_overall;
+   bool     gate_pass;
+   string   gating_reason;
+   string   news_window_state;
 };
 
 struct IntentJournal
@@ -812,6 +844,7 @@ bool Persistence_OrderIntentToJson(const OrderIntent &intent, string &out_json)
    string error_messages_json = Persistence_JoinJsonStringArray(intent.error_messages);
    string tickets_json = Persistence_JoinJsonULongArray(intent.executed_tickets);
    string partials_json = Persistence_JoinJsonArray(intent.partial_fills);
+   string ticket_snap_json = Persistence_JoinJsonULongArray(intent.tickets_snapshot);
 
    out_json = "{";
    out_json += "\"intent_id\":\"" + Persistence_EscapeJson(intent.intent_id) + "\",";
@@ -831,7 +864,25 @@ bool Persistence_OrderIntentToJson(const OrderIntent &intent, string &out_json)
    out_json += "\"reasoning\":\"" + Persistence_EscapeJson(intent.reasoning) + "\",";
    out_json += "\"error_messages\":" + error_messages_json + ",";
    out_json += "\"executed_tickets\":" + tickets_json + ",";
-   out_json += "\"partial_fills\":" + partials_json;
+   out_json += "\"partial_fills\":" + partials_json + ",";
+   out_json += "\"confidence\":" + DoubleToString(intent.confidence, 4) + ",";
+   out_json += "\"efficiency\":" + DoubleToString(intent.efficiency, 4) + ",";
+   out_json += "\"rho_est\":" + DoubleToString(intent.rho_est, 4) + ",";
+   out_json += "\"est_value\":" + DoubleToString(intent.est_value, 4) + ",";
+   out_json += "\"expected_hold_minutes\":" + DoubleToString(intent.expected_hold_minutes, 2) + ",";
+   out_json += "\"gate_open_risk\":" + DoubleToString(intent.gate_open_risk, 4) + ",";
+   out_json += "\"gate_pending_risk\":" + DoubleToString(intent.gate_pending_risk, 4) + ",";
+   out_json += "\"gate_next_risk\":" + DoubleToString(intent.gate_next_risk, 4) + ",";
+   out_json += "\"room_today\":" + DoubleToString(intent.room_today, 4) + ",";
+   out_json += "\"room_overall\":" + DoubleToString(intent.room_overall, 4) + ",";
+   out_json += "\"gate_pass\":" + (intent.gate_pass ? "true" : "false") + ",";
+   out_json += "\"gating_reason\":\"" + Persistence_EscapeJson(intent.gating_reason) + "\",";
+   out_json += "\"news_window_state\":\"" + Persistence_EscapeJson(intent.news_window_state) + "\",";
+   out_json += "\"decision_context\":\"" + Persistence_EscapeJson(intent.decision_context) + "\",";
+   out_json += "\"tickets_snapshot\":" + ticket_snap_json + ",";
+   out_json += "\"last_executed_price\":" + DoubleToString(intent.last_executed_price, 5) + ",";
+   out_json += "\"last_filled_volume\":" + DoubleToString(intent.last_filled_volume, 4) + ",";
+   out_json += "\"hold_time_seconds\":" + DoubleToString(intent.hold_time_seconds, 2);
    out_json += "}";
    return true;
 }
@@ -913,6 +964,56 @@ bool Persistence_OrderIntentFromJson(const string json, OrderIntent &out_intent)
    Persistence_ParseArrayOfULong(json, "executed_tickets", out_intent.executed_tickets);
    Persistence_ParseArrayOfDouble(json, "partial_fills", out_intent.partial_fills);
 
+   out_intent.confidence = 0.0;
+   if(Persistence_ParseNumberField(json, "confidence", dbl_value))
+      out_intent.confidence = dbl_value;
+   out_intent.efficiency = 0.0;
+   if(Persistence_ParseNumberField(json, "efficiency", dbl_value))
+      out_intent.efficiency = dbl_value;
+   out_intent.rho_est = 0.0;
+   if(Persistence_ParseNumberField(json, "rho_est", dbl_value))
+      out_intent.rho_est = dbl_value;
+   out_intent.est_value = 0.0;
+   if(Persistence_ParseNumberField(json, "est_value", dbl_value))
+      out_intent.est_value = dbl_value;
+   out_intent.expected_hold_minutes = 0.0;
+   if(Persistence_ParseNumberField(json, "expected_hold_minutes", dbl_value))
+      out_intent.expected_hold_minutes = dbl_value;
+   out_intent.gate_open_risk = 0.0;
+   if(Persistence_ParseNumberField(json, "gate_open_risk", dbl_value))
+      out_intent.gate_open_risk = dbl_value;
+   out_intent.gate_pending_risk = 0.0;
+   if(Persistence_ParseNumberField(json, "gate_pending_risk", dbl_value))
+      out_intent.gate_pending_risk = dbl_value;
+   out_intent.gate_next_risk = 0.0;
+   if(Persistence_ParseNumberField(json, "gate_next_risk", dbl_value))
+      out_intent.gate_next_risk = dbl_value;
+   out_intent.room_today = 0.0;
+   if(Persistence_ParseNumberField(json, "room_today", dbl_value))
+      out_intent.room_today = dbl_value;
+   out_intent.room_overall = 0.0;
+   if(Persistence_ParseNumberField(json, "room_overall", dbl_value))
+      out_intent.room_overall = dbl_value;
+   out_intent.gate_pass = false;
+   if(Persistence_ParseStringField(json, "gate_pass", value))
+      out_intent.gate_pass = (StringCompare(value, "true") == 0 || value == "1");
+   if(Persistence_ParseStringField(json, "gating_reason", value))
+      out_intent.gating_reason = value;
+   if(Persistence_ParseStringField(json, "news_window_state", value))
+      out_intent.news_window_state = value;
+   if(Persistence_ParseStringField(json, "decision_context", value))
+      out_intent.decision_context = value;
+   Persistence_ParseArrayOfULong(json, "tickets_snapshot", out_intent.tickets_snapshot);
+   out_intent.last_executed_price = 0.0;
+   if(Persistence_ParseNumberField(json, "last_executed_price", dbl_value))
+      out_intent.last_executed_price = dbl_value;
+   out_intent.last_filled_volume = 0.0;
+   if(Persistence_ParseNumberField(json, "last_filled_volume", dbl_value))
+      out_intent.last_filled_volume = dbl_value;
+   out_intent.hold_time_seconds = 0.0;
+   if(Persistence_ParseNumberField(json, "hold_time_seconds", dbl_value))
+      out_intent.hold_time_seconds = dbl_value;
+
    return true;
 }
 
@@ -927,7 +1028,21 @@ bool Persistence_ActionToJson(const PersistedQueuedAction &action, string &out_j
    out_json += "\"validation_threshold\":" + DoubleToString(action.validation_threshold, 4) + ",";
    out_json += "\"queued_time\":\"" + Persistence_EscapeJson(Persistence_FormatIso8601(action.queued_time)) + "\",";
    out_json += "\"expires_time\":\"" + Persistence_EscapeJson(Persistence_FormatIso8601(action.expires_time)) + "\",";
-  out_json += "\"trigger_condition\":\"" + Persistence_EscapeJson(action.trigger_condition) + "\"";
+   out_json += "\"trigger_condition\":\"" + Persistence_EscapeJson(action.trigger_condition) + "\",";
+   out_json += "\"intent_id\":\"" + Persistence_EscapeJson(action.intent_id) + "\",";
+   out_json += "\"intent_key\":\"" + Persistence_EscapeJson(action.intent_key) + "\",";
+   out_json += "\"queued_confidence\":" + DoubleToString(action.queued_confidence, 4) + ",";
+   out_json += "\"queued_efficiency\":" + DoubleToString(action.queued_efficiency, 4) + ",";
+   out_json += "\"rho_est\":" + DoubleToString(action.rho_est, 4) + ",";
+   out_json += "\"est_value\":" + DoubleToString(action.est_value, 4) + ",";
+   out_json += "\"gate_open_risk\":" + DoubleToString(action.gate_open_risk, 4) + ",";
+   out_json += "\"gate_pending_risk\":" + DoubleToString(action.gate_pending_risk, 4) + ",";
+   out_json += "\"gate_next_risk\":" + DoubleToString(action.gate_next_risk, 4) + ",";
+   out_json += "\"room_today\":" + DoubleToString(action.room_today, 4) + ",";
+   out_json += "\"room_overall\":" + DoubleToString(action.room_overall, 4) + ",";
+   out_json += "\"gate_pass\":" + (action.gate_pass ? "true" : "false") + ",";
+   out_json += "\"gating_reason\":\"" + Persistence_EscapeJson(action.gating_reason) + "\",";
+   out_json += "\"news_window_state\":\"" + Persistence_EscapeJson(action.news_window_state) + "\"";
    out_json += "}";
    return true;
 }
@@ -955,6 +1070,34 @@ bool Persistence_ActionFromJson(const string json, PersistedQueuedAction &out_ac
       out_action.expires_time = Persistence_ParseIso8601(str_value);
    if(Persistence_ParseStringField(json, "trigger_condition", str_value))
       out_action.trigger_condition = str_value;
+   if(Persistence_ParseStringField(json, "intent_id", str_value))
+      out_action.intent_id = str_value;
+   if(Persistence_ParseStringField(json, "intent_key", str_value))
+      out_action.intent_key = str_value;
+   if(Persistence_ParseNumberField(json, "queued_confidence", dbl_value))
+      out_action.queued_confidence = dbl_value;
+   if(Persistence_ParseNumberField(json, "queued_efficiency", dbl_value))
+      out_action.queued_efficiency = dbl_value;
+   if(Persistence_ParseNumberField(json, "rho_est", dbl_value))
+      out_action.rho_est = dbl_value;
+   if(Persistence_ParseNumberField(json, "est_value", dbl_value))
+      out_action.est_value = dbl_value;
+   if(Persistence_ParseNumberField(json, "gate_open_risk", dbl_value))
+      out_action.gate_open_risk = dbl_value;
+   if(Persistence_ParseNumberField(json, "gate_pending_risk", dbl_value))
+      out_action.gate_pending_risk = dbl_value;
+   if(Persistence_ParseNumberField(json, "gate_next_risk", dbl_value))
+      out_action.gate_next_risk = dbl_value;
+   if(Persistence_ParseNumberField(json, "room_today", dbl_value))
+      out_action.room_today = dbl_value;
+   if(Persistence_ParseNumberField(json, "room_overall", dbl_value))
+      out_action.room_overall = dbl_value;
+   if(Persistence_ParseStringField(json, "gate_pass", str_value))
+      out_action.gate_pass = (StringCompare(str_value, "true") == 0 || str_value == "1");
+   if(Persistence_ParseStringField(json, "gating_reason", str_value))
+      out_action.gating_reason = str_value;
+   if(Persistence_ParseStringField(json, "news_window_state", str_value))
+      out_action.news_window_state = str_value;
    return true;
 }
 

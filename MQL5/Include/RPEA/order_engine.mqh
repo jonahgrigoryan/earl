@@ -9,9 +9,16 @@
 #include <RPEA/persistence.mqh>
 #include <RPEA/queue.mqh>
 #include <RPEA/trailing.mqh>
+#include <RPEA/news.mqh>
 #ifndef RPEA_ORDER_ENGINE_SKIP_SESSIONS
 // Sessions used for cutoff alignment (read-only helpers)
 #include <RPEA/sessions.mqh>
+#endif
+
+#ifdef CorrelationFallbackRho
+#define OE_CORRELATION_FALLBACK CorrelationFallbackRho
+#else
+#define OE_CORRELATION_FALLBACK DEFAULT_CorrelationFallbackRho
 #endif
 
 static bool   g_order_engine_global_lock = false;
@@ -536,6 +543,17 @@ private:
    ulong  HashString64(const string text) const;
    string HashToHex(const ulong value) const;
    bool   IntentExists(const string accept_key, int &out_index) const;
+   void   Audit_LogIntentEvent(const OrderIntent &intent,
+                               const string action_suffix,
+                               const string decision,
+                               const double requested_price,
+                               const double executed_price,
+                               const double requested_vol,
+                               const double filled_vol,
+                               const double remaining_vol,
+                               const int retry_count,
+                               const string gating_reason_override = "",
+                               const string news_state_override = "");
    bool   FindIntentByTicket(const ulong ticket,
                              string &out_intent_id,
                              string &out_accept_key) const;
@@ -1132,6 +1150,24 @@ public:
       ArrayResize(intent_record.error_messages, 0);
       ArrayResize(intent_record.executed_tickets, 0);
       ArrayResize(intent_record.partial_fills, 0);
+      intent_record.confidence = 0.0;
+      intent_record.efficiency = 0.0;
+      intent_record.rho_est = OE_CORRELATION_FALLBACK;
+      intent_record.est_value = 0.0;
+      intent_record.expected_hold_minutes = 0.0;
+      intent_record.gate_open_risk = 0.0;
+      intent_record.gate_pending_risk = 0.0;
+      intent_record.gate_next_risk = 0.0;
+      intent_record.room_today = 0.0;
+      intent_record.room_overall = 0.0;
+      intent_record.gate_pass = false;
+      intent_record.gating_reason = "";
+      intent_record.news_window_state = News_GetWindowState(request.symbol, false);
+      intent_record.decision_context = request.comment;
+      ArrayResize(intent_record.tickets_snapshot, 0);
+      intent_record.last_executed_price = 0.0;
+      intent_record.last_filled_volume = 0.0;
+      intent_record.hold_time_seconds = 0.0;
 
   intent_index = ArraySize(m_intent_journal.intents);
   ArrayResize(m_intent_journal.intents, intent_index + 1);
@@ -1162,6 +1198,17 @@ public:
                                           reason_sanitized);
       LogDecision("OrderEngine", "INTENT_ACCEPT", intent_fields);
       LogAuditRow("ORDER_INTENT", "OrderEngine", LOG_INFO, "Intent recorded", intent_fields);
+      Audit_LogIntentEvent(intent_record,
+                           ":INTENT",
+                           "INTENT_CREATED",
+                           intent_record.price,
+                           0.0,
+                           intent_record.volume,
+                           0.0,
+                           intent_record.volume,
+                           0,
+                           "",
+                           intent_record.news_window_state);
 
       int total_positions = 0;
       int symbol_positions = 0;
@@ -1351,6 +1398,20 @@ public:
                                                  result.executed_price,
                                                  result.executed_volume);
             LogAuditRow("ORDER_INTENT_EXECUTED", "OrderEngine", LOG_INFO, "Intent executed", success_fields);
+            record.last_executed_price = result.executed_price;
+            record.last_filled_volume = result.executed_volume;
+            record.hold_time_seconds = (double)(TimeCurrent() - record.timestamp);
+            Audit_LogIntentEvent(record,
+                                 ":EXECUTED",
+                                 "ORDER_EXECUTED",
+                                 record.price,
+                                 result.executed_price,
+                                 record.volume,
+                                 result.executed_volume,
+                                 MathMax(0.0, record.volume - result.executed_volume),
+                                 result.retry_count,
+                                 "",
+                                 record.news_window_state);
          }
          else
          {
@@ -1368,9 +1429,21 @@ public:
                                               failure_reason,
                                               result.last_retcode);
             LogAuditRow("ORDER_INTENT_FAILED", "OrderEngine", LOG_WARN, "Intent failed", fail_fields);
+            record.hold_time_seconds = (double)(TimeCurrent() - record.timestamp);
+            Audit_LogIntentEvent(record,
+                                 ":FAILED",
+                                 "ORDER_FAILED",
+                                 record.price,
+                                 0.0,
+                                 record.volume,
+                                 0.0,
+                                 record.volume,
+                                 result.retry_count,
+                                 failure_reason,
+                                 record.news_window_state);
          }
-     m_intent_journal.intents[intent_index] = record;
-     MarkJournalDirty();
+   m_intent_journal.intents[intent_index] = record;
+   MarkJournalDirty();
       LogOE(StringFormat("Intent updated: id=%s status=%s retries=%d",
                          record.intent_id,
                          record.status,
@@ -2587,6 +2660,51 @@ string OrderEngine::BuildIntentAcceptKey(const OrderRequest &request) const
    ulong hash = HashString64(base);
    string accept_key = "intent_" + HashToHex(hash);
    return accept_key;
+}
+
+void OrderEngine::Audit_LogIntentEvent(const OrderIntent &intent,
+                                       const string action_suffix,
+                                       const string decision,
+                                       const double requested_price,
+                                       const double executed_price,
+                                       const double requested_vol,
+                                       const double filled_vol,
+                                       const double remaining_vol,
+                                       const int retry_count,
+                                       const string gating_reason_override,
+                                       const string news_state_override)
+{
+   AuditRecord record;
+   record.timestamp = TimeCurrent();
+   string suffix = action_suffix;
+   if(StringLen(suffix) == 0)
+      suffix = ":EVENT";
+   record.intent_id = intent.intent_id;
+   record.action_id = intent.intent_id + suffix;
+   record.symbol = intent.symbol;
+   record.mode = intent.execution_mode;
+   record.requested_price = requested_price;
+   record.executed_price = executed_price;
+   record.requested_vol = requested_vol;
+   record.filled_vol = filled_vol;
+   record.remaining_vol = remaining_vol;
+   ArrayCopy(record.tickets, intent.executed_tickets);
+   record.retry_count = retry_count;
+   record.gate_open_risk = intent.gate_open_risk;
+   record.gate_pending_risk = intent.gate_pending_risk;
+   record.gate_next_risk = intent.gate_next_risk;
+   record.room_today = intent.room_today;
+   record.room_overall = intent.room_overall;
+   record.gate_pass = intent.gate_pass;
+   record.decision = decision;
+   record.confidence = intent.confidence;
+   record.efficiency = intent.efficiency;
+   record.rho_est = intent.rho_est;
+   record.est_value = intent.est_value;
+   record.hold_time = intent.hold_time_seconds;
+   record.gating_reason = (StringLen(gating_reason_override) > 0 ? gating_reason_override : intent.gating_reason);
+   record.news_window_state = (StringLen(news_state_override) > 0 ? news_state_override : intent.news_window_state);
+   AuditLogger_Log(record);
 }
 
 // Partial fill state management helpers (Task 8)
@@ -3862,4 +3980,5 @@ void OrderEngine_OnTradeTxn(const MqlTradeTransaction& trans,
 }
 
 // End include guard
+#undef OE_CORRELATION_FALLBACK
 #endif // RPEA_ORDER_ENGINE_MQH
