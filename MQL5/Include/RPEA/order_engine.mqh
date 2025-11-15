@@ -4,6 +4,7 @@
 // order_engine.mqh - Order Engine scaffolding (M3 Task 1)
 // References: .kiro/specs/rpea-m3/tasks.md, design.md
 
+#include <Trade\Trade.mqh>
 #include <RPEA/config.mqh>
 #include <RPEA/app_context.mqh>
 #include <RPEA/logging.mqh>
@@ -533,6 +534,12 @@ private:
    SLEnforcementEntry m_sl_enforcement_queue[];
    int                m_sl_enforcement_count;
    bool               m_sl_state_loaded;
+   OrderIntent        m_recovered_intents[];
+   int                m_recovered_intent_count;
+   PersistedQueuedAction m_recovered_actions[];
+   int                m_recovered_action_count;
+   bool               m_recovery_completed;
+   datetime           m_recovery_timestamp;
 
    // Helper methods
    void LogOE(const string message)
@@ -761,6 +768,9 @@ public:
    {
       return FindIntentByTicket(ticket, out_intent_id, out_accept_key);
    }
+   bool FindIntentById(const string intent_id, OrderIntent &out_intent) const;
+   int  FindIntentIndexById(const string intent_id) const;
+   bool MatchIntentByTicket(const ulong ticket, OrderIntent &out_intent) const;
 
    void LoadSLEnforcementState()
    {
@@ -840,11 +850,15 @@ public:
       m_intent_sequence = 0;
       m_action_sequence = 0;
       
-       ArrayResize(m_oco_relationships, 100);
-      m_cutoff_override_active = false;
-      m_cutoff_override = 0;
-      ArrayResize(m_oco_handled_deals, 32);
-      m_oco_handled_deals_count = 0;
+      ArrayResize(m_oco_relationships, 100);
+     m_cutoff_override_active = false;
+     m_cutoff_override = 0;
+     ArrayResize(m_oco_handled_deals, 32);
+     m_oco_handled_deals_count = 0;
+     m_recovered_intent_count = 0;
+     m_recovered_action_count = 0;
+     m_recovery_completed = false;
+     m_recovery_timestamp = 0;
    }
    
    // Destructor
@@ -905,6 +919,16 @@ public:
       m_action_sequence = 0;
       m_intent_journal_dirty = true;
       PersistIntentJournal();
+   }
+
+   bool TestIsRecoveryComplete() const
+   {
+      return m_recovery_completed;
+   }
+
+   int TestRecoveredIntentCount() const
+   {
+      return m_recovered_intent_count;
    }
 
    //===========================================================================
@@ -1988,9 +2012,258 @@ public:
    bool ReconcileOnStartup()
    {
       LogOE("ReconcileOnStartup: Starting state reconciliation");
-      CleanupExpiredJournalEntries(TimeCurrent());
+      if(m_recovery_completed)
+      {
+         LogOE("ReconcileOnStartup: Recovery already completed");
+         return true;
+      }
+
+      PersistenceRecoveredState recovered;
+      if(!Persistence_LoadRecoveredState(recovered))
+      {
+         LogOE("ReconcileOnStartup: Failed to load recovered state");
+         return false;
+      }
+
+      ArrayResize(m_recovered_intents, recovered.intents_count);
+      for(int i = 0; i < recovered.intents_count; ++i)
+         m_recovered_intents[i] = recovered.intents[i];
+      m_recovered_intent_count = recovered.intents_count;
+      ArrayResize(m_recovered_actions, recovered.queued_count);
+      for(int i = 0; i < recovered.queued_count; ++i)
+         m_recovered_actions[i] = recovered.queued_actions[i];
+      m_recovered_action_count = recovered.queued_count;
+
+      IntentJournal_Clear(m_intent_journal);
+      ArrayResize(m_intent_journal.intents, recovered.intents_count);
+      for(int i = 0; i < recovered.intents_count; ++i)
+         m_intent_journal.intents[i] = recovered.intents[i];
+      ArrayResize(m_intent_journal.queued_actions, recovered.queued_count);
+      for(int i = 0; i < recovered.queued_count; ++i)
+         m_intent_journal.queued_actions[i] = recovered.queued_actions[i];
+      TouchJournalSequences();
+      m_intent_journal_dirty = true;
+
+      const datetime now = TimeCurrent();
+      const bool was_locked = IsExecutionLocked();
+      if(!was_locked)
+         SetExecutionLock(true);
+
+      ulong position_tickets[];
+      int positions_total = PositionsTotal();
+      ArrayResize(position_tickets, positions_total);
+      int position_count = 0;
+      for(int i = 0; i < positions_total; ++i)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket > 0)
+            position_tickets[position_count++] = ticket;
+      }
+      ArrayResize(position_tickets, position_count);
+      ulong pending_tickets[];
+      int orders_total = OrdersTotal();
+      ArrayResize(pending_tickets, orders_total);
+      int pending_count = 0;
+      for(int i = 0; i < orders_total; ++i)
+      {
+         ulong order_ticket = OrderGetTicket(i);
+         if(order_ticket == 0)
+            continue;
+         if(!OrderSelect(order_ticket))
+            continue;
+         ENUM_ORDER_TYPE order_type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+         if(order_type == ORDER_TYPE_BUY || order_type == ORDER_TYPE_SELL)
+            continue;
+         pending_tickets[pending_count++] = order_ticket;
+      }
+      ArrayResize(pending_tickets, pending_count);
+
+      int intents_marked_closed = 0;
+      int intents_marked_cancelled = 0;
+      for(int i = 0; i < ArraySize(m_intent_journal.intents); ++i)
+      {
+         OrderIntent intent = m_intent_journal.intents[i];
+         if(ArraySize(intent.executed_tickets) > 0)
+         {
+            bool ticket_active = false;
+            for(int j = 0; j < ArraySize(intent.executed_tickets) && !ticket_active; ++j)
+            {
+               for(int k = 0; k < position_count; ++k)
+               {
+                  if(position_tickets[k] == intent.executed_tickets[j])
+                  {
+                     ticket_active = true;
+                     break;
+                  }
+               }
+            }
+            if(!ticket_active && (intent.status == "PENDING" || intent.status == "EXECUTED"))
+            {
+               intent.status = "CLOSED";
+               intents_marked_closed++;
+            }
+         }
+         if(intent.status == "PENDING" && ArraySize(intent.executed_tickets) > 0)
+         {
+            bool order_active = false;
+            for(int j = 0; j < ArraySize(intent.executed_tickets) && !order_active; ++j)
+            {
+               for(int k = 0; k < pending_count; ++k)
+               {
+                  if(pending_tickets[k] == intent.executed_tickets[j])
+                  {
+                     order_active = true;
+                     break;
+                  }
+               }
+            }
+            if(!order_active)
+            {
+               intent.status = "CANCELLED";
+               intents_marked_cancelled++;
+            }
+         }
+         m_intent_journal.intents[i] = intent;
+      }
+
+      int orphans_attached = 0;
+      int pending_orphans_attached = 0;
+      for(int i = 0; i < position_count; ++i)
+      {
+         ulong ticket = position_tickets[i];
+         OrderIntent existing;
+         if(MatchIntentByTicket(ticket, existing))
+            continue;
+         if(!PositionSelectByTicket(ticket))
+            continue;
+         OrderIntent orphan;
+         ZeroMemory(orphan);
+         orphan.intent_id = StringFormat("broker_recovery_%llu", ticket);
+         orphan.accept_once_key = orphan.intent_id;
+         orphan.timestamp = (datetime)PositionGetInteger(POSITION_TIME);
+         orphan.symbol = PositionGetString(POSITION_SYMBOL);
+         orphan.signal_symbol = orphan.symbol;
+         ENUM_POSITION_TYPE pos_type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+         orphan.order_type = (pos_type == POSITION_TYPE_SELL ? ORDER_TYPE_SELL : ORDER_TYPE_BUY);
+         orphan.volume = PositionGetDouble(POSITION_VOLUME);
+         orphan.price = PositionGetDouble(POSITION_PRICE_OPEN);
+         orphan.sl = PositionGetDouble(POSITION_SL);
+         orphan.tp = PositionGetDouble(POSITION_TP);
+         orphan.status = "RECOVERED";
+         orphan.execution_mode = "DIRECT";
+         orphan.is_proxy = false;
+         orphan.proxy_rate = 1.0;
+         orphan.retry_count = 0;
+         orphan.reasoning = "broker_recovery";
+         ArrayResize(orphan.executed_tickets, 1);
+         orphan.executed_tickets[0] = ticket;
+         ArrayResize(orphan.partial_fills, 0);
+         ArrayResize(orphan.error_messages, 0);
+         ArrayResize(orphan.tickets_snapshot, 0);
+         int idx = ArraySize(m_intent_journal.intents);
+         ArrayResize(m_intent_journal.intents, idx + 1);
+         m_intent_journal.intents[idx] = orphan;
+         orphans_attached++;
+      }
+      for(int i = 0; i < pending_count; ++i)
+      {
+         ulong ticket = pending_tickets[i];
+         OrderIntent existing;
+         if(MatchIntentByTicket(ticket, existing))
+            continue;
+         if(!OrderSelect(ticket))
+            continue;
+         OrderIntent orphan;
+         ZeroMemory(orphan);
+         orphan.intent_id = StringFormat("broker_pending_%llu", ticket);
+         orphan.accept_once_key = orphan.intent_id;
+         orphan.timestamp = (datetime)OrderGetInteger(ORDER_TIME_SETUP);
+         orphan.symbol = OrderGetString(ORDER_SYMBOL);
+         orphan.signal_symbol = orphan.symbol;
+         ENUM_ORDER_TYPE order_type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+         orphan.order_type = order_type;
+         orphan.volume = OrderGetDouble(ORDER_VOLUME_CURRENT);
+         orphan.price = OrderGetDouble(ORDER_PRICE_OPEN);
+         orphan.sl = OrderGetDouble(ORDER_SL);
+         orphan.tp = OrderGetDouble(ORDER_TP);
+         orphan.status = "PENDING";
+         orphan.execution_mode = "DIRECT";
+         orphan.is_proxy = false;
+         orphan.proxy_rate = 1.0;
+         ArrayResize(orphan.executed_tickets, 1);
+         orphan.executed_tickets[0] = ticket;
+         ArrayResize(orphan.partial_fills, 0);
+         ArrayResize(orphan.error_messages, 0);
+         ArrayResize(orphan.tickets_snapshot, 0);
+         int idx = ArraySize(m_intent_journal.intents);
+         ArrayResize(m_intent_journal.intents, idx + 1);
+         m_intent_journal.intents[idx] = orphan;
+         pending_orphans_attached++;
+      }
+
+      int new_action_count = 0;
+      for(int i = 0; i < ArraySize(m_intent_journal.queued_actions); ++i)
+      {
+         PersistedQueuedAction action = m_intent_journal.queued_actions[i];
+         bool keep = true;
+         if(StringLen(action.intent_id) > 0 && FindIntentIndexById(action.intent_id) < 0)
+            keep = false;
+         if(keep && action.expires_time > 0 && action.expires_time < now)
+            keep = false;
+         if(keep && action.ticket > 0)
+         {
+            if(!PositionSelectByTicket(action.ticket) &&
+               !OrderSelect((ulong)action.ticket))
+               keep = false;
+         }
+         if(keep)
+         {
+            m_intent_journal.queued_actions[new_action_count++] = action;
+         }
+      }
+      ArrayResize(m_intent_journal.queued_actions, new_action_count);
+
+      EnsureSLEnforcementLoaded();
+      bool sl_dirty = false;
+      for(int i = 0; i < m_sl_enforcement_count; )
+      {
+         double sl_value = 0.0;
+         datetime open_time = 0;
+         if(!GetPositionSLByTicket(m_sl_enforcement_queue[i].ticket, sl_value, open_time))
+         {
+            RemoveSLEnforcementAt(i);
+            sl_dirty = true;
+            continue;
+         }
+         i++;
+      }
+      if(sl_dirty)
+         SaveSLEnforcementState();
+
+      CleanupExpiredJournalEntries(now);
       PersistIntentJournal();
-      LogOE("ReconcileOnStartup: Reconciliation complete");
+      Persistence_PruneOldRecoveryBackups();
+
+      if(!was_locked)
+         SetExecutionLock(false);
+
+      m_recovery_completed = true;
+      m_recovery_timestamp = TimeCurrent();
+
+      LogOE(StringFormat("ReconcileOnStartup: intents_total=%d loaded=%d dropped=%d actions_total=%d loaded=%d dropped=%d position_orphans=%d pending_orphans=%d closed=%d cancelled=%d corrupt=%d",
+                         recovered.summary.intents_total,
+                         recovered.summary.intents_loaded,
+                         recovered.summary.intents_dropped,
+                         recovered.summary.actions_total,
+                         recovered.summary.actions_loaded,
+                         recovered.summary.actions_dropped,
+                         orphans_attached,
+                         pending_orphans_attached,
+                         intents_marked_closed,
+                         intents_marked_cancelled,
+                         recovered.summary.corrupt_entries));
+
+      Persistence_FreeRecoveredState(recovered);
       return true;
    }
 };
@@ -3474,6 +3747,42 @@ bool OrderEngine::FindIntentByTicket(const ulong ticket,
    return false;
 }
 
+int OrderEngine::FindIntentIndexById(const string intent_id) const
+{
+   for(int i = 0; i < ArraySize(m_intent_journal.intents); ++i)
+   {
+      if(m_intent_journal.intents[i].intent_id == intent_id)
+         return i;
+   }
+   return -1;
+}
+
+bool OrderEngine::FindIntentById(const string intent_id, OrderIntent &out_intent) const
+{
+   int idx = FindIntentIndexById(intent_id);
+   if(idx < 0)
+      return false;
+   out_intent = m_intent_journal.intents[idx];
+   return true;
+}
+
+bool OrderEngine::MatchIntentByTicket(const ulong ticket, OrderIntent &out_intent) const
+{
+   for(int i = 0; i < ArraySize(m_intent_journal.intents); ++i)
+   {
+      OrderIntent intent = m_intent_journal.intents[i];
+      for(int j = 0; j < ArraySize(intent.executed_tickets); ++j)
+      {
+         if(intent.executed_tickets[j] == ticket)
+         {
+            out_intent = intent;
+            return true;
+         }
+      }
+   }
+   return false;
+}
+
 void OrderEngine::ResetState()
 {
    m_oco_count = 0;
@@ -3481,6 +3790,12 @@ void OrderEngine::ResetState()
    m_sl_enforcement_count = 0;
    m_sl_state_loaded = false;
    ArrayResize(m_sl_enforcement_queue, 0);
+   ArrayResize(m_recovered_intents, 0);
+   ArrayResize(m_recovered_actions, 0);
+   m_recovered_intent_count = 0;
+   m_recovered_action_count = 0;
+   m_recovery_completed = false;
+   m_recovery_timestamp = 0;
 }
 
 string OrderEngine::FormatLogLine(const string message)
@@ -3506,6 +3821,21 @@ bool OrderEngine_GetIntentMetadata(const ulong ticket,
                                    string &out_accept_key)
 {
    return g_order_engine.GetIntentMetadata(ticket, out_intent_id, out_accept_key);
+}
+
+bool OrderEngine_FindIntentById(const string intent_id, OrderIntent &out_intent)
+{
+   return g_order_engine.FindIntentById(intent_id, out_intent);
+}
+
+int OrderEngine_FindIntentIndexById(const string intent_id)
+{
+   return g_order_engine.FindIntentIndexById(intent_id);
+}
+
+bool OrderEngine_FindIntentByTicket(const ulong ticket, OrderIntent &out_intent)
+{
+   return g_order_engine.MatchIntentByTicket(ticket, out_intent);
 }
 
 //------------------------------------------------------------------------------
@@ -3862,6 +4192,16 @@ void OE_Test_ClearOverrides()
 void OE_Test_ResetIntentJournal()
 {
    g_order_engine.TestResetIntentJournal();
+}
+
+bool OE_Test_IsRecoveryComplete()
+{
+   return g_order_engine.TestIsRecoveryComplete();
+}
+
+int OE_Test_GetRecoveredIntentCount()
+{
+   return g_order_engine.TestRecoveredIntentCount();
 }
 
 bool OE_Test_GetVolumeOverride(const string symbol,

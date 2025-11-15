@@ -70,6 +70,8 @@ bool g_test_gate_force_fail = false;
 #include "test_trailing.mqh"
 // Audit logger tests (Task 14)
 #include "test_logging.mqh"
+// Recovery tests (Task 16)
+#include "test_order_engine_recovery.mqh"
 // Integration tests (Task 15)
 #include "test_order_engine_integration.mqh"
 
@@ -306,6 +308,15 @@ void RunAllTests()
    g_test_reporter.RecordTest(suite15, "TestIntegration_RunAll", task15_result,
                                task15_result ? "Integration tests passed" : "Integration tests failed");
    g_test_reporter.EndSuite(suite15);
+
+   Print("=================================================================");
+   Print("RPEA State Recovery Tests - Task 16");
+   Print("=================================================================");
+   int suite16 = g_test_reporter.BeginSuite("Task16_State_Recovery");
+   bool task16_result = TestRecovery_RunAll();
+   g_test_reporter.RecordTest(suite16, "TestRecovery_RunAll", task16_result,
+                               task16_result ? "State recovery tests passed" : "State recovery tests failed");
+   g_test_reporter.EndSuite(suite16);
 
    Print("Test execution complete.");
 }
