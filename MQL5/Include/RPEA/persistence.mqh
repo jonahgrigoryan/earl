@@ -91,6 +91,27 @@ struct IntentJournal
    PersistedQueuedAction  queued_actions[];
 };
 
+struct PersistenceRecoverySummary
+{
+   int  intents_total;
+   int  intents_loaded;
+   int  intents_dropped;
+   int  actions_total;
+   int  actions_loaded;
+   int  actions_dropped;
+   int  corrupt_entries;
+   bool renamed_corrupt_file;
+};
+
+struct PersistenceRecoveredState
+{
+   OrderIntent   intents[];
+   int           intents_count;
+   PersistedQueuedAction queued_actions[];
+   int           queued_count;
+   PersistenceRecoverySummary summary;
+};
+
 //==============================================================================
 // Journal Helpers (forward declarations)
 //==============================================================================
@@ -125,6 +146,18 @@ string Persistence_ExtractJsonArray(const string json, const string key);
 string Persistence_ReadWholeFile(const string path);
 bool   Persistence_WriteWholeFile(const string path, const string contents);
 bool   Persistence_EnsureIntentFileExists();
+bool   Persistence_LoadRecoveredState(PersistenceRecoveredState &out_state);
+void   Persistence_FreeRecoveredState(PersistenceRecoveredState &state);
+bool   Persistence_RenameCorruptIntentFile(const string reason, PersistenceRecoverySummary &summary);
+bool   Persistence_AttachRecoveredIntent(OrderIntent &intents[],
+                                         int &count,
+                                         const OrderIntent &candidate,
+                                         PersistenceRecoverySummary &summary);
+bool   Persistence_AttachRecoveredAction(PersistedQueuedAction &actions[],
+                                         int &count,
+                                         const PersistedQueuedAction &candidate,
+                                         PersistenceRecoverySummary &summary);
+bool   Persistence_PruneOldRecoveryBackups(const int max_files = 5);
 
 // Ensure all parent folders exist under MQL5/Files/RPEA/**
 void Persistence_EnsureFolders()
@@ -350,7 +383,7 @@ string Persistence_EscapeJson(const string value)
          case '\n': escaped += "\\n";  break;
          case '\t': escaped += "\\t";  break;
          default:
-            escaped += CharToString(ch);
+            escaped += StringSubstr(value, i, 1);
             break;
       }
    }
@@ -375,13 +408,13 @@ string Persistence_UnescapeJson(const string value)
             case 'r': result += "\r"; break;
             case 'n': result += "\n"; break;
             case 't': result += "\t"; break;
-            default: result += CharToString(next); break;
+            default: result += StringSubstr(value, i + 1, 1); break;
          }
          i++;
       }
       else
       {
-         result += CharToString(ch);
+         result += StringSubstr(value, i, 1);
       }
    }
    return result;
@@ -403,9 +436,9 @@ datetime Persistence_ParseIso8601(const string value)
    if(value == "" || value == "null")
       return (datetime)0;
    string normalized = value;
-   normalized = StringReplace(normalized, "T", " ");
-   normalized = StringReplace(normalized, "Z", "");
-   normalized = StringReplace(normalized, "-", ".");
+   StringReplace(normalized, "T", " ");
+   StringReplace(normalized, "Z", "");
+   StringReplace(normalized, "-", ".");
    return StringToTime(normalized);
 }
 
@@ -465,7 +498,7 @@ bool Persistence_SplitJsonArrayObjects(const string json, string &objects[])
       ushort ch = StringGetCharacter(trimmed, i);
       if(in_string)
       {
-         current += CharToString(ch);
+         current += StringSubstr(trimmed, i, 1);
          if(escape)
          {
             escape = false;
@@ -514,7 +547,7 @@ bool Persistence_SplitJsonArrayObjects(const string json, string &objects[])
          continue;
       }
 
-      current += CharToString(ch);
+      current += StringSubstr(trimmed, i, 1);
    }
 
    return true;
@@ -544,6 +577,175 @@ bool Persistence_WriteWholeFile(const string path, const string contents)
       return false;
    FileWrite(handle, contents);
    FileClose(handle);
+   return true;
+}
+
+void Persistence_FreeRecoveredState(PersistenceRecoveredState &state)
+{
+   ArrayResize(state.intents, 0);
+   ArrayResize(state.queued_actions, 0);
+   state.intents_count = 0;
+   state.queued_count = 0;
+   state.summary.intents_total = 0;
+   state.summary.intents_loaded = 0;
+   state.summary.intents_dropped = 0;
+   state.summary.actions_total = 0;
+   state.summary.actions_loaded = 0;
+   state.summary.actions_dropped = 0;
+   state.summary.corrupt_entries = 0;
+   state.summary.renamed_corrupt_file = false;
+}
+
+bool Persistence_AttachRecoveredIntent(OrderIntent &intents[],
+                                       int &count,
+                                       const OrderIntent &candidate,
+                                       PersistenceRecoverySummary &summary)
+{
+   if(StringLen(candidate.intent_id) == 0)
+   {
+      summary.corrupt_entries++;
+      summary.intents_dropped++;
+      return false;
+   }
+   for(int i = 0; i < count; ++i)
+   {
+      if(intents[i].intent_id == candidate.intent_id)
+      {
+         summary.intents_dropped++;
+         return false;
+      }
+   }
+   if(ArrayResize(intents, count + 1) < 0)
+      return false;
+   intents[count] = candidate;
+   count++;
+   summary.intents_loaded++;
+   return true;
+}
+
+bool Persistence_AttachRecoveredAction(PersistedQueuedAction &actions[],
+                                       int &count,
+                                       const PersistedQueuedAction &candidate,
+                                       PersistenceRecoverySummary &summary)
+{
+   if(StringLen(candidate.action_id) == 0)
+   {
+      summary.corrupt_entries++;
+      summary.actions_dropped++;
+      return false;
+   }
+   for(int i = 0; i < count; ++i)
+   {
+      if(actions[i].action_id == candidate.action_id)
+      {
+         summary.actions_dropped++;
+         return false;
+      }
+   }
+   if(ArrayResize(actions, count + 1) < 0)
+      return false;
+   actions[count] = candidate;
+   count++;
+   summary.actions_loaded++;
+   return true;
+}
+
+bool Persistence_RenameCorruptIntentFile(const string reason, PersistenceRecoverySummary &summary)
+{
+   string backup = StringFormat("%s.corrupt.%d", FILE_INTENTS, (int)TimeCurrent());
+   FileDelete(backup);
+   if(FileMove(FILE_INTENTS, 0, backup, 0))
+   {
+      summary.renamed_corrupt_file = true;
+      PrintFormat("[Persistence] Intent journal renamed to %s due to %s", backup, reason);
+      return true;
+   }
+   PrintFormat("[Persistence] Failed to rename corrupt journal (%s)", reason);
+   return false;
+}
+
+bool Persistence_LoadRecoveredState(PersistenceRecoveredState &out_state)
+{
+   Persistence_FreeRecoveredState(out_state);
+   string contents = Persistence_ReadWholeFile(FILE_INTENTS);
+   if(StringLen(contents) == 0)
+      return true;
+
+    int schema_version = 0;
+    if(Persistence_ParseIntField(contents, "schema_version", schema_version))
+    {
+       if(schema_version > 3)
+          PrintFormat("[Persistence] Warning: intent journal schema_version=%d exceeds expected 3", schema_version);
+    }
+
+   string intents_raw = Persistence_ExtractJsonArray(contents, "intents");
+   string actions_raw = Persistence_ExtractJsonArray(contents, "queued_actions");
+   bool intents_present = (StringFind(contents, "\"intents\":[") >= 0);
+   bool actions_present = (StringFind(contents, "\"queued_actions\":[") >= 0);
+   if(!intents_present || !actions_present)
+   {
+      Persistence_RenameCorruptIntentFile("invalid_json", out_state.summary);
+      return true;
+   }
+
+   string intent_objects[];
+   if(!Persistence_SplitJsonArrayObjects(intents_raw, intent_objects))
+   {
+      Persistence_RenameCorruptIntentFile("split_error", out_state.summary);
+      return true;
+   }
+
+   out_state.summary.intents_total = ArraySize(intent_objects);
+   for(int i = 0; i < ArraySize(intent_objects); ++i)
+   {
+      OrderIntent intent;
+      ZeroMemory(intent);
+      if(Persistence_OrderIntentFromJson(intent_objects[i], intent))
+      {
+         if(!Persistence_AttachRecoveredIntent(out_state.intents,
+                                               out_state.intents_count,
+                                               intent,
+                                               out_state.summary))
+         {
+            continue;
+         }
+      }
+      else
+      {
+         out_state.summary.corrupt_entries++;
+         out_state.summary.intents_dropped++;
+      }
+   }
+
+   string action_objects[];
+   if(!Persistence_SplitJsonArrayObjects(actions_raw, action_objects))
+   {
+      ArrayResize(action_objects, 0);
+   }
+   out_state.summary.actions_total = ArraySize(action_objects);
+   for(int i = 0; i < ArraySize(action_objects); ++i)
+   {
+      PersistedQueuedAction action;
+      ZeroMemory(action);
+      if(Persistence_ActionFromJson(action_objects[i], action))
+      {
+         Persistence_AttachRecoveredAction(out_state.queued_actions,
+                                           out_state.queued_count,
+                                           action,
+                                           out_state.summary);
+      }
+      else
+      {
+         out_state.summary.corrupt_entries++;
+         out_state.summary.actions_dropped++;
+      }
+   }
+
+   return true;
+}
+
+bool Persistence_PruneOldRecoveryBackups(const int max_files)
+{
    return true;
 }
 
@@ -644,7 +846,7 @@ bool Persistence_ParseStringField(const string json, const string key, string &o
             out_value = Persistence_Trim(buffer);
             return (StringLen(out_value) > 0);
          }
-         buffer += CharToString(ch);
+         buffer += StringSubstr(json, i, 1);
       }
       out_value = Persistence_Trim(buffer);
       return (StringLen(out_value) > 0);
@@ -659,7 +861,7 @@ bool Persistence_ParseStringField(const string json, const string key, string &o
       ch = StringGetCharacter(json, i);
       if(escape)
       {
-         buffer += CharToString(ch);
+         buffer += StringSubstr(json, i, 1);
          escape = false;
          continue;
       }
@@ -673,7 +875,7 @@ bool Persistence_ParseStringField(const string json, const string key, string &o
          out_value = Persistence_UnescapeJson(buffer);
          return true;
       }
-      buffer += CharToString(ch);
+      buffer += StringSubstr(json, i, 1);
    }
    PrintFormat("DEBUG ParseStringField failed: key='%s' snippet='%s'", key,
                StringSubstr(json, MathMax(0, start - 10), 80));
@@ -696,7 +898,7 @@ bool Persistence_ParseNumberField(const string json, const string key, double &o
          break;
       if(ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n')
          continue;
-      buffer += CharToString(ch);
+      buffer += StringSubstr(json, i, 1);
    }
    buffer = Persistence_Trim(buffer);
    if(buffer == "" || buffer == "null")
@@ -753,7 +955,7 @@ bool Persistence_ParseArrayOfStrings(const string json, const string key, string
       {
          if(escape)
          {
-            current += CharToString(ch);
+            current += StringSubstr(json, i, 1);
             escape = false;
          }
          else if(ch == '\\')
@@ -770,7 +972,7 @@ bool Persistence_ParseArrayOfStrings(const string json, const string key, string
          }
          else
          {
-            current += CharToString(ch);
+            current += StringSubstr(json, i, 1);
          }
          continue;
       }
@@ -814,7 +1016,7 @@ bool Persistence_ParseArrayOfULong(const string json, const string key, ulong &o
             break;
          continue;
       }
-      current += CharToString(ch);
+      current += StringSubstr(json, i, 1);
    }
    return true;
 }
@@ -846,7 +1048,7 @@ bool Persistence_ParseArrayOfDouble(const string json, const string key, double 
             break;
          continue;
       }
-      current += CharToString(ch);
+      current += StringSubstr(json, i, 1);
    }
    return true;
 }
@@ -969,7 +1171,10 @@ bool Persistence_OrderIntentFromJson(const string json, OrderIntent &out_intent)
    if(Persistence_ParseStringField(json, "execution_mode", value))
       out_intent.execution_mode = value;
    if(Persistence_ParseStringField(json, "is_proxy", value))
-      out_intent.is_proxy = (StringToLower(value) == "true");
+   {
+      StringToLower(value);
+      out_intent.is_proxy = (value == "true");
+   }
    if(Persistence_ParseNumberField(json, "proxy_rate", dbl_value))
       out_intent.proxy_rate = dbl_value;
    if(Persistence_ParseStringField(json, "proxy_context", value))
@@ -1209,11 +1414,18 @@ bool IntentJournal_Save(const IntentJournal &journal)
       Persistence_ActionToJson(journal.queued_actions[i], objects_actions[i]);
 
    string serialized = "{";
+   serialized += "\"schema_version\":3,";
    serialized += "\"intents\":" + Persistence_JoinJsonObjects(objects_intents) + ",";
    serialized += "\"queued_actions\":" + Persistence_JoinJsonObjects(objects_actions);
    serialized += "}";
 
-   return Persistence_WriteWholeFile(FILE_INTENTS, serialized);
+   string temp_path = FILE_INTENTS + ".tmp";
+   if(!Persistence_WriteWholeFile(temp_path, serialized))
+      return false;
+   FileDelete(FILE_INTENTS);
+   if(!FileMove(temp_path, 0, FILE_INTENTS, 0))
+      return false;
+   return true;
 }
 
 int IntentJournal_FindIntentById(const IntentJournal &journal, const string intent_id)

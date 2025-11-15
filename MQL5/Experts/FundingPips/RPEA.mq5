@@ -213,6 +213,11 @@ int OnInit()
        return(INIT_FAILED);
     }
     g_order_engine.LoadSLEnforcementState();
+    if(!g_order_engine.ReconcileOnStartup())
+    {
+       Print("[OrderEngine] Failed to reconcile state on startup");
+       return(INIT_FAILED);
+    }
 
     // 7) Restore queue/trailing state
    OrderEngine_RestoreStateOnInit(QueueTTLMinutes,
