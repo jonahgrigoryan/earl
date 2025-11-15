@@ -159,6 +159,9 @@ bool TestLogging_BufferFlush()
 
 bool TestLogging_RunAll()
 {
+   Print("=================================================================");
+   Print("RPEA Audit Logger Tests - Task 14");
+   Print("=================================================================");
    bool ok1 = TestLogging_BasicWrite();
    bool ok2 = TestLogging_BufferFlush();
    return (ok1 && ok2);

@@ -20,6 +20,7 @@ struct OrderIntent
    string           accept_once_key;
    datetime         timestamp;
    string           symbol;
+   string           signal_symbol;
    ENUM_ORDER_TYPE  order_type;
    double           volume;
    double           price;
@@ -28,6 +29,9 @@ struct OrderIntent
    datetime         expiry;
    string           status;
    string           execution_mode;
+   bool             is_proxy;
+   double           proxy_rate;
+   string           proxy_context;
    string           oco_sibling_id;
    int              retry_count;
    string           reasoning;
@@ -164,6 +168,14 @@ void Persistence_EnsurePlaceholderFiles()
    if(h!=INVALID_HANDLE)
    {
       if(FileSize(h)==0) FileWrite(h, "timestamp,impact,countries,symbols");
+      FileClose(h);
+   }
+   // SL enforcement state
+   h = FileOpen(FILE_SL_ENFORCEMENT, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(h!=INVALID_HANDLE)
+   {
+      if(FileSize(h)==0)
+         FileWrite(h, "[]");
       FileClose(h);
    }
    // EMRT, Q-table, bandit, liquidity, calibration
@@ -851,6 +863,7 @@ bool Persistence_OrderIntentToJson(const OrderIntent &intent, string &out_json)
    out_json += "\"accept_once_key\":\"" + Persistence_EscapeJson(intent.accept_once_key) + "\",";
    out_json += "\"timestamp\":\"" + Persistence_EscapeJson(Persistence_FormatIso8601(intent.timestamp)) + "\",";
    out_json += "\"symbol\":\"" + Persistence_EscapeJson(intent.symbol) + "\",";
+   out_json += "\"signal_symbol\":\"" + Persistence_EscapeJson(intent.signal_symbol) + "\",";
    out_json += "\"order_type\":\"" + Persistence_EscapeJson(EnumToString(intent.order_type)) + "\",";
    out_json += "\"volume\":" + DoubleToString(intent.volume, 4) + ",";
    out_json += "\"price\":" + DoubleToString(intent.price, 5) + ",";
@@ -859,6 +872,9 @@ bool Persistence_OrderIntentToJson(const OrderIntent &intent, string &out_json)
    out_json += "\"expiry\":\"" + Persistence_EscapeJson(Persistence_FormatIso8601(intent.expiry)) + "\",";
    out_json += "\"status\":\"" + Persistence_EscapeJson(intent.status) + "\",";
    out_json += "\"execution_mode\":\"" + Persistence_EscapeJson(intent.execution_mode) + "\",";
+   out_json += "\"is_proxy\":" + (intent.is_proxy ? "true" : "false") + ",";
+   out_json += "\"proxy_rate\":" + DoubleToString(intent.proxy_rate, 5) + ",";
+   out_json += "\"proxy_context\":\"" + Persistence_EscapeJson(intent.proxy_context) + "\",";
    out_json += "\"oco_sibling_id\":\"" + Persistence_EscapeJson(intent.oco_sibling_id) + "\",";
    out_json += "\"retry_count\":" + (string)intent.retry_count + ",";
    out_json += "\"reasoning\":\"" + Persistence_EscapeJson(intent.reasoning) + "\",";
@@ -929,6 +945,8 @@ bool Persistence_OrderIntentFromJson(const string json, OrderIntent &out_intent)
       out_intent.timestamp = Persistence_ParseIso8601(value);
    if(Persistence_ParseStringField(json, "symbol", value))
       out_intent.symbol = value;
+   if(Persistence_ParseStringField(json, "signal_symbol", value))
+      out_intent.signal_symbol = value;
    else
       PrintFormat("[Persistence] Load intent missing symbol in %s", json);
    if(Persistence_ParseStringField(json, "order_type", value))
@@ -950,6 +968,12 @@ bool Persistence_OrderIntentFromJson(const string json, OrderIntent &out_intent)
       PrintFormat("[Persistence] Load intent missing status in %s", json);
    if(Persistence_ParseStringField(json, "execution_mode", value))
       out_intent.execution_mode = value;
+   if(Persistence_ParseStringField(json, "is_proxy", value))
+      out_intent.is_proxy = (StringToLower(value) == "true");
+   if(Persistence_ParseNumberField(json, "proxy_rate", dbl_value))
+      out_intent.proxy_rate = dbl_value;
+   if(Persistence_ParseStringField(json, "proxy_context", value))
+      out_intent.proxy_context = value;
    else
       PrintFormat("[Persistence] Load intent missing execution_mode in %s", json);
    if(Persistence_ParseStringField(json, "oco_sibling_id", value))
@@ -1013,6 +1037,15 @@ bool Persistence_OrderIntentFromJson(const string json, OrderIntent &out_intent)
    out_intent.hold_time_seconds = 0.0;
    if(Persistence_ParseNumberField(json, "hold_time_seconds", dbl_value))
       out_intent.hold_time_seconds = dbl_value;
+
+   if(StringLen(out_intent.signal_symbol) == 0)
+      out_intent.signal_symbol = out_intent.symbol;
+   if(!out_intent.is_proxy && out_intent.signal_symbol != out_intent.symbol)
+      out_intent.is_proxy = true;
+   if(out_intent.proxy_rate <= 0.0)
+      out_intent.proxy_rate = 1.0;
+   if(StringLen(out_intent.execution_mode) == 0)
+      out_intent.execution_mode = "DIRECT";
 
    return true;
 }
