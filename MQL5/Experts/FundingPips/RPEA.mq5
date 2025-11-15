@@ -157,6 +157,31 @@ int OnInit()
    g_ctx.permanently_disabled = false;
    g_ctx.timer_last_check = 0;
 
+   bool has_xaueur = false;
+   for(int i = 0; i < g_ctx.symbols_count; i++)
+   {
+      if(StringCompare(g_ctx.symbols[i], "XAUEUR") == 0)
+      {
+         has_xaueur = true;
+         break;
+      }
+   }
+
+   if(has_xaueur)
+   {
+      if(!UseXAUEURProxy)
+      {
+         Print("[RPEA] ERROR: XAUEUR requires UseXAUEURProxy=true in proxy mode");
+         return(INIT_FAILED);
+      }
+      if(!SymbolSelect("XAUUSD", true) || !SymbolSelect("EURUSD", true))
+      {
+         Print("[RPEA] ERROR: XAUEUR requires XAUUSD and EURUSD symbols to be available");
+         return(INIT_FAILED);
+      }
+      Print("[RPEA] XAUEUR signal mapping enabled (XAUEUR -> XAUUSD proxy)");
+   }
+
    // 2) Load persisted challenge state
    Persistence_LoadChallengeState();
    ChallengeState s = State_Get();
@@ -187,6 +212,7 @@ int OnInit()
        Print("[OrderEngine] Failed to initialize Order Engine");
        return(INIT_FAILED);
     }
+    g_order_engine.LoadSLEnforcementState();
 
     // 7) Restore queue/trailing state
    OrderEngine_RestoreStateOnInit(QueueTTLMinutes,
@@ -268,6 +294,9 @@ void OnTimer()
 
     // Task 12/13 queue + trailing processing
     OrderEngine_ProcessQueueAndTrailing();
+
+   // Master SL enforcement tracking
+   g_order_engine.CheckPendingSLEnforcement();
 
    // Delegate to scheduler (logging-only in M1)
    Scheduler_Tick(g_ctx);

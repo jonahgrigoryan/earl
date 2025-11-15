@@ -220,6 +220,7 @@ bool IntentJournal_SerializationRoundTrip()
    original.intents[0].accept_once_key = "intent_sample_hash";
    original.intents[0].timestamp = TimeCurrent();
    original.intents[0].symbol = "XAUUSD";
+   original.intents[0].signal_symbol = "XAUUSD";
    original.intents[0].order_type = ORDER_TYPE_BUY_LIMIT;
    original.intents[0].volume = 0.12;
    original.intents[0].price = 1905.55;
@@ -228,6 +229,9 @@ bool IntentJournal_SerializationRoundTrip()
    original.intents[0].expiry = TimeCurrent() + 3600;
    original.intents[0].status = "PENDING";
    original.intents[0].execution_mode = "DIRECT";
+   original.intents[0].is_proxy = false;
+   original.intents[0].proxy_rate = 1.0;
+   original.intents[0].proxy_context = "";
    original.intents[0].oco_sibling_id = "";
    original.intents[0].retry_count = 0;
    original.intents[0].reasoning = "Round-trip test";

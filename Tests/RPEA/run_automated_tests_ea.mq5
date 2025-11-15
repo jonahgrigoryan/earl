@@ -39,11 +39,13 @@ input double RiskGateHeadroom           = 0.90;
 #define RPEA_ORDER_ENGINE_SKIP_SESSIONS
 
 // Include test reporter
+#define RPEA_TEST_RUNNER
 #include <RPEA/app_context.mqh>
 #include <RPEA/test_reporter.mqh>
 #include <RPEA/logging.mqh>
 
 AppContext g_ctx;
+bool g_test_gate_force_fail = false;
 
 // Include test files
 #include "test_order_engine.mqh"
@@ -68,6 +70,8 @@ AppContext g_ctx;
 #include "test_trailing.mqh"
 // Audit logger tests (Task 14)
 #include "test_logging.mqh"
+// Integration tests (Task 15)
+#include "test_order_engine_integration.mqh"
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -106,6 +110,33 @@ bool Equity_IsPendingOrderType(const int type)
    }
    return false;
 }
+
+EquityBudgetGateResult Equity_EvaluateBudgetGate(const AppContext& ctx,
+                                                 const double next_trade_worst_case)
+{
+   EquityBudgetGateResult result;
+   result.approved = true;
+   result.gate_pass = true;
+   result.gating_reason = "test_pass";
+   result.room_available = 100.0;
+   result.room_today = 100.0;
+   result.room_overall = 100.0;
+   result.open_risk = 0.0;
+   result.pending_risk = 0.0;
+   result.next_worst_case = next_trade_worst_case;
+   result.calculation_error = false;
+   if(g_test_gate_force_fail)
+   {
+      result.gate_pass = false;
+      result.gating_reason = "forced_fail";
+      result.room_today = 10.0;
+      result.room_overall = 10.0;
+      result.open_risk = 5.0;
+      result.pending_risk = 4.0;
+   }
+   return result;
+}
+
 #endif
 
 // Global flag to track if tests have been run
@@ -261,11 +292,20 @@ void RunAllTests()
    g_test_reporter.EndSuite(suite13);
 
    // Task 14: Audit Logger
+   Print("=================================================================");
+   Print("RPEA Audit Logger Tests - Task 14");
+   Print("=================================================================");
    int suite14 = g_test_reporter.BeginSuite("Task14_Audit_Logger");
    bool task14_result = TestLogging_RunAll();
    g_test_reporter.RecordTest(suite14, "TestLogging_RunAll", task14_result,
                                task14_result ? "Audit logger tests passed" : "Audit logger tests failed");
    g_test_reporter.EndSuite(suite14);
+
+   int suite15 = g_test_reporter.BeginSuite("Task15_Risk_XAUEUR");
+   bool task15_result = TestIntegration_RunAll();
+   g_test_reporter.RecordTest(suite15, "TestIntegration_RunAll", task15_result,
+                               task15_result ? "Integration tests passed" : "Integration tests failed");
+   g_test_reporter.EndSuite(suite15);
 
    Print("Test execution complete.");
 }

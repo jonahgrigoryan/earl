@@ -5,11 +5,13 @@
 // References: .kiro/specs/rpea-m3/tasks.md, design.md
 
 #include <RPEA/config.mqh>
+#include <RPEA/app_context.mqh>
 #include <RPEA/logging.mqh>
 #include <RPEA/persistence.mqh>
 #include <RPEA/queue.mqh>
 #include <RPEA/trailing.mqh>
 #include <RPEA/news.mqh>
+#include <RPEA/symbol_bridge.mqh>
 #ifndef RPEA_ORDER_ENGINE_SKIP_SESSIONS
 // Sessions used for cutoff alignment (read-only helpers)
 #include <RPEA/sessions.mqh>
@@ -45,11 +47,27 @@ double Equity_CalcRiskDollars(const string symbol,
 #ifndef RPEA_ORDER_ENGINE_SKIP_EQUITY
 #include <RPEA/equity_guardian.mqh>
 #else
+#ifndef EQUITY_GUARDIAN_MQH
+struct EquityBudgetGateResult
+  {
+   bool   approved;
+   bool   gate_pass;
+   string gating_reason;
+   double room_available;
+   double room_today;
+   double room_overall;
+   double open_risk;
+   double pending_risk;
+   double next_worst_case;
+   bool   calculation_error;
+  };
+#endif
 bool Equity_IsPendingOrderType(const int type);
 bool Equity_CheckPositionCaps(const string symbol,
                               int &out_total_positions,
                               int &out_symbol_positions,
                               int &out_symbol_pending);
+EquityBudgetGateResult Equity_EvaluateBudgetGate(const AppContext& ctx, const double next_trade_worst_case);
 #endif
 
 //==============================================================================
@@ -70,6 +88,11 @@ struct OrderRequest
    bool     is_oco_primary;
    ulong    oco_sibling_ticket;
    datetime expiry;
+   string   signal_symbol;
+   bool     is_protective;
+   bool     is_proxy;
+   double   proxy_rate;
+   string   proxy_context;
 };
 
 // Order result structure
@@ -85,6 +108,17 @@ struct OrderResult
    string   intent_id;
    string   accept_once_key;
 };
+
+enum NewsGateState
+  {
+   NEWS_GATE_CLEAR = 0,
+   NEWS_GATE_BLOCKED,
+   NEWS_GATE_PROTECTIVE_ALLOWED
+  };
+
+#ifdef RPEA_TEST_RUNNER
+extern bool g_test_gate_force_fail;
+#endif
 
 // OCO relationship tracking
 struct OCORelationship
@@ -128,6 +162,16 @@ struct PartialFillState
    int               fill_count;
    PartialFillEvent  fills[50];
 };
+
+struct SLEnforcementEntry
+  {
+   ulong    ticket;
+   datetime open_time;
+   datetime sl_set_time;
+   bool     sl_set_within_30s;
+   string   status;
+   bool     active;
+  };
 
 //==============================================================================
 // Retry Policy Support
@@ -486,6 +530,9 @@ private:
    // Partial fill tracking (Task 8)
    PartialFillState m_partial_fill_states[];
    int              m_partial_fill_count;
+   SLEnforcementEntry m_sl_enforcement_queue[];
+   int                m_sl_enforcement_count;
+   bool               m_sl_state_loaded;
 
    // Helper methods
    void LogOE(const string message)
@@ -519,6 +566,15 @@ private:
                              int &out_symbol_positions,
                              int &out_symbol_pending,
                              string &out_violation_reason);
+   bool ValidateRiskConstraints(const OrderRequest &request,
+                                const double entry_price,
+                                const bool is_pending,
+                                double &out_evaluated_risk,
+                                EquityBudgetGateResult &out_gate,
+                                string &out_rejection_reason);
+   NewsGateState EvaluateNewsGate(const string signal_symbol,
+                                  const bool is_protective_exit,
+                                  string &out_detail) const;
    bool ExecuteOrderWithRetry(const OrderRequest &request,
                               const bool is_pending_request,
                               const double evaluated_risk,
@@ -565,6 +621,12 @@ private:
    void   CleanupExpiredJournalEntries(const datetime now);
    void   MarkJournalDirty();
    void   TouchJournalSequences();
+   void   TrackSLEnforcement(const ulong ticket, const datetime open_time);
+   void   EnsureSLEnforcementLoaded();
+   void   CheckPendingSLEnforcementInternal();
+   bool   IsMasterAccount() const;
+   void   RemoveSLEnforcementAt(const int index);
+   bool   GetPositionSLByTicket(const ulong ticket, double &out_sl, datetime &out_open_time) const;
    bool   ClearOCOByIndex(const int idx)
    {
       if(idx < 0 || idx >= m_oco_count)
@@ -699,6 +761,55 @@ public:
    {
       return FindIntentByTicket(ticket, out_intent_id, out_accept_key);
    }
+
+   void LoadSLEnforcementState()
+   {
+      EnsureSLEnforcementLoaded();
+   }
+
+   void SaveSLEnforcementState() const
+   {
+      if(!m_sl_state_loaded)
+         return;
+      string rows[];
+      int active_count = 0;
+      for(int i = 0; i < m_sl_enforcement_count; i++)
+      {
+         if(!m_sl_enforcement_queue[i].active)
+            continue;
+         active_count++;
+      }
+      ArrayResize(rows, active_count);
+      int cursor = 0;
+      for(int i = 0; i < m_sl_enforcement_count; i++)
+      {
+         if(!m_sl_enforcement_queue[i].active)
+            continue;
+         SLEnforcementEntry entry = m_sl_enforcement_queue[i];
+         string open_iso = Persistence_FormatIso8601(entry.open_time);
+         string sl_iso = (entry.sl_set_time > 0 ? Persistence_FormatIso8601(entry.sl_set_time) : "");
+         rows[cursor++] = StringFormat("{\"ticket\":%llu,\"open_time\":\"%s\",\"sl_set_time\":\"%s\",\"status\":\"%s\",\"sl_set_within_30s\":\"%s\"}",
+                                       entry.ticket,
+                                       open_iso,
+                                       sl_iso,
+                                       entry.status,
+                                       entry.sl_set_within_30s ? "true" : "false");
+      }
+      string payload = "[";
+      for(int i = 0; i < ArraySize(rows); i++)
+      {
+         if(i > 0)
+            payload += ",";
+         payload += rows[i];
+      }
+      payload += "]";
+      Persistence_WriteWholeFile(FILE_SL_ENFORCEMENT, payload);
+   }
+
+   void CheckPendingSLEnforcement()
+   {
+      CheckPendingSLEnforcementInternal();
+   }
    
    // Constructor
    OrderEngine()
@@ -779,6 +890,7 @@ public:
 
       PersistIntentJournal();
       FlushLogBuffer();
+      SaveSLEnforcementState();
       ResetState();
       m_log_buffer_count = 0;
       m_log_buffer_dirty = false;
@@ -980,6 +1092,7 @@ public:
       string accept_key = "";
       bool intent_created = false;
       datetime intent_time = 0;
+      string news_state_detail = "CLEAR";
       
       LogOE(StringFormat("PlaceOrder: %s %s vol=%.2f price=%.5f sl=%.5f tp=%.5f",
             request.symbol, EnumToString(request.type), request.volume, 
@@ -1000,6 +1113,17 @@ public:
                      "PLACE_REJECT",
                      StringFormat("{\"reason\":\"missing_symbol\",\"type\":\"%s\"}",
                                   EnumToString(request.type)));
+         return result;
+      }
+
+      if(SymbolBridge_Normalize(request.symbol) == "XAUEUR")
+      {
+         result.error_message = "XAUEUR execution requires proxy mapping";
+         LogOE("PlaceOrder failed: XAUEUR execution must be proxied to XAUUSD");
+         LogDecision("OrderEngine",
+                     "PLACE_REJECT",
+                     StringFormat("{\"symbol\":\"%s\",\"reason\":\"xaueur_direct\"}",
+                                  request.symbol));
          return result;
       }
 
@@ -1032,6 +1156,30 @@ public:
       }
 
       OrderRequest normalized = request;
+      if(StringLen(normalized.signal_symbol) == 0)
+         normalized.signal_symbol = normalized.symbol;
+      normalized.is_proxy = (SymbolBridge_Normalize(normalized.signal_symbol) != SymbolBridge_Normalize(normalized.symbol));
+      if(normalized.proxy_rate <= 0.0)
+         normalized.proxy_rate = 1.0;
+      normalized.is_protective = request.is_protective;
+      if(normalized.is_proxy && StringLen(normalized.proxy_context) == 0)
+         normalized.proxy_context = StringFormat("%s->%s", normalized.signal_symbol, normalized.symbol);
+
+      const string expected_exec = SymbolBridge_GetExecutionSymbol(normalized.signal_symbol);
+      if(SymbolBridge_Normalize(expected_exec) != SymbolBridge_Normalize(normalized.symbol))
+      {
+         result.error_message = StringFormat("Execution symbol mismatch for %s (expected %s got %s)",
+                                             normalized.signal_symbol,
+                                             expected_exec,
+                                             normalized.symbol);
+         LogDecision("OrderEngine",
+                     "PLACE_REJECT",
+                     StringFormat("{\"signal_symbol\":\"%s\",\"expected\":\"%s\",\"received\":\"%s\"}",
+                                  normalized.signal_symbol,
+                                  expected_exec,
+                                  normalized.symbol));
+         return result;
+      }
 
       const double normalized_volume = OE_NormalizeVolume(request.symbol, request.volume);
       if(!MathIsValidNumber(normalized_volume) || normalized_volume <= 0.0)
@@ -1134,6 +1282,7 @@ public:
       intent_record.accept_once_key = accept_key;
       intent_record.timestamp = intent_time;
       intent_record.symbol = normalized.symbol;
+      intent_record.signal_symbol = normalized.signal_symbol;
       intent_record.order_type = normalized.type;
       intent_record.volume = normalized.volume;
       intent_record.price = normalized.price;
@@ -1141,7 +1290,10 @@ public:
       intent_record.tp = normalized.tp;
       intent_record.expiry = normalized.expiry;
       intent_record.status = "PENDING";
-      intent_record.execution_mode = (mode == "" ? "DIRECT" : mode);
+      intent_record.execution_mode = (normalized.is_proxy ? "PROXY" : "DIRECT");
+      intent_record.is_proxy = normalized.is_proxy;
+      intent_record.proxy_rate = normalized.proxy_rate;
+      intent_record.proxy_context = normalized.proxy_context;
       intent_record.oco_sibling_id = "";
       intent_record.retry_count = 0;
       intent_record.reasoning = request.comment;
@@ -1162,7 +1314,7 @@ public:
       intent_record.room_overall = 0.0;
       intent_record.gate_pass = false;
       intent_record.gating_reason = "";
-      intent_record.news_window_state = News_GetWindowState(request.symbol, false);
+      intent_record.news_window_state = news_state_detail;
       intent_record.decision_context = request.comment;
       ArrayResize(intent_record.tickets_snapshot, 0);
       intent_record.last_executed_price = 0.0;
@@ -1209,6 +1361,25 @@ public:
                            0,
                            "",
                            intent_record.news_window_state);
+
+      datetime news_gate_timestamp = TimeCurrent();
+      NewsGateState news_gate_state = EvaluateNewsGate(normalized.signal_symbol,
+                                                       normalized.is_protective,
+                                                       news_state_detail);
+      intent_record.news_window_state = news_state_detail;
+
+      if(news_gate_state == NEWS_GATE_BLOCKED)
+      {
+         result.error_message = StringFormat("News blocked for %s (%s)",
+                                             normalized.signal_symbol,
+                                             news_state_detail);
+         LogDecision("OrderEngine",
+                     "NEWS_GATE_BLOCK",
+                     StringFormat("{\"signal_symbol\":\"%s\",\"detail\":\"%s\"}",
+                                  normalized.signal_symbol,
+                                  news_state_detail));
+         return result;
+      }
 
       int total_positions = 0;
       int symbol_positions = 0;
@@ -1281,15 +1452,31 @@ public:
       double entry_price = normalized.price;
       if(is_market)
       {
+         double override_point = 0.0;
+         int override_digits = 0;
+         double override_bid = 0.0;
+         double override_ask = 0.0;
+         int override_stops = 0;
+         const bool has_price_override = OE_Test_GetPriceOverride(normalized.symbol,
+                                                                  override_point,
+                                                                  override_digits,
+                                                                  override_bid,
+                                                                  override_ask,
+                                                                  override_stops);
+
          double quote = 0.0;
          if(normalized.type == ORDER_TYPE_BUY)
          {
-            if(OE_SymbolInfoDoubleSafe("PlaceOrder::BUY", normalized.symbol, SYMBOL_ASK, quote))
+            if(has_price_override && override_ask > 0.0)
+               entry_price = override_ask;
+            else if(OE_SymbolInfoDoubleSafe("PlaceOrder::BUY", normalized.symbol, SYMBOL_ASK, quote))
                entry_price = quote;
          }
          else if(normalized.type == ORDER_TYPE_SELL)
          {
-            if(OE_SymbolInfoDoubleSafe("PlaceOrder::SELL", normalized.symbol, SYMBOL_BID, quote))
+            if(has_price_override && override_bid > 0.0)
+               entry_price = override_bid;
+            else if(OE_SymbolInfoDoubleSafe("PlaceOrder::SELL", normalized.symbol, SYMBOL_BID, quote))
                entry_price = quote;
          }
       }
@@ -1301,54 +1488,170 @@ public:
             entry_price = normalized_entry;
       }
 
-      bool risk_calc_ok = false;
-      double risk_dollars = 0.0;
-
-      if(g_oe_risk_override.active)
+      if(normalized.is_proxy)
       {
-         risk_calc_ok = g_oe_risk_override.ok;
-         risk_dollars = g_oe_risk_override.risk_value;
-      }
-      else
-      {
-         risk_dollars = Equity_CalcRiskDollars(normalized.symbol,
-                                               normalized.volume,
-                                               entry_price,
-                                               normalized.sl,
-                                               risk_calc_ok);
+         if(normalized.proxy_rate <= 0.0)
+         {
+            result.error_message = "Proxy mapping missing EURUSD rate";
+            LogDecision("OrderEngine",
+                        "PLACE_REJECT",
+                        "{\"reason\":\"proxy_rate_invalid\"}");
+            return result;
+         }
+         double point = 0.0;
+         if(!SymbolInfoDouble(normalized.symbol, SYMBOL_POINT, point) || point <= 0.0)
+         {
+            result.error_message = "Unable to validate proxy distance (point missing)";
+            LogDecision("OrderEngine",
+                        "PLACE_REJECT",
+                        "{\"reason\":\"proxy_point_missing\"}");
+            return result;
+         }
+
+         const double distance_tolerance = 0.5;
+         const double rate_tolerance = 0.05;
+         double exec_sl_points = 0.0;
+         double exec_tp_points = 0.0;
+         if(entry_price > 0.0 && normalized.sl > 0.0)
+            exec_sl_points = MathAbs(entry_price - normalized.sl) / point;
+         if(entry_price > 0.0 && normalized.tp > 0.0)
+            exec_tp_points = MathAbs(normalized.tp - entry_price) / point;
+
+         if(exec_sl_points > 0.0)
+         {
+            double mapped = 0.0;
+            double eurusd_rate = 0.0;
+            double signal_points = exec_sl_points / normalized.proxy_rate;
+            if(signal_points <= 0.0 ||
+               !SymbolBridge_MapDistance(normalized.signal_symbol,
+                                         normalized.symbol,
+                                         signal_points,
+                                         mapped,
+                                         eurusd_rate) ||
+               mapped <= 0.0 ||
+               MathAbs(mapped - exec_sl_points) > distance_tolerance ||
+               MathAbs(eurusd_rate - normalized.proxy_rate) > rate_tolerance)
+            {
+               result.error_message = "Proxy SL distance validation failed";
+               LogDecision("OrderEngine",
+                           "PLACE_REJECT",
+                           StringFormat("{\"reason\":\"proxy_sl_validation\",\"mapped\":%.4f,\"expected\":%.4f}",
+                                        mapped,
+                                        exec_sl_points));
+               return result;
+            }
+         }
+
+         if(exec_tp_points > 0.0)
+         {
+            double mapped = 0.0;
+            double eurusd_rate = 0.0;
+            double signal_points = exec_tp_points / normalized.proxy_rate;
+            if(signal_points <= 0.0 ||
+               !SymbolBridge_MapDistance(normalized.signal_symbol,
+                                         normalized.symbol,
+                                         signal_points,
+                                         mapped,
+                                         eurusd_rate) ||
+               mapped <= 0.0 ||
+               MathAbs(mapped - exec_tp_points) > distance_tolerance ||
+               MathAbs(eurusd_rate - normalized.proxy_rate) > rate_tolerance)
+            {
+               result.error_message = "Proxy TP distance validation failed";
+               LogDecision("OrderEngine",
+                           "PLACE_REJECT",
+                           StringFormat("{\"reason\":\"proxy_tp_validation\",\"mapped\":%.4f,\"expected\":%.4f}",
+                                        mapped,
+                                        exec_tp_points));
+               return result;
+            }
+         }
       }
 
-      if(!risk_calc_ok || risk_dollars <= 0.0)
+      double evaluated_risk = 0.0;
+      EquityBudgetGateResult gate_snapshot;
+      ZeroMemory(gate_snapshot);
+      string gate_rejection = "";
+
+      if(!ValidateRiskConstraints(normalized,
+                                   entry_price,
+                                   is_pending,
+                                   evaluated_risk,
+                                   gate_snapshot,
+                                   gate_rejection))
       {
          string fields = StringFormat(
-            "{\"symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"entry\":%.5f,\"sl\":%.5f,\"volume\":%.4f}",
+            "{\"symbol\":\"%s\",\"signal_symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"reason\":\"%s\"}",
             normalized.symbol,
+            normalized.signal_symbol,
             EnumToString(normalized.type),
             mode,
-            entry_price,
-            normalized.sl,
-            normalized.volume);
+            gate_rejection);
 
          LogDecision("OrderEngine", "RISK_BLOCK", fields);
-         LogOE("PlaceOrder blocked: unable to evaluate risk (entry/sl invalid)");
-         result.error_message = "Risk evaluation failed for order request";
+         LogOE(StringFormat("PlaceOrder blocked: %s", gate_rejection));
+         result.error_message = gate_rejection;
          return result;
+      }
+
+      intent_record.gate_open_risk = gate_snapshot.open_risk;
+      intent_record.gate_pending_risk = gate_snapshot.pending_risk;
+      intent_record.gate_next_risk = evaluated_risk;
+      intent_record.room_today = gate_snapshot.room_today;
+      intent_record.room_overall = gate_snapshot.room_overall;
+      intent_record.gate_pass = gate_snapshot.gate_pass;
+      intent_record.gating_reason = gate_snapshot.gating_reason;
+      if(normalized.is_proxy)
+      {
+         string proxy_info = StringFormat("%s eurusd=%.5f",
+                                          normalized.proxy_context,
+                                          normalized.proxy_rate);
+         if(StringLen(intent_record.gating_reason) > 0)
+            intent_record.gating_reason = intent_record.gating_reason + "|" + proxy_info;
+         else
+            intent_record.gating_reason = proxy_info;
       }
 
       LogDecision("OrderEngine",
                   "RISK_EVAL",
-                  StringFormat("{\"symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"entry\":%.5f,\"sl\":%.5f,\"volume\":%.4f,\"risk\":%.2f}",
+                  StringFormat("{\"symbol\":\"%s\",\"signal_symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"entry\":%.5f,\"sl\":%.5f,\"volume\":%.4f,\"risk\":%.2f,\"open\":%.2f,\"pending\":%.2f,\"room_today\":%.2f,\"room_overall\":%.2f}",
                                normalized.symbol,
+                               normalized.signal_symbol,
                                EnumToString(normalized.type),
                                mode,
                                entry_price,
                                normalized.sl,
                                normalized.volume,
-                               risk_dollars));
+                               evaluated_risk,
+                               gate_snapshot.open_risk,
+                               gate_snapshot.pending_risk,
+                               gate_snapshot.room_today,
+                               gate_snapshot.room_overall));
+
+      if(TimeCurrent() - news_gate_timestamp >= 5)
+      {
+         string recheck_state = "";
+         NewsGateState gate_recheck = EvaluateNewsGate(normalized.signal_symbol,
+                                                       normalized.is_protective,
+                                                       recheck_state);
+         intent_record.news_window_state = recheck_state;
+         if(gate_recheck == NEWS_GATE_BLOCKED)
+         {
+            result.error_message = StringFormat("News blocked for %s on recheck (%s)",
+                                                normalized.signal_symbol,
+                                                recheck_state);
+            LogDecision("OrderEngine",
+                        "NEWS_GATE_BLOCK",
+                        StringFormat("{\"signal_symbol\":\"%s\",\"detail\":\"%s\",\"phase\":\"pre_execute\"}",
+                                     normalized.signal_symbol,
+                                     recheck_state));
+            return result;
+         }
+      }
 
       ExecuteOrderWithRetry(normalized,
                             is_pending,
-                            risk_dollars,
+                            evaluated_risk,
                             projected_total,
                             projected_symbol_positions,
                             projected_symbol_pending,
@@ -1364,7 +1667,7 @@ public:
                                   normalized.symbol,
                                   EnumToString(normalized.type),
                                   result.last_retcode));
-         ExecuteMarketFallback(normalized, risk_dollars, result);
+         ExecuteMarketFallback(normalized, evaluated_risk, result);
       }
 
       if(intent_created && intent_index >= 0 && intent_index < ArraySize(m_intent_journal.intents))
@@ -1843,6 +2146,143 @@ bool OrderEngine::EvaluatePositionCaps(const OrderRequest &request,
    return true;
 }
 
+bool OrderEngine::ValidateRiskConstraints(const OrderRequest &request,
+                                          const double entry_price,
+                                          const bool is_pending,
+                                          double &out_evaluated_risk,
+                                          EquityBudgetGateResult &out_gate,
+                                          string &out_rejection_reason)
+{
+#ifdef RPEA_ORDER_ENGINE_SKIP_EQUITY
+   out_rejection_reason = "";
+   ZeroMemory(out_gate);
+
+   bool risk_calc_ok = false;
+   if(g_oe_risk_override.active)
+   {
+      risk_calc_ok = g_oe_risk_override.ok;
+      out_evaluated_risk = g_oe_risk_override.risk_value;
+   }
+   else
+   {
+      out_evaluated_risk = Equity_CalcRiskDollars(request.symbol,
+                                                  request.volume,
+                                                  entry_price,
+                                                  request.sl,
+                                                  risk_calc_ok);
+   }
+
+   if(!risk_calc_ok || out_evaluated_risk <= 0.0)
+   {
+      out_rejection_reason = "risk_calc_failed";
+      return false;
+   }
+
+#ifdef RPEA_TEST_RUNNER
+   if(g_test_gate_force_fail)
+   {
+      out_rejection_reason = "forced_fail";
+      return false;
+   }
+#endif
+
+   out_gate.approved = true;
+   out_gate.gate_pass = true;
+   out_gate.gating_reason = "skip_equity";
+   out_gate.room_available = 1e9;
+   out_gate.room_today = 1e9;
+   out_gate.room_overall = 1e9;
+   out_gate.open_risk = 0.0;
+   out_gate.pending_risk = 0.0;
+   out_gate.next_worst_case = out_evaluated_risk;
+   out_gate.calculation_error = false;
+
+   return true;
+#else
+   out_evaluated_risk = 0.0;
+   out_rejection_reason = "";
+   ZeroMemory(out_gate);
+
+   bool risk_calc_ok = false;
+
+   if(g_oe_risk_override.active)
+   {
+      risk_calc_ok = g_oe_risk_override.ok;
+      out_evaluated_risk = g_oe_risk_override.risk_value;
+   }
+   else
+   {
+      out_evaluated_risk = Equity_CalcRiskDollars(request.symbol,
+                                                  request.volume,
+                                                  entry_price,
+                                                  request.sl,
+                                                  risk_calc_ok);
+   }
+
+   if(!risk_calc_ok || out_evaluated_risk <= 0.0)
+   {
+      out_rejection_reason = "risk_calc_failed";
+      return false;
+   }
+
+   out_gate = Equity_EvaluateBudgetGate(g_ctx, out_evaluated_risk);
+
+   double headroom = RiskGateHeadroom;
+   if(headroom <= 0.0 || !MathIsValidNumber(headroom))
+      headroom = DEFAULT_RiskGateHeadroom;
+
+   double min_room = MathMin(out_gate.room_today, out_gate.room_overall);
+   if(min_room < 0.0 || !MathIsValidNumber(min_room))
+      min_room = 0.0;
+
+   const double projected = out_gate.open_risk + out_gate.pending_risk + out_evaluated_risk;
+   const double threshold = headroom * min_room;
+
+   bool gate_allowed = out_gate.gate_pass;
+   if(min_room > 0.0 && MathIsValidNumber(threshold))
+      gate_allowed = (projected <= threshold + 1e-6);
+
+   if(!gate_allowed)
+   {
+      out_rejection_reason = (StringLen(out_gate.gating_reason) > 0
+                              ? out_gate.gating_reason
+                              : "budget_gate");
+      return false;
+   }
+
+   return true;
+#endif
+}
+
+NewsGateState OrderEngine::EvaluateNewsGate(const string signal_symbol,
+                                            const bool is_protective_exit,
+                                            string &out_detail) const
+{
+   string normalized = SymbolBridge_Normalize(signal_symbol);
+   out_detail = "CLEAR";
+
+   if(normalized == "XAUEUR")
+   {
+      const bool xau_blocked = News_IsBlocked("XAUUSD");
+      const bool eur_blocked = News_IsBlocked("EURUSD");
+      if(xau_blocked || eur_blocked)
+      {
+         string leg = (xau_blocked ? "XAUUSD" : "EURUSD");
+         out_detail = leg + (is_protective_exit ? "_PROTECTIVE" : "_BLOCKED");
+         return (is_protective_exit ? NEWS_GATE_PROTECTIVE_ALLOWED : NEWS_GATE_BLOCKED);
+      }
+      return NEWS_GATE_CLEAR;
+   }
+
+   if(News_IsBlocked(signal_symbol))
+   {
+      out_detail = normalized + (is_protective_exit ? "_PROTECTIVE" : "_BLOCKED");
+      return (is_protective_exit ? NEWS_GATE_PROTECTIVE_ALLOWED : NEWS_GATE_BLOCKED);
+   }
+
+   return NEWS_GATE_CLEAR;
+}
+
 bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
                                         const bool is_pending_request,
                                         const double evaluated_risk,
@@ -1899,15 +2339,19 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
                                                 snapshot_ask);
 
    double requested_price = request.price;
-    if(is_market_request && requested_price <= 0.0 && have_snapshot)
-    {
-       const bool buy_init = IsBuyDirection(request.type);
-       const double snapshot_price = buy_init
-                                     ? (snapshot_ask > 0.0 ? snapshot_ask : snapshot_bid)
-                                     : (snapshot_bid > 0.0 ? snapshot_bid : snapshot_ask);
-       if(snapshot_price > 0.0)
-          requested_price = snapshot_price;
-    }
+   double execution_price_hint = request.price;
+   if(is_market_request && requested_price <= 0.0 && have_snapshot)
+   {
+      const bool buy_init = IsBuyDirection(request.type);
+      const double snapshot_price = buy_init
+                                    ? (snapshot_ask > 0.0 ? snapshot_ask : snapshot_bid)
+                                    : (snapshot_bid > 0.0 ? snapshot_bid : snapshot_ask);
+      if(snapshot_price > 0.0)
+      {
+         requested_price = snapshot_price;
+         execution_price_hint = snapshot_price;
+      }
+   }
 
    const double base_point = snapshot_point;
    const double base_multiplier = (base_point > 0.0 ? MathMax(1.0, 1.0 / base_point) : 1.0);
@@ -1921,7 +2365,7 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
    trade_request.symbol = request.symbol;
    trade_request.type = request.type;
    trade_request.volume = request.volume;
-   trade_request.price = request.price;
+   trade_request.price = execution_price_hint;
    trade_request.sl = request.sl;
    trade_request.tp = request.tp;
    trade_request.deviation = base_deviation;
@@ -2005,6 +2449,8 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
          if(requested_price <= 0.0)
             requested_price = quote_price;
 
+         execution_price_hint = quote_price;
+
          const double calc_point = (attempt_point > 0.0
                                     ? attempt_point
                                     : (snapshot_point > 0.0 ? snapshot_point : 0.0));
@@ -2062,6 +2508,7 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
       }
 
       ZeroMemory(trade_result);
+      trade_request.price = execution_price_hint;
       const bool send_ok = OE_OrderSend(trade_request, trade_result);
       result.last_retcode = (int)trade_result.retcode;
 
@@ -2258,6 +2705,13 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
                       requested_price,
                       result.executed_price,
                       final_slippage_pts));
+
+   if(result.success && result.ticket > 0 && !is_pending_request && IsMasterAccount())
+   {
+      TrackSLEnforcement(result.ticket, TimeCurrent());
+      SaveSLEnforcementState();
+   }
+
    return result.success;
 }
 
@@ -2433,6 +2887,219 @@ bool OrderEngine::ExecuteMarketFallback(const OrderRequest &pending_request,
                                                projected_symbol_pending,
                                                result);
    return executed;
+}
+
+void OrderEngine::EnsureSLEnforcementLoaded()
+{
+   if(m_sl_state_loaded)
+      return;
+   m_sl_state_loaded = true;
+   m_sl_enforcement_count = 0;
+   ArrayResize(m_sl_enforcement_queue, 0);
+
+   string contents = Persistence_ReadWholeFile(FILE_SL_ENFORCEMENT);
+   if(StringLen(contents) == 0)
+      return;
+
+   string objects[];
+   if(!Persistence_SplitJsonArrayObjects(contents, objects))
+      return;
+
+   const int count = ArraySize(objects);
+   if(count <= 0)
+      return;
+
+   ArrayResize(m_sl_enforcement_queue, count);
+   for(int i = 0; i < count; i++)
+   {
+      string obj = objects[i];
+      if(StringLen(obj) == 0)
+         continue;
+
+      SLEnforcementEntry entry;
+      ZeroMemory(entry);
+      entry.active = true;
+      ulong ticket = 0;
+      if(!Persistence_ParseULongField(obj, "ticket", ticket) || ticket == 0)
+         continue;
+      entry.ticket = ticket;
+
+      string str_value = "";
+      if(Persistence_ParseStringField(obj, "open_time", str_value))
+         entry.open_time = Persistence_ParseIso8601(str_value);
+      if(Persistence_ParseStringField(obj, "sl_set_time", str_value))
+         entry.sl_set_time = Persistence_ParseIso8601(str_value);
+      if(Persistence_ParseStringField(obj, "status", str_value))
+         entry.status = str_value;
+      if(Persistence_ParseStringField(obj, "sl_set_within_30s", str_value))
+      {
+         StringToLower(str_value);
+         entry.sl_set_within_30s = (str_value == "true");
+      }
+      else
+      {
+         entry.sl_set_within_30s = false;
+      }
+
+      if(entry.open_time <= 0)
+         entry.open_time = TimeCurrent();
+      if(StringLen(entry.status) == 0)
+         entry.status = "PENDING";
+
+      if(m_sl_enforcement_count >= ArraySize(m_sl_enforcement_queue))
+         ArrayResize(m_sl_enforcement_queue, m_sl_enforcement_count + 4);
+      m_sl_enforcement_queue[m_sl_enforcement_count++] = entry;
+   }
+}
+
+void OrderEngine::TrackSLEnforcement(const ulong ticket, const datetime open_time)
+{
+   if(ticket == 0)
+      return;
+   EnsureSLEnforcementLoaded();
+
+   for(int i = 0; i < m_sl_enforcement_count; i++)
+   {
+      if(m_sl_enforcement_queue[i].ticket == ticket)
+      {
+         m_sl_enforcement_queue[i].open_time = open_time;
+         m_sl_enforcement_queue[i].sl_set_time = 0;
+         m_sl_enforcement_queue[i].sl_set_within_30s = false;
+         m_sl_enforcement_queue[i].status = "PENDING";
+         m_sl_enforcement_queue[i].active = true;
+         SaveSLEnforcementState();
+         return;
+      }
+   }
+
+   if(ArraySize(m_sl_enforcement_queue) <= m_sl_enforcement_count)
+      ArrayResize(m_sl_enforcement_queue, m_sl_enforcement_count + 4);
+
+   SLEnforcementEntry entry;
+   ZeroMemory(entry);
+   entry.ticket = ticket;
+   entry.open_time = open_time;
+   entry.sl_set_time = 0;
+   entry.sl_set_within_30s = false;
+   entry.status = "PENDING";
+   entry.active = true;
+
+   m_sl_enforcement_queue[m_sl_enforcement_count++] = entry;
+   SaveSLEnforcementState();
+}
+
+void OrderEngine::RemoveSLEnforcementAt(const int index)
+{
+   if(index < 0 || index >= m_sl_enforcement_count)
+      return;
+
+   for(int i = index; i < m_sl_enforcement_count - 1; i++)
+      m_sl_enforcement_queue[i] = m_sl_enforcement_queue[i + 1];
+
+   m_sl_enforcement_count = MathMax(0, m_sl_enforcement_count - 1);
+}
+
+bool OrderEngine::GetPositionSLByTicket(const ulong ticket,
+                                        double &out_sl,
+                                        datetime &out_open_time) const
+{
+   int total = PositionsTotal();
+   for(int i = 0; i < total; i++)
+   {
+      ulong pos_ticket = PositionGetTicket(i);
+      if(pos_ticket == ticket)
+      {
+         out_sl = PositionGetDouble(POSITION_SL);
+         out_open_time = (datetime)PositionGetInteger(POSITION_TIME);
+         return true;
+      }
+   }
+   out_sl = 0.0;
+   out_open_time = 0;
+   return false;
+}
+
+void OrderEngine::CheckPendingSLEnforcementInternal()
+{
+   EnsureSLEnforcementLoaded();
+   if(m_sl_enforcement_count <= 0)
+      return;
+
+   const datetime now = TimeCurrent();
+   bool state_dirty = false;
+
+   for(int i = 0; i < m_sl_enforcement_count; )
+   {
+      SLEnforcementEntry entry = m_sl_enforcement_queue[i];
+      if(!entry.active)
+      {
+         RemoveSLEnforcementAt(i);
+         state_dirty = true;
+         continue;
+      }
+
+      double sl_value = 0.0;
+      datetime pos_open_time = 0;
+      const bool has_position = GetPositionSLByTicket(entry.ticket, sl_value, pos_open_time);
+
+      if(!has_position)
+      {
+         entry.status = "UNKNOWN_POSITION";
+         entry.active = false;
+         LogDecision("OrderEngine",
+                     "SL_ENFORCEMENT_DROP",
+                     StringFormat("{\"ticket\":%llu,\"reason\":\"position_missing\"}", entry.ticket));
+         RemoveSLEnforcementAt(i);
+         state_dirty = true;
+         continue;
+      }
+
+      const double elapsed = (double)(now - entry.open_time);
+
+      if(sl_value > 0.0)
+      {
+         entry.sl_set_time = now;
+         entry.sl_set_within_30s = (elapsed <= 30.0 + 1e-6);
+         entry.status = (entry.sl_set_within_30s ? "ON_TIME" : "LATE");
+         entry.active = false;
+         LogDecision("OrderEngine",
+                     "SL_ENFORCEMENT_SET",
+                     StringFormat("{\"ticket\":%llu,\"elapsed\":%.1f,\"status\":\"%s\"}",
+                                  entry.ticket,
+                                  elapsed,
+                                  entry.status));
+         RemoveSLEnforcementAt(i);
+         state_dirty = true;
+         continue;
+      }
+
+      if(elapsed >= 30.0 && entry.status != "MISSING")
+      {
+         entry.status = "MISSING";
+         LogDecision("OrderEngine",
+                     "SL_ENFORCEMENT_MISSING",
+                     StringFormat("{\"ticket\":%llu,\"elapsed\":%.1f}", entry.ticket, elapsed));
+         m_sl_enforcement_queue[i] = entry;
+         state_dirty = true;
+         i++;
+         continue;
+      }
+
+      m_sl_enforcement_queue[i] = entry;
+      i++;
+   }
+
+   if(state_dirty)
+      SaveSLEnforcementState();
+}
+
+bool OrderEngine::IsMasterAccount() const
+{
+   long trade_mode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
+   if(trade_mode != ACCOUNT_TRADE_MODE_REAL)
+      return false;
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   return (MathIsValidNumber(balance) && balance >= 25000.0);
 }
 
 void OrderEngine::AppendLogLine(const string line)
@@ -2702,7 +3369,24 @@ void OrderEngine::Audit_LogIntentEvent(const OrderIntent &intent,
    record.rho_est = intent.rho_est;
    record.est_value = intent.est_value;
    record.hold_time = intent.hold_time_seconds;
-   record.gating_reason = (StringLen(gating_reason_override) > 0 ? gating_reason_override : intent.gating_reason);
+   string gating_reason = intent.gating_reason;
+   if(intent.is_proxy)
+     {
+      string proxy_info = intent.proxy_context;
+      if(StringLen(proxy_info) == 0 && intent.signal_symbol != "" && intent.symbol != intent.signal_symbol)
+         proxy_info = StringFormat("%s->%s rate=%.5f",
+                                   intent.signal_symbol,
+                                   intent.symbol,
+                                   intent.proxy_rate);
+      if(StringLen(proxy_info) > 0 && StringFind(gating_reason, proxy_info) < 0)
+      {
+         if(StringLen(gating_reason) > 0)
+            gating_reason = gating_reason + "|" + proxy_info;
+         else
+            gating_reason = proxy_info;
+      }
+     }
+   record.gating_reason = (StringLen(gating_reason_override) > 0 ? gating_reason_override : gating_reason);
    record.news_window_state = (StringLen(news_state_override) > 0 ? news_state_override : intent.news_window_state);
    AuditLogger_Log(record);
 }
@@ -2794,6 +3478,9 @@ void OrderEngine::ResetState()
 {
    m_oco_count = 0;
    m_execution_locked = false;
+   m_sl_enforcement_count = 0;
+   m_sl_state_loaded = false;
+   ArrayResize(m_sl_enforcement_queue, 0);
 }
 
 string OrderEngine::FormatLogLine(const string message)
@@ -3982,3 +4669,9 @@ void OrderEngine_OnTradeTxn(const MqlTradeTransaction& trans,
 // End include guard
 #undef OE_CORRELATION_FALLBACK
 #endif // RPEA_ORDER_ENGINE_MQH
+bool OE_Test_GetPriceOverride(const string symbol,
+                              double &point,
+                              int &digits,
+                              double &bid,
+                              double &ask,
+                              int &stops_level);
