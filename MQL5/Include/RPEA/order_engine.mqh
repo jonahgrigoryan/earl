@@ -186,6 +186,77 @@ enum RetryPolicy
    RETRY_POLICY_LINEAR
 };
 
+enum OrderErrorClass
+{
+   ERRORCLASS_FAILFAST = 0,
+   ERRORCLASS_TRANSIENT,
+   ERRORCLASS_RECOVERABLE,
+   ERRORCLASS_UNKNOWN
+};
+
+enum OrderErrorDecisionType
+{
+   ERROR_DECISION_FAIL_FAST = 0,
+   ERROR_DECISION_RETRY,
+   ERROR_DECISION_DROP
+};
+
+struct OrderError
+{
+   string           context;
+   string           intent_id;
+   string           action_id;
+   ulong            ticket;
+   int              retcode;
+   OrderErrorClass  cls;
+   int              attempt;
+   double           requested_price;
+   double           executed_price;
+   double           requested_volume;
+   bool             is_protective_exit;
+   bool             is_retry_candidate;
+
+   OrderError(const int ret = 0)
+   {
+      context = "";
+      intent_id = "";
+      action_id = "";
+      ticket = 0;
+      attempt = 0;
+      requested_price = 0.0;
+      executed_price = 0.0;
+      requested_volume = 0.0;
+      is_protective_exit = false;
+      is_retry_candidate = true;
+      SetRetcode(ret);
+   }
+
+   void SetRetcode(const int ret)
+   {
+      retcode = ret;
+      cls = OE_ClassifyRetcode(ret);
+   }
+};
+
+struct OrderErrorDecision
+{
+   OrderErrorDecisionType type;
+   int                    retry_delay_ms;
+   string                 gating_reason;
+
+   OrderErrorDecision()
+   {
+      type = ERROR_DECISION_DROP;
+      retry_delay_ms = 0;
+      gating_reason = "";
+   }
+};
+
+OrderErrorClass OE_ClassifyRetcode(const int retcode);
+bool OE_ShouldFailFast(const OrderErrorClass cls);
+bool OE_ShouldRetryClass(const OrderErrorClass cls);
+string OE_ErrorClassName(const OrderErrorClass cls);
+
 class RetryManager
 {
 private:
@@ -294,6 +365,49 @@ public:
       return "UNKNOWN";
    }
 };
+
+OrderErrorClass OE_ClassifyRetcode(const int retcode)
+{
+   switch(retcode)
+   {
+      case TRADE_RETCODE_TRADE_DISABLED:
+      case TRADE_RETCODE_MARKET_CLOSED:
+      case TRADE_RETCODE_NO_MONEY:
+         return ERRORCLASS_FAILFAST;
+
+      case TRADE_RETCODE_CONNECTION:
+      case TRADE_RETCODE_TIMEOUT:
+         return ERRORCLASS_TRANSIENT;
+
+      case TRADE_RETCODE_REQUOTE:
+      case TRADE_RETCODE_PRICE_CHANGED:
+      case TRADE_RETCODE_PRICE_OFF:
+      case TRADE_RETCODE_INVALID_PRICE:
+         return ERRORCLASS_RECOVERABLE;
+   }
+   return ERRORCLASS_UNKNOWN;
+}
+
+bool OE_ShouldFailFast(const OrderErrorClass cls)
+{
+   return (cls == ERRORCLASS_FAILFAST);
+}
+
+bool OE_ShouldRetryClass(const OrderErrorClass cls)
+{
+   return (cls == ERRORCLASS_TRANSIENT || cls == ERRORCLASS_RECOVERABLE);
+}
+
+string OE_ErrorClassName(const OrderErrorClass cls)
+{
+   switch(cls)
+   {
+      case ERRORCLASS_FAILFAST: return "FAIL_FAST";
+      case ERRORCLASS_TRANSIENT: return "TRANSIENT";
+      case ERRORCLASS_RECOVERABLE: return "RECOVERABLE";
+   }
+   return "UNKNOWN";
+}
 
 bool OE_OrderSend(const MqlTradeRequest &request, MqlTradeResult &result);
 void OE_ApplyRetryDelay(const int delay_ms);
@@ -505,6 +619,17 @@ private:
     OCORelationship m_oco_relationships[];
     int             m_oco_count;
     bool            m_execution_locked;
+    int             m_consecutive_failures;
+    int             m_failure_window_count;
+    datetime        m_failure_window_start;
+    datetime        m_last_failure_time;
+    datetime        m_circuit_breaker_until;
+    string          m_breaker_reason;
+    datetime        m_last_alert_time;
+    bool            m_self_heal_active;
+    int             m_self_heal_attempts;
+    string          m_self_heal_reason;
+    datetime        m_next_self_heal_time;
    
    // Configuration (from inputs)
    int             m_max_retry_attempts;
@@ -519,6 +644,13 @@ private:
    bool            m_enable_risk_reduction_sibling_cancel;
    bool            m_enable_detailed_logging;
    int             m_log_buffer_size;
+   int             m_resilience_max_failures;
+   int             m_resilience_failure_window_sec;
+   int             m_resilience_breaker_cooldown_sec;
+   int             m_resilience_self_heal_window_sec;
+   int             m_resilience_self_heal_max_attempts;
+   int             m_resilience_alert_throttle_sec;
+   bool            m_resilience_protective_bypass;
    string          m_log_buffer[];
    int             m_log_buffer_count;
    bool            m_log_buffer_dirty;
@@ -649,6 +781,19 @@ private:
       m_oco_count = MathMax(0, m_oco_count - 1);
       return true;
    }
+   void   LoadResilienceConfig();
+   void   RestoreEngineStateFromJournal();
+   void   SyncEngineStateToJournal();
+   OrderErrorDecision OrderEngine_HandleError(const OrderError &err);
+   void   OrderEngine_RecordFailure(const datetime now);
+   void   OrderEngine_RecordSuccess();
+   void   OrderEngine_TripCircuitBreaker(const string reason);
+   void   OrderEngine_ResetCircuitBreaker(const string source);
+   bool   OrderEngine_IsCircuitBreakerActive();
+   bool   OrderEngine_ShouldBypassBreaker(const OrderError &err) const;
+   bool   OrderEngine_ShouldBypassBreaker(const bool protective) const;
+   void   OrderEngine_LogErrorHandling(const OrderError &err, const OrderErrorDecision &decision);
+   void   OrderEngine_ScheduleSelfHeal(const string reason);
 
    // Session cutoff override (tests)
    bool     m_cutoff_override_active;
@@ -826,6 +971,17 @@ public:
    {
       m_oco_count = 0;
       m_execution_locked = false;
+      m_consecutive_failures = 0;
+      m_failure_window_count = 0;
+      m_failure_window_start = (datetime)0;
+      m_last_failure_time = (datetime)0;
+      m_circuit_breaker_until = (datetime)0;
+      m_breaker_reason = "";
+      m_last_alert_time = (datetime)0;
+      m_self_heal_active = false;
+      m_self_heal_attempts = 0;
+      m_self_heal_reason = "";
+      m_next_self_heal_time = (datetime)0;
       
       // Initialize with defaults from config.mqh
       m_max_retry_attempts = DEFAULT_MaxRetryAttempts;
@@ -840,6 +996,13 @@ public:
       m_enable_risk_reduction_sibling_cancel = DEFAULT_EnableRiskReductionSiblingCancel;
       m_enable_detailed_logging = DEFAULT_EnableDetailedLogging;
       m_log_buffer_size = DEFAULT_LogBufferSize;
+      m_resilience_max_failures = DEFAULT_MaxConsecutiveFailures;
+      m_resilience_failure_window_sec = DEFAULT_FailureWindowSec;
+      m_resilience_breaker_cooldown_sec = DEFAULT_CircuitBreakerCooldownSec;
+      m_resilience_self_heal_window_sec = DEFAULT_SelfHealRetryWindowSec;
+      m_resilience_self_heal_max_attempts = DEFAULT_SelfHealMaxAttempts;
+      m_resilience_alert_throttle_sec = DEFAULT_ErrorAlertThrottleSec;
+      m_resilience_protective_bypass = DEFAULT_BreakerProtectiveExitBypass;
       m_log_buffer_count = 0;
       m_log_buffer_dirty = false;
       m_retry_manager.Configure(m_max_retry_attempts,
@@ -869,6 +1032,44 @@ public:
       m_log_buffer_count = 0;
       m_log_buffer_dirty = false;
    }
+
+   bool BreakerBlocksAction(const bool is_protective)
+   {
+      return (!OrderEngine_ShouldBypassBreaker(is_protective) && OrderEngine_IsCircuitBreakerActive());
+   }
+
+   OrderErrorDecision ResilienceHandleError(const OrderError &err)
+   {
+      return OrderEngine_HandleError(err);
+   }
+
+   void ResilienceRecordSuccess()
+   {
+      OrderEngine_RecordSuccess();
+   }
+
+   void TestResetResilienceState()
+   {
+      m_consecutive_failures = 0;
+      m_failure_window_count = 0;
+      m_failure_window_start = (datetime)0;
+      m_last_failure_time = (datetime)0;
+      m_circuit_breaker_until = (datetime)0;
+      m_breaker_reason = "";
+      m_last_alert_time = (datetime)0;
+      m_self_heal_active = false;
+      m_self_heal_attempts = 0;
+      m_self_heal_reason = "";
+      m_next_self_heal_time = (datetime)0;
+   }
+
+   int GetConsecutiveFailures() const { return m_consecutive_failures; }
+   int GetFailureWindowCount() const { return m_failure_window_count; }
+   datetime GetBreakerUntil() const { return m_circuit_breaker_until; }
+   string GetBreakerReason() const { return m_breaker_reason; }
+   bool IsSelfHealActive() const { return m_self_heal_active; }
+   int GetSelfHealAttempts() const { return m_self_heal_attempts; }
+   datetime GetNextSelfHealTime() const { return m_next_self_heal_time; }
    
    //===========================================================================
    // Initialization and Lifecycle Methods
@@ -878,6 +1079,7 @@ public:
    {
       LogOE("OrderEngine::Init() - Initializing Order Engine");
       ResetState();
+      LoadResilienceConfig();
       // Initialize partial fill tracking (Task 8)
       m_partial_fill_count = 0;
       ArrayResize(m_partial_fill_states, 100);
@@ -888,6 +1090,7 @@ public:
                                 m_initial_retry_delay_ms,
                                 m_retry_backoff_multiplier);
       LoadIntentJournal();
+      RestoreEngineStateFromJournal();
       CleanupExpiredJournalEntries(TimeCurrent());
       PersistIntentJournal();
       LogOE("OrderEngine::Init() - Initialization complete");
@@ -2041,6 +2244,11 @@ public:
       ArrayResize(m_intent_journal.queued_actions, recovered.queued_count);
       for(int i = 0; i < recovered.queued_count; ++i)
          m_intent_journal.queued_actions[i] = recovered.queued_actions[i];
+      if(recovered.has_engine_state)
+         m_intent_journal.engine_state = recovered.engine_state;
+      else
+         Persistence_ResetEngineState(m_intent_journal.engine_state);
+      RestoreEngineStateFromJournal();
       TouchJournalSequences();
       m_intent_journal_dirty = true;
 
@@ -2677,6 +2885,25 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
       if(attempt > 0)
          retries_performed = attempt;
 
+      if(attempt == 0 &&
+         OrderEngine_IsCircuitBreakerActive() &&
+         !OrderEngine_ShouldBypassBreaker(request.is_protective))
+      {
+         OrderError breaker_err;
+         breaker_err.context = "ExecuteOrderWithRetry";
+         breaker_err.intent_id = result.intent_id;
+         breaker_err.SetRetcode(TRADE_RETCODE_TRADE_DISABLED);
+         breaker_err.attempt = attempt;
+         breaker_err.is_protective_exit = request.is_protective;
+         breaker_err.requested_volume = request.volume;
+         breaker_err.requested_price = requested_price;
+         OrderErrorDecision gate = OrderEngine_HandleError(breaker_err);
+         result.success = false;
+         result.error_message = (gate.gating_reason == "" ? "circuit_breaker_active" : gate.gating_reason);
+         result.last_retcode = breaker_err.retcode;
+         break;
+      }
+
       if(is_market_request)
       {
          double attempt_point = snapshot_point;
@@ -2808,6 +3035,7 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
          result.retry_count = retries_performed;
          result.last_retcode = (int)trade_result.retcode;
          result.error_message = "";
+         OrderEngine_RecordSuccess();
 
          double executed_slippage_pts = 0.0;
          if(snapshot_point > 0.0 && requested_price > 0.0 && trade_result.price > 0.0)
@@ -2835,27 +3063,32 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
          break;
       }
 
-      const RetryPolicy policy = m_retry_manager.GetPolicyForError(trade_result.retcode);
-      const string policy_name = m_retry_manager.PolicyName(policy);
-      const bool retry_allowed = m_retry_manager.ShouldRetry(policy, attempt);
+      OrderError err((int)trade_result.retcode);
+      err.context = "ExecuteOrderWithRetry";
+      err.intent_id = result.intent_id;
+      err.ticket = (trade_result.order != 0 ? trade_result.order : trade_result.deal);
+      err.attempt = attempt;
+      err.requested_price = requested_price;
+      err.executed_price = trade_result.price;
+      err.requested_volume = request.volume;
+      err.is_protective_exit = request.is_protective;
+      OrderErrorDecision decision = OrderEngine_HandleError(err);
 
-      LogOE(StringFormat("ExecuteOrderWithRetry failure: attempt=%d retcode=%d policy=%s retry_allowed=%s slippage=%.2f pts",
+      LogOE(StringFormat("ExecuteOrderWithRetry failure: attempt=%d retcode=%d decision=%d slippage=%.2f pts",
                          attempt,
                          trade_result.retcode,
-                         policy_name,
-                         retry_allowed ? "true" : "false",
+                         (int)decision.type,
                          attempt_slippage));
 
       LogDecision("OrderEngine",
                   "ORDER_RETRY_EVALUATE",
-                  StringFormat("{\"attempt\":%d,\"retcode\":%d,\"policy\":\"%s\",\"retry_allowed\":%s,\"slippage_pts\":%.2f}",
+                  StringFormat("{\"attempt\":%d,\"retcode\":%d,\"decision\":%d,\"retry_delay\":%d,\"slippage_pts\":%.2f}",
                                attempt,
                                trade_result.retcode,
-                               policy_name,
-                               retry_allowed ? "true" : "false",
+                               (int)decision.type,
+                               decision.retry_delay_ms,
                                attempt_slippage));
 
-      // For pending orders that trigger market fallback, stop retrying immediately
       if(is_pending_request && ShouldFallbackToMarket(trade_result.retcode))
       {
          LogOE(StringFormat("ExecuteOrderWithRetry stopping pending retry: fallback to market on retcode %d",
@@ -2863,17 +3096,19 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
          break;
       }
 
-      if(!retry_allowed)
-         break;
-
-      const int delay_ms = m_retry_manager.CalculateDelayMs(attempt + 1, policy);
-      if(delay_ms > 0)
+      if(decision.type != ERROR_DECISION_RETRY)
       {
-         LogOE(StringFormat("ExecuteOrderWithRetry delay before retry %d: %d ms (policy=%s)",
+         if(decision.type == ERROR_DECISION_FAIL_FAST && decision.gating_reason != "")
+            result.error_message = decision.gating_reason;
+         break;
+      }
+
+      if(decision.retry_delay_ms > 0)
+      {
+         LogOE(StringFormat("ExecuteOrderWithRetry delay before retry %d: %d ms",
                             attempt + 1,
-                            delay_ms,
-                            policy_name));
-         OE_ApplyRetryDelay(delay_ms);
+                            decision.retry_delay_ms));
+         OE_ApplyRetryDelay(decision.retry_delay_ms);
       }
    }
 
@@ -2886,6 +3121,15 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
       result.retry_count = retries_performed;
 
       result.error_message = slippage_reject_reason;
+      OrderError err(TRADE_RETCODE_PRICE_OFF);
+      err.context = "ExecuteOrderWithRetry";
+      err.intent_id = result.intent_id;
+      err.attempt = retries_performed;
+      err.requested_price = requested_price;
+      err.executed_price = last_quote_price;
+      err.requested_volume = request.volume;
+      err.is_protective_exit = request.is_protective;
+      OrderEngine_HandleError(err);
 
       LogOE(StringFormat("ExecuteOrderWithRetry slippage rejection: requested=%.5f quote=%.5f slippage=%.2f pts limit=%.2f",
                          requested_price,
@@ -2921,6 +3165,15 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
       result.executed_volume = 0.0;
       result.retry_count = retries_performed;
       result.error_message = quote_failure_reason;
+      OrderError err(TRADE_RETCODE_PRICE_OFF);
+      err.context = "ExecuteOrderWithRetry";
+      err.intent_id = result.intent_id;
+      err.attempt = retries_performed;
+      err.requested_price = requested_price;
+      err.executed_price = last_quote_price;
+      err.requested_volume = request.volume;
+      err.is_protective_exit = request.is_protective;
+      OrderEngine_HandleError(err);
 
       LogOE(StringFormat("ExecuteOrderWithRetry quote failure: %s", quote_failure_reason));
       LogDecision("OrderEngine",
@@ -2955,6 +3208,15 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
       }
 
       result.error_message = fail_message;
+      OrderError err(result.last_retcode);
+      err.context = "ExecuteOrderWithRetry";
+      err.intent_id = result.intent_id;
+      err.attempt = retries_performed;
+      err.requested_price = requested_price;
+      err.executed_price = last_quote_price;
+      err.requested_volume = request.volume;
+      err.is_protective_exit = request.is_protective;
+      OrderEngine_HandleError(err);
 
       LogDecision("OrderEngine",
                   "EXECUTE_ORDER_FAIL",
@@ -3451,12 +3713,238 @@ void OrderEngine::PersistIntentJournal()
 {
    if(!m_intent_journal_dirty)
       return;
+   SyncEngineStateToJournal();
    if(!IntentJournal_Save(m_intent_journal))
    {
       PrintFormat("[OrderEngine] PersistIntentJournal: failed to save %s", FILE_INTENTS);
       return;
    }
    m_intent_journal_dirty = false;
+}
+
+void OrderEngine::LoadResilienceConfig()
+{
+   m_resilience_max_failures = Config_GetMaxConsecutiveFailures();
+   m_resilience_failure_window_sec = Config_GetFailureWindowSec();
+   m_resilience_breaker_cooldown_sec = Config_GetCircuitBreakerCooldownSec();
+   m_resilience_self_heal_window_sec = Config_GetSelfHealRetryWindowSec();
+   m_resilience_self_heal_max_attempts = Config_GetSelfHealMaxAttempts();
+   m_resilience_alert_throttle_sec = Config_GetErrorAlertThrottleSec();
+   m_resilience_protective_bypass = Config_GetBreakerProtectiveExitBypass();
+}
+
+void OrderEngine::RestoreEngineStateFromJournal()
+{
+   PersistedEngineState state = m_intent_journal.engine_state;
+   m_consecutive_failures = state.consecutive_failures;
+   m_failure_window_count = state.failure_window_count;
+   m_failure_window_start = state.failure_window_start;
+   m_last_failure_time = state.last_failure_time;
+   m_circuit_breaker_until = state.circuit_breaker_until;
+   m_breaker_reason = state.breaker_reason;
+   m_last_alert_time = state.last_alert_time;
+   m_self_heal_active = state.self_heal_active;
+   m_self_heal_attempts = state.self_heal_attempts;
+   m_self_heal_reason = state.self_heal_reason;
+   m_next_self_heal_time = state.next_self_heal_time;
+}
+
+void OrderEngine::SyncEngineStateToJournal()
+{
+   PersistedEngineState state = m_intent_journal.engine_state;
+   state.consecutive_failures = m_consecutive_failures;
+   state.failure_window_count = m_failure_window_count;
+   state.failure_window_start = m_failure_window_start;
+   state.last_failure_time = m_last_failure_time;
+   state.circuit_breaker_until = m_circuit_breaker_until;
+   state.breaker_reason = m_breaker_reason;
+   state.last_alert_time = m_last_alert_time;
+   state.self_heal_active = m_self_heal_active;
+   state.self_heal_attempts = m_self_heal_attempts;
+   state.self_heal_reason = m_self_heal_reason;
+   state.next_self_heal_time = m_next_self_heal_time;
+   m_intent_journal.engine_state = state;
+}
+
+bool OrderEngine::OrderEngine_IsCircuitBreakerActive()
+{
+   if(m_circuit_breaker_until <= 0)
+      return false;
+   datetime now = TimeCurrent();
+   if(now >= m_circuit_breaker_until)
+   {
+      OrderEngine_ResetCircuitBreaker("cooldown_elapsed");
+      return false;
+   }
+   return true;
+}
+
+bool OrderEngine::OrderEngine_ShouldBypassBreaker(const bool protective) const
+{
+   if(!protective)
+      return false;
+   return m_resilience_protective_bypass;
+}
+
+bool OrderEngine::OrderEngine_ShouldBypassBreaker(const OrderError &err) const
+{
+   return OrderEngine_ShouldBypassBreaker(err.is_protective_exit);
+}
+
+void OrderEngine::OrderEngine_RecordFailure(const datetime now)
+{
+   if(m_failure_window_start <= 0 || (now - m_failure_window_start) > m_resilience_failure_window_sec)
+   {
+      m_failure_window_start = now;
+      m_failure_window_count = 0;
+   }
+   m_failure_window_count++;
+   m_consecutive_failures++;
+   m_last_failure_time = now;
+}
+
+void OrderEngine::OrderEngine_RecordSuccess()
+{
+   m_consecutive_failures = 0;
+   m_failure_window_count = 0;
+   m_failure_window_start = TimeCurrent();
+   m_last_failure_time = 0;
+   if(m_self_heal_active)
+   {
+      m_self_heal_active = false;
+      m_self_heal_reason = "";
+      m_next_self_heal_time = 0;
+      m_self_heal_attempts = 0;
+   }
+   if(m_circuit_breaker_until > 0 && !OrderEngine_IsCircuitBreakerActive())
+      OrderEngine_ResetCircuitBreaker("success");
+}
+
+void OrderEngine::OrderEngine_TripCircuitBreaker(const string reason)
+{
+   datetime now = TimeCurrent();
+   m_circuit_breaker_until = now + m_resilience_breaker_cooldown_sec;
+   m_breaker_reason = reason;
+   m_consecutive_failures = 0;
+   m_failure_window_count = 0;
+   m_failure_window_start = now;
+   OrderEngine_ScheduleSelfHeal(reason);
+   MarkJournalDirty();
+   string fields = StringFormat("{\"reason\":\"%s\",\"until\":%d}", reason, (int)m_circuit_breaker_until);
+   LogDecision("OrderEngine", "BREAKER_TRIP", fields);
+}
+
+void OrderEngine::OrderEngine_ResetCircuitBreaker(const string source)
+{
+   m_circuit_breaker_until = 0;
+   m_breaker_reason = "";
+   m_self_heal_active = false;
+   m_self_heal_reason = "";
+   m_next_self_heal_time = 0;
+    m_self_heal_attempts = 0;
+   MarkJournalDirty();
+   string fields = StringFormat("{\"source\":\"%s\"}", source);
+   LogDecision("OrderEngine", "BREAKER_RESET", fields);
+}
+
+void OrderEngine::OrderEngine_ScheduleSelfHeal(const string reason)
+{
+   if(m_resilience_self_heal_max_attempts <= 0)
+      return;
+   if(m_self_heal_attempts >= m_resilience_self_heal_max_attempts)
+      return;
+   datetime now = TimeCurrent();
+   if(m_self_heal_active && now < m_next_self_heal_time)
+      return;
+   m_self_heal_active = true;
+   m_self_heal_attempts++;
+   m_self_heal_reason = reason;
+   m_next_self_heal_time = now + m_resilience_self_heal_window_sec;
+   MarkJournalDirty();
+}
+
+void OrderEngine::OrderEngine_LogErrorHandling(const OrderError &err,
+                                               const OrderErrorDecision &decision)
+{
+   string json = StringFormat("{\"context\":\"%s\",\"retcode\":%d,\"class\":\"%s\",\"decision\":%d,\"gating\":\"%s\",\"attempt\":%d,\"breaker_until\":%d,\"failures\":%d}",
+                              err.context,
+                              err.retcode,
+                              OE_ErrorClassName(err.cls),
+                              (int)decision.type,
+                              decision.gating_reason,
+                              err.attempt,
+                              (int)m_circuit_breaker_until,
+                              m_consecutive_failures);
+   LogDecision("OrderEngine", "ERROR_HANDLING", json);
+   datetime now = TimeCurrent();
+   if(decision.type == ERROR_DECISION_FAIL_FAST && m_resilience_alert_throttle_sec > 0)
+   {
+      if(m_last_alert_time <= 0 || (now - m_last_alert_time) >= m_resilience_alert_throttle_sec)
+      {
+         PrintFormat("[OrderEngine][ErrorHandling] %s ret=%d cls=%s decision=%d reason=%s",
+                     err.context,
+                     err.retcode,
+                     OE_ErrorClassName(err.cls),
+                     (int)decision.type,
+                     decision.gating_reason);
+         m_last_alert_time = now;
+      }
+   }
+#ifdef RPEA_TEST_RUNNER
+   OE_Test_CaptureDecision("ERROR_HANDLING", json);
+#endif
+}
+
+OrderErrorDecision OrderEngine::OrderEngine_HandleError(const OrderError &err)
+{
+   OrderErrorDecision decision;
+   datetime now = TimeCurrent();
+   const bool bypass = OrderEngine_ShouldBypassBreaker(err);
+   if(OrderEngine_IsCircuitBreakerActive() && !bypass)
+   {
+      decision.type = ERROR_DECISION_FAIL_FAST;
+      decision.gating_reason = "circuit_breaker_active";
+      OrderEngine_LogErrorHandling(err, decision);
+      return decision;
+   }
+
+   if(OE_ShouldFailFast(err.cls) && !bypass)
+   {
+      decision.type = ERROR_DECISION_FAIL_FAST;
+      decision.gating_reason = "fail_fast";
+      if(!bypass)
+         OrderEngine_RecordFailure(now);
+      OrderEngine_TripCircuitBreaker("fail_fast:" + err.context);
+      OrderEngine_LogErrorHandling(err, decision);
+      return decision;
+   }
+
+   if(!bypass)
+      OrderEngine_RecordFailure(now);
+
+   RetryPolicy policy = m_retry_manager.GetPolicyForError(err.retcode);
+   bool allow_retry = (OE_ShouldRetryClass(err.cls) && m_retry_manager.ShouldRetry(policy, err.attempt));
+   if(allow_retry && (!OrderEngine_IsCircuitBreakerActive() || bypass))
+   {
+      decision.type = ERROR_DECISION_RETRY;
+      decision.retry_delay_ms = m_retry_manager.CalculateDelayMs(err.attempt + 1, policy);
+   }
+   else
+   {
+      decision.type = ERROR_DECISION_DROP;
+      decision.gating_reason = (allow_retry ? "" : "retry_exhausted");
+   }
+
+   OrderEngine_LogErrorHandling(err, decision);
+
+   if(!bypass && (m_consecutive_failures >= m_resilience_max_failures ||
+      m_failure_window_count >= m_resilience_max_failures))
+   {
+      if(!OrderEngine_IsCircuitBreakerActive())
+         OrderEngine_TripCircuitBreaker("threshold:" + err.context);
+   }
+
+   return decision;
 }
 
 void OrderEngine::TouchJournalSequences()
@@ -3787,6 +4275,17 @@ void OrderEngine::ResetState()
 {
    m_oco_count = 0;
    m_execution_locked = false;
+   m_consecutive_failures = 0;
+   m_failure_window_count = 0;
+   m_failure_window_start = (datetime)0;
+   m_last_failure_time = (datetime)0;
+   m_circuit_breaker_until = (datetime)0;
+   m_breaker_reason = "";
+   m_last_alert_time = (datetime)0;
+   m_self_heal_active = false;
+   m_self_heal_attempts = 0;
+   m_self_heal_reason = "";
+   m_next_self_heal_time = (datetime)0;
    m_sl_enforcement_count = 0;
    m_sl_state_loaded = false;
    ArrayResize(m_sl_enforcement_queue, 0);
@@ -4739,6 +5238,15 @@ bool Queue_OrderEngine_ApplyAction(const QueuedAction &qa,
    MqlTradeResult  res;
    ZeroMemory(req);
    ZeroMemory(res);
+   const bool is_protective_action = (qa.action_type == QA_SL_MODIFY ||
+                                      qa.action_type == QA_TP_MODIFY ||
+                                      qa.action_type == QA_CLOSE);
+
+   if(g_order_engine.BreakerBlocksAction(is_protective_action))
+   {
+      out_reason_code = "BREAKER_ACTIVE";
+      return false;
+   }
 
    if(qa.action_type == QA_SL_MODIFY || qa.action_type == QA_TP_MODIFY)
    {
@@ -4795,37 +5303,34 @@ bool Queue_OrderEngine_ApplyAction(const QueuedAction &qa,
       if(OE_OrderSend(req, res))
       {
          out_reason_code = "APPLY_OK";
+         g_order_engine.ResilienceRecordSuccess();
          return true;
       }
 
-      int ret = (int)res.retcode;
-      if(ret == TRADE_RETCODE_REQUOTE ||
-         ret == TRADE_RETCODE_PRICE_CHANGED ||
-         ret == TRADE_RETCODE_PRICE_OFF)
+      OrderError err((int)res.retcode);
+      err.context = "QueueAction";
+      err.intent_id = qa.intent_id;
+      err.action_id = qa.context_hex;
+      err.ticket = (ulong)qa.ticket;
+      err.attempt = attempt;
+      err.requested_volume = req.volume;
+      err.requested_price = req.price;
+      err.executed_price = res.price;
+      err.is_protective_exit = is_protective_action;
+      OrderErrorDecision decision = g_order_engine.ResilienceHandleError(err);
+      if(decision.type == ERROR_DECISION_RETRY && attempt + 1 < max_attempts)
       {
-         if(attempt + 1 < max_attempts)
-         {
-            Sleep(300);
-            out_reason_code = "APPLY_RETRY";
-            continue;
-         }
-      }
-      if(ret == TRADE_RETCODE_TRADE_DISABLED ||
-         ret == TRADE_RETCODE_NO_MONEY)
-      {
-         out_permanent_failure = true;
-         out_reason_code = "APPLY_FAIL_PERMANENT";
-         return false;
-      }
-
-      if(attempt + 1 < max_attempts)
-      {
-         Sleep(300);
+         if(decision.retry_delay_ms > 0)
+            OE_ApplyRetryDelay(decision.retry_delay_ms);
          out_reason_code = "APPLY_RETRY";
          continue;
       }
-
-      out_reason_code = "APPLY_RETRY";
+      if(decision.type == ERROR_DECISION_FAIL_FAST)
+      {
+         out_reason_code = (decision.gating_reason == "" ? "APPLY_FAIL" : decision.gating_reason);
+         return false;
+      }
+      out_reason_code = "APPLY_FAIL";
       return false;
    }
 
@@ -5009,9 +5514,3 @@ void OrderEngine_OnTradeTxn(const MqlTradeTransaction& trans,
 // End include guard
 #undef OE_CORRELATION_FALLBACK
 #endif // RPEA_ORDER_ENGINE_MQH
-bool OE_Test_GetPriceOverride(const string symbol,
-                              double &point,
-                              int &digits,
-                              double &bid,
-                              double &ask,
-                              int &stops_level);

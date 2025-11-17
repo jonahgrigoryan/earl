@@ -32,6 +32,13 @@ input double RiskGateHeadroom           = 0.90;
 #define NewsBufferS            300
 #define MaxSpreadPoints        40
 #define MaxSlippagePoints      10
+#define MaxConsecutiveFailures 3
+#define FailureWindowSec       900
+#define CircuitBreakerCooldownSec 120
+#define SelfHealRetryWindowSec 300
+#define SelfHealMaxAttempts    2
+#define ErrorAlertThrottleSec  60
+#define BreakerProtectiveExitBypass true
 #define NewsCSVPath            "Files/RPEA/news/calendar_high_impact.csv"
 #define NewsCSVMaxAgeHours     24
 #define RPEA_ORDER_ENGINE_SKIP_RISK
@@ -74,6 +81,8 @@ bool g_test_gate_force_fail = false;
 #include "test_order_engine_recovery.mqh"
 // Integration tests (Task 15)
 #include "test_order_engine_integration.mqh"
+// Error handling tests (Task 17)
+#include "test_order_engine_errors.mqh"
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -317,6 +326,15 @@ void RunAllTests()
    g_test_reporter.RecordTest(suite16, "TestRecovery_RunAll", task16_result,
                                task16_result ? "State recovery tests passed" : "State recovery tests failed");
    g_test_reporter.EndSuite(suite16);
+
+   Print("=================================================================");
+   Print("RPEA Error Handling & Resilience Tests - Task 17");
+   Print("=================================================================");
+   int suite17 = g_test_reporter.BeginSuite("Task17_Error_Handling");
+   bool task17_result = TestOrderEngineErrors_RunAll();
+   g_test_reporter.RecordTest(suite17, "TestOrderEngineErrors_RunAll", task17_result,
+                               task17_result ? "Error handling tests passed" : "Error handling tests failed");
+   g_test_reporter.EndSuite(suite17);
 
    Print("Test execution complete.");
 }

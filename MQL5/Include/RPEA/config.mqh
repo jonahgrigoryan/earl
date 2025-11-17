@@ -77,6 +77,13 @@
 #define DEFAULT_AuditLogPath                 "Files/RPEA/logs/"
 #define DEFAULT_LogBufferSize                1000
 #define DEFAULT_CorrelationFallbackRho       0.30
+#define DEFAULT_MaxConsecutiveFailures       3
+#define DEFAULT_FailureWindowSec             900
+#define DEFAULT_CircuitBreakerCooldownSec    120
+#define DEFAULT_SelfHealRetryWindowSec       300
+#define DEFAULT_SelfHealMaxAttempts          2
+#define DEFAULT_ErrorAlertThrottleSec        60
+#define DEFAULT_BreakerProtectiveExitBypass  true
 
 // Synthetic Manager Configuration (Task 11 acceptance §Synthetic Manager Interface)
 #define DEFAULT_UseXAUEURProxy               true
@@ -100,6 +107,89 @@
 #define DEFAULT_MaxQueueSize                 1000
 #define DEFAULT_QueueTTLMinutes              5
 #define DEFAULT_EnableQueuePrioritization    true
+
+#ifdef __MQL5__
+//------------------------------------------------------------------------------
+// Task 17 Resilience Config Helpers
+//------------------------------------------------------------------------------
+
+inline void Config_LogClampInt(const string key, const int invalid_value, const int fallback)
+{
+   PrintFormat("[Config] %s invalid (%d), clamping to %d", key, invalid_value, fallback);
+}
+
+inline int Config_GetMaxConsecutiveFailures()
+{
+   int configured = MaxConsecutiveFailures;
+   if(configured <= 0)
+   {
+      Config_LogClampInt("MaxConsecutiveFailures", configured, DEFAULT_MaxConsecutiveFailures);
+      configured = DEFAULT_MaxConsecutiveFailures;
+   }
+   return configured;
+}
+
+inline int Config_GetFailureWindowSec()
+{
+   int configured = FailureWindowSec;
+   if(configured <= 0)
+   {
+      Config_LogClampInt("FailureWindowSec", configured, DEFAULT_FailureWindowSec);
+      configured = DEFAULT_FailureWindowSec;
+   }
+   return configured;
+}
+
+inline int Config_GetCircuitBreakerCooldownSec()
+{
+   int configured = CircuitBreakerCooldownSec;
+   if(configured <= 0)
+   {
+      Config_LogClampInt("CircuitBreakerCooldownSec", configured, DEFAULT_CircuitBreakerCooldownSec);
+      configured = DEFAULT_CircuitBreakerCooldownSec;
+   }
+   return configured;
+}
+
+inline int Config_GetSelfHealRetryWindowSec()
+{
+   int configured = SelfHealRetryWindowSec;
+   if(configured <= 0)
+   {
+      Config_LogClampInt("SelfHealRetryWindowSec", configured, DEFAULT_SelfHealRetryWindowSec);
+      configured = DEFAULT_SelfHealRetryWindowSec;
+   }
+   return configured;
+}
+
+inline int Config_GetSelfHealMaxAttempts()
+{
+   int configured = SelfHealMaxAttempts;
+   if(configured <= 0)
+   {
+      Config_LogClampInt("SelfHealMaxAttempts", configured, DEFAULT_SelfHealMaxAttempts);
+      configured = DEFAULT_SelfHealMaxAttempts;
+   }
+   return configured;
+}
+
+inline int Config_GetErrorAlertThrottleSec()
+{
+   int configured = ErrorAlertThrottleSec;
+   if(configured <= 0)
+   {
+      Config_LogClampInt("ErrorAlertThrottleSec", configured, DEFAULT_ErrorAlertThrottleSec);
+      configured = DEFAULT_ErrorAlertThrottleSec;
+   }
+   return configured;
+}
+
+inline bool Config_GetBreakerProtectiveExitBypass()
+{
+   bool configured = BreakerProtectiveExitBypass;
+   return configured;
+}
+#endif // __MQL5__
 
 //==============================================================================
 // M3 TODO: Implementation stubs for Order Engine interfaces

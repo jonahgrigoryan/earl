@@ -78,6 +78,14 @@ input string NewsCSVPath                = DEFAULT_NewsCSVPath;
 input int    NewsCSVMaxAgeHours         = DEFAULT_NewsCSVMaxAgeHours;
 input int    BudgetGateLockMs           = 1000;
 input double RiskGateHeadroom           = 0.90;
+// Resilience / error handling
+input int    MaxConsecutiveFailures     = DEFAULT_MaxConsecutiveFailures;
+input int    FailureWindowSec           = DEFAULT_FailureWindowSec;
+input int    CircuitBreakerCooldownSec  = DEFAULT_CircuitBreakerCooldownSec;
+input int    SelfHealRetryWindowSec     = DEFAULT_SelfHealRetryWindowSec;
+input int    SelfHealMaxAttempts        = DEFAULT_SelfHealMaxAttempts;
+input int    ErrorAlertThrottleSec      = DEFAULT_ErrorAlertThrottleSec;
+input bool   BreakerProtectiveExitBypass = DEFAULT_BreakerProtectiveExitBypass;
 
 // Timezone
 input bool   UseServerMidnightBaseline  = true;
