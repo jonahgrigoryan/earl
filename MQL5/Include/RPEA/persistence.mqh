@@ -85,10 +85,26 @@ struct PersistedQueuedAction
    string   news_window_state;
 };
 
+struct PersistedEngineState
+{
+   int       consecutive_failures;
+   int       failure_window_count;
+   datetime  failure_window_start;
+   datetime  last_failure_time;
+   datetime  circuit_breaker_until;
+   string    breaker_reason;
+   datetime  last_alert_time;
+   bool      self_heal_active;
+   int       self_heal_attempts;
+   string    self_heal_reason;
+   datetime  next_self_heal_time;
+};
+
 struct IntentJournal
 {
    OrderIntent            intents[];
    PersistedQueuedAction  queued_actions[];
+   PersistedEngineState   engine_state;
 };
 
 struct PersistenceRecoverySummary
@@ -109,6 +125,8 @@ struct PersistenceRecoveredState
    int           intents_count;
    PersistedQueuedAction queued_actions[];
    int           queued_count;
+   PersistedEngineState engine_state;
+   bool          has_engine_state;
    PersistenceRecoverySummary summary;
 };
 
@@ -143,6 +161,8 @@ bool  Persistence_ActionToJson(const PersistedQueuedAction &action, string &out_
 bool  Persistence_OrderIntentFromJson(const string json, OrderIntent &out_intent);
 bool  Persistence_ActionFromJson(const string json, PersistedQueuedAction &out_action);
 string Persistence_ExtractJsonArray(const string json, const string key);
+string Persistence_ExtractJsonObject(const string json, const string key);
+string Persistence_BuildEmptyIntentJournal();
 string Persistence_ReadWholeFile(const string path);
 bool   Persistence_WriteWholeFile(const string path, const string contents);
 bool   Persistence_EnsureIntentFileExists();
@@ -181,13 +201,13 @@ void Persistence_EnsurePlaceholderFiles()
 {
    // State files
    int h;
-    h = FileOpen(FILE_INTENTS, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
-    if(h!=INVALID_HANDLE)
-    {
-       if(FileSize(h)==0)
-          FileWrite(h, "{\"intents\":[],\"queued_actions\":[]}");
-       FileClose(h);
-    }
+   h = FileOpen(FILE_INTENTS, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(h!=INVALID_HANDLE)
+   {
+      if(FileSize(h)==0)
+          FileWrite(h, Persistence_BuildEmptyIntentJournal());
+      FileClose(h);
+   }
 
    h = FileOpen(FILE_QUEUE_ACTIONS, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
    if(h!=INVALID_HANDLE)
@@ -586,6 +606,8 @@ void Persistence_FreeRecoveredState(PersistenceRecoveredState &state)
    ArrayResize(state.queued_actions, 0);
    state.intents_count = 0;
    state.queued_count = 0;
+   state.has_engine_state = false;
+   Persistence_ResetEngineState(state.engine_state);
    state.summary.intents_total = 0;
    state.summary.intents_loaded = 0;
    state.summary.intents_dropped = 0;
@@ -671,15 +693,23 @@ bool Persistence_LoadRecoveredState(PersistenceRecoveredState &out_state)
    if(StringLen(contents) == 0)
       return true;
 
-    int schema_version = 0;
-    if(Persistence_ParseIntField(contents, "schema_version", schema_version))
-    {
-       if(schema_version > 3)
-          PrintFormat("[Persistence] Warning: intent journal schema_version=%d exceeds expected 3", schema_version);
-    }
+   int schema_version = 0;
+   if(Persistence_ParseIntField(contents, "schema_version", schema_version))
+   {
+      if(schema_version > 4)
+         PrintFormat("[Persistence] Warning: intent journal schema_version=%d exceeds expected 4", schema_version);
+   }
 
    string intents_raw = Persistence_ExtractJsonArray(contents, "intents");
    string actions_raw = Persistence_ExtractJsonArray(contents, "queued_actions");
+   string engine_state_raw = Persistence_ExtractJsonObject(contents, "engine_state");
+   Persistence_ResetEngineState(out_state.engine_state);
+   out_state.has_engine_state = false;
+   if(StringLen(engine_state_raw) > 0)
+   {
+      if(Persistence_ParseEngineState(engine_state_raw, out_state.engine_state))
+         out_state.has_engine_state = true;
+   }
    bool intents_present = (StringFind(contents, "\"intents\":[") >= 0);
    bool actions_present = (StringFind(contents, "\"queued_actions\":[") >= 0);
    if(!intents_present || !actions_present)
@@ -803,6 +833,70 @@ string Persistence_ExtractJsonArray(const string json, const string key)
       }
    }
 
+   return "";
+}
+
+string Persistence_ExtractJsonObject(const string json, const string key)
+{
+   string pattern = "\"" + key + "\":";
+   int start = StringFind(json, pattern);
+   if(start < 0)
+      return "";
+   start += StringLen(pattern);
+   int len = StringLen(json);
+   while(start < len)
+   {
+      ushort ch = StringGetCharacter(json, start);
+      if(ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t')
+      {
+         start++;
+         continue;
+      }
+      break;
+   }
+   if(start >= len || StringGetCharacter(json, start) != '{')
+      return "";
+   int depth = 0;
+   bool in_string = false;
+   bool escape = false;
+   int content_start = start + 1;
+   for(int i = start; i < len; ++i)
+   {
+      ushort ch = StringGetCharacter(json, i);
+      if(in_string)
+      {
+         if(escape)
+         {
+            escape = false;
+         }
+         else if(ch == '\\')
+         {
+            escape = true;
+         }
+         else if(ch == '"')
+         {
+            in_string = false;
+         }
+         continue;
+      }
+      if(ch == '"')
+      {
+         in_string = true;
+         continue;
+      }
+      if(ch == '{')
+      {
+         depth++;
+         continue;
+      }
+      if(ch == '}')
+      {
+         depth--;
+         if(depth == 0)
+            return StringSubstr(json, content_start, i - content_start);
+         continue;
+      }
+   }
    return "";
 }
 
@@ -1051,6 +1145,152 @@ bool Persistence_ParseArrayOfDouble(const string json, const string key, double 
       current += StringSubstr(json, i, 1);
    }
    return true;
+}
+
+bool Persistence_ParseBoolField(const string json, const string key, bool &out_value)
+{
+   string pattern = "\"" + key + "\":";
+   int start = StringFind(json, pattern);
+   if(start < 0)
+      return false;
+   start += StringLen(pattern);
+   int len = StringLen(json);
+   string buffer = "";
+   for(int i = start; i < len; ++i)
+   {
+      ushort ch = StringGetCharacter(json, i);
+      if(ch == ',' || ch == '}' || ch == ']')
+         break;
+      if(ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n')
+         continue;
+      buffer += StringSubstr(json, i, 1);
+   }
+   buffer = Persistence_Trim(buffer);
+   if(buffer == "")
+      return false;
+   string lowered = buffer;
+   StringToLower(lowered);
+   if(lowered == "true" || lowered == "1")
+   {
+      out_value = true;
+      return true;
+   }
+   if(lowered == "false" || lowered == "0")
+   {
+      out_value = false;
+      return true;
+   }
+   return false;
+}
+
+void Persistence_ResetEngineState(PersistedEngineState &state)
+{
+   state.consecutive_failures = 0;
+   state.failure_window_count = 0;
+   state.failure_window_start = (datetime)0;
+   state.last_failure_time = (datetime)0;
+   state.circuit_breaker_until = (datetime)0;
+   state.breaker_reason = "";
+   state.last_alert_time = (datetime)0;
+   state.self_heal_active = false;
+   state.self_heal_attempts = 0;
+   state.self_heal_reason = "";
+   state.next_self_heal_time = (datetime)0;
+}
+
+string Persistence_EngineStateToJson(const PersistedEngineState &state)
+{
+   string json = "{";
+   json += "\"consecutive_failures\":" + (string)state.consecutive_failures + ",";
+   json += "\"failure_window_count\":" + (string)state.failure_window_count + ",";
+   json += "\"failure_window_start\":" + (string)state.failure_window_start + ",";
+   json += "\"last_failure_time\":" + (string)state.last_failure_time + ",";
+   json += "\"circuit_breaker_until\":" + (string)state.circuit_breaker_until + ",";
+   json += "\"breaker_reason\":\"" + Persistence_EscapeJson(state.breaker_reason) + "\",";
+   json += "\"last_alert_time\":" + (string)state.last_alert_time + ",";
+   json += "\"self_heal_active\":" + (state.self_heal_active ? "true" : "false") + ",";
+   json += "\"self_heal_attempts\":" + (string)state.self_heal_attempts + ",";
+   json += "\"self_heal_reason\":\"" + Persistence_EscapeJson(state.self_heal_reason) + "\",";
+   json += "\"next_self_heal_time\":" + (string)state.next_self_heal_time;
+   json += "}";
+   return json;
+}
+
+string Persistence_BuildEmptyIntentJournal()
+{
+   PersistedEngineState state;
+   Persistence_ResetEngineState(state);
+   string json = "{";
+   json += "\"schema_version\":4,";
+   json += "\"engine_state\":" + Persistence_EngineStateToJson(state) + ",";
+   json += "\"intents\":[],\"queued_actions\":[]";
+   json += "}";
+   return json;
+}
+
+bool Persistence_ParseEngineState(const string json, PersistedEngineState &out_state)
+{
+   bool parsed_any = false;
+   int int_value = 0;
+   if(Persistence_ParseIntField(json, "consecutive_failures", int_value))
+   {
+      out_state.consecutive_failures = int_value;
+      parsed_any = true;
+   }
+   if(Persistence_ParseIntField(json, "failure_window_count", int_value))
+   {
+      out_state.failure_window_count = int_value;
+      parsed_any = true;
+   }
+   long long_value = 0;
+   if(Persistence_ParseIntegerField(json, "failure_window_start", long_value))
+   {
+      out_state.failure_window_start = (datetime)long_value;
+      parsed_any = true;
+   }
+   if(Persistence_ParseIntegerField(json, "last_failure_time", long_value))
+   {
+      out_state.last_failure_time = (datetime)long_value;
+      parsed_any = true;
+   }
+   if(Persistence_ParseIntegerField(json, "circuit_breaker_until", long_value))
+   {
+      out_state.circuit_breaker_until = (datetime)long_value;
+      parsed_any = true;
+   }
+   string str_value;
+   if(Persistence_ParseStringField(json, "breaker_reason", str_value))
+   {
+      out_state.breaker_reason = str_value;
+      parsed_any = true;
+   }
+   if(Persistence_ParseIntegerField(json, "last_alert_time", long_value))
+   {
+      out_state.last_alert_time = (datetime)long_value;
+      parsed_any = true;
+   }
+   bool bool_value = false;
+   if(Persistence_ParseBoolField(json, "self_heal_active", bool_value))
+   {
+      out_state.self_heal_active = bool_value;
+      parsed_any = true;
+   }
+   if(Persistence_ParseIntField(json, "self_heal_attempts", int_value))
+   {
+      out_state.self_heal_attempts = int_value;
+      parsed_any = true;
+   }
+   if(Persistence_ParseStringField(json, "self_heal_reason", str_value))
+   {
+      out_state.self_heal_reason = str_value;
+      parsed_any = true;
+   }
+   if(Persistence_ParseIntegerField(json, "next_self_heal_time", long_value))
+   {
+      out_state.next_self_heal_time = (datetime)long_value;
+      parsed_any = true;
+   }
+   return parsed_any;
 }
 
 bool Persistence_OrderIntentToJson(const OrderIntent &intent, string &out_json)
@@ -1359,7 +1599,7 @@ bool Persistence_EnsureIntentFileExists()
    if(handle == INVALID_HANDLE)
       return false;
    if(FileSize(handle) == 0)
-      FileWrite(handle, "{\"intents\":[],\"queued_actions\":[]}");
+      FileWrite(handle, Persistence_BuildEmptyIntentJournal());
    FileClose(handle);
    return true;
 }
@@ -1368,6 +1608,7 @@ void IntentJournal_Clear(IntentJournal &journal)
 {
    ArrayResize(journal.intents, 0);
    ArrayResize(journal.queued_actions, 0);
+   Persistence_ResetEngineState(journal.engine_state);
 }
 
 bool IntentJournal_Load(IntentJournal &journal)
@@ -1381,6 +1622,10 @@ bool IntentJournal_Load(IntentJournal &journal)
 
    string intents_raw = Persistence_ExtractJsonArray(contents, "intents");
    string actions_raw = Persistence_ExtractJsonArray(contents, "queued_actions");
+   string engine_state_raw = Persistence_ExtractJsonObject(contents, "engine_state");
+   Persistence_ResetEngineState(journal.engine_state);
+   if(StringLen(engine_state_raw) > 0)
+      Persistence_ParseEngineState(engine_state_raw, journal.engine_state);
 
    string intent_objects[];
    Persistence_SplitJsonArrayObjects(intents_raw, intent_objects);
@@ -1414,7 +1659,8 @@ bool IntentJournal_Save(const IntentJournal &journal)
       Persistence_ActionToJson(journal.queued_actions[i], objects_actions[i]);
 
    string serialized = "{";
-   serialized += "\"schema_version\":3,";
+   serialized += "\"schema_version\":4,";
+   serialized += "\"engine_state\":" + Persistence_EngineStateToJson(journal.engine_state) + ",";
    serialized += "\"intents\":" + Persistence_JoinJsonObjects(objects_intents) + ",";
    serialized += "\"queued_actions\":" + Persistence_JoinJsonObjects(objects_actions);
    serialized += "}";
