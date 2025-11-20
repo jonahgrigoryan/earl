@@ -74,7 +74,7 @@
 #define DEFAULT_OCOCancellationTimeoutMs     1000
 #define DEFAULT_EnableRiskReductionSiblingCancel true
 #define DEFAULT_EnableDetailedLogging        true
-#define DEFAULT_AuditLogPath                 "Files/RPEA/logs/"
+#define DEFAULT_AuditLogPath                 "RPEA/logs/"
 #define DEFAULT_LogBufferSize                1000
 #define DEFAULT_CorrelationFallbackRho       0.30
 #define DEFAULT_MaxConsecutiveFailures       3
@@ -100,7 +100,7 @@
 #define DEFAULT_EnableReplicationFallback    true
 
 // News and Queue Configuration
-#define DEFAULT_NewsCSVPath                  "Files/RPEA/news/calendar_high_impact.csv"
+#define DEFAULT_NewsCSVPath                  "RPEA/news/calendar_high_impact.csv"
 #define DEFAULT_NewsCSVMaxAgeHours           24
 #define DEFAULT_BudgetGateLockMs             1000
 #define DEFAULT_RiskGateHeadroom             0.90
