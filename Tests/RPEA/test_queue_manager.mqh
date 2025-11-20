@@ -290,6 +290,7 @@ bool TestQueue_AuditLogging()
              0.0,
              "{\"source\":\"audit\"}",
              queued_id);
+   AuditLogger_Flush(true);
 
    Queue_Test_SetNewsBlocked(false);
    Queue_Test_Reset();

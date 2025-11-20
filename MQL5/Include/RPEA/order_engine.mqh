@@ -4,14 +4,24 @@
 // order_engine.mqh - Order Engine scaffolding (M3 Task 1)
 // References: .kiro/specs/rpea-m3/tasks.md, design.md
 
+#include <Trade\Trade.mqh>
 #include <RPEA/config.mqh>
+#include <RPEA/app_context.mqh>
 #include <RPEA/logging.mqh>
 #include <RPEA/persistence.mqh>
 #include <RPEA/queue.mqh>
 #include <RPEA/trailing.mqh>
+#include <RPEA/news.mqh>
+#include <RPEA/symbol_bridge.mqh>
 #ifndef RPEA_ORDER_ENGINE_SKIP_SESSIONS
 // Sessions used for cutoff alignment (read-only helpers)
 #include <RPEA/sessions.mqh>
+#endif
+
+#ifdef CorrelationFallbackRho
+#define OE_CORRELATION_FALLBACK CorrelationFallbackRho
+#else
+#define OE_CORRELATION_FALLBACK DEFAULT_CorrelationFallbackRho
 #endif
 
 static bool   g_order_engine_global_lock = false;
@@ -38,11 +48,27 @@ double Equity_CalcRiskDollars(const string symbol,
 #ifndef RPEA_ORDER_ENGINE_SKIP_EQUITY
 #include <RPEA/equity_guardian.mqh>
 #else
+#ifndef EQUITY_GUARDIAN_MQH
+struct EquityBudgetGateResult
+  {
+   bool   approved;
+   bool   gate_pass;
+   string gating_reason;
+   double room_available;
+   double room_today;
+   double room_overall;
+   double open_risk;
+   double pending_risk;
+   double next_worst_case;
+   bool   calculation_error;
+  };
+#endif
 bool Equity_IsPendingOrderType(const int type);
 bool Equity_CheckPositionCaps(const string symbol,
                               int &out_total_positions,
                               int &out_symbol_positions,
                               int &out_symbol_pending);
+EquityBudgetGateResult Equity_EvaluateBudgetGate(const AppContext& ctx, const double next_trade_worst_case);
 #endif
 
 //==============================================================================
@@ -63,6 +89,11 @@ struct OrderRequest
    bool     is_oco_primary;
    ulong    oco_sibling_ticket;
    datetime expiry;
+   string   signal_symbol;
+   bool     is_protective;
+   bool     is_proxy;
+   double   proxy_rate;
+   string   proxy_context;
 };
 
 // Order result structure
@@ -78,6 +109,17 @@ struct OrderResult
    string   intent_id;
    string   accept_once_key;
 };
+
+enum NewsGateState
+  {
+   NEWS_GATE_CLEAR = 0,
+   NEWS_GATE_BLOCKED,
+   NEWS_GATE_PROTECTIVE_ALLOWED
+  };
+
+#ifdef RPEA_TEST_RUNNER
+extern bool g_test_gate_force_fail;
+#endif
 
 // OCO relationship tracking
 struct OCORelationship
@@ -122,6 +164,16 @@ struct PartialFillState
    PartialFillEvent  fills[50];
 };
 
+struct SLEnforcementEntry
+  {
+   ulong    ticket;
+   datetime open_time;
+   datetime sl_set_time;
+   bool     sl_set_within_30s;
+   string   status;
+   bool     active;
+  };
+
 //==============================================================================
 // Retry Policy Support
 //==============================================================================
@@ -133,6 +185,77 @@ enum RetryPolicy
    RETRY_POLICY_EXPONENTIAL,
    RETRY_POLICY_LINEAR
 };
+
+enum OrderErrorClass
+{
+   ERRORCLASS_FAILFAST = 0,
+   ERRORCLASS_TRANSIENT,
+   ERRORCLASS_RECOVERABLE,
+   ERRORCLASS_UNKNOWN
+};
+
+enum OrderErrorDecisionType
+{
+   ERROR_DECISION_FAIL_FAST = 0,
+   ERROR_DECISION_RETRY,
+   ERROR_DECISION_DROP
+};
+
+struct OrderError
+{
+   string           context;
+   string           intent_id;
+   string           action_id;
+   ulong            ticket;
+   int              retcode;
+   OrderErrorClass  cls;
+   int              attempt;
+   double           requested_price;
+   double           executed_price;
+   double           requested_volume;
+   bool             is_protective_exit;
+   bool             is_retry_candidate;
+
+   OrderError(const int ret = 0)
+   {
+      context = "";
+      intent_id = "";
+      action_id = "";
+      ticket = 0;
+      attempt = 0;
+      requested_price = 0.0;
+      executed_price = 0.0;
+      requested_volume = 0.0;
+      is_protective_exit = false;
+      is_retry_candidate = true;
+      SetRetcode(ret);
+   }
+
+   void SetRetcode(const int ret)
+   {
+      retcode = ret;
+      cls = OE_ClassifyRetcode(ret);
+   }
+};
+
+struct OrderErrorDecision
+{
+   OrderErrorDecisionType type;
+   int                    retry_delay_ms;
+   string                 gating_reason;
+
+   OrderErrorDecision()
+   {
+      type = ERROR_DECISION_DROP;
+      retry_delay_ms = 0;
+      gating_reason = "";
+   }
+};
+
+OrderErrorClass OE_ClassifyRetcode(const int retcode);
+bool OE_ShouldFailFast(const OrderErrorClass cls);
+bool OE_ShouldRetryClass(const OrderErrorClass cls);
+string OE_ErrorClassName(const OrderErrorClass cls);
 
 class RetryManager
 {
@@ -242,6 +365,49 @@ public:
       return "UNKNOWN";
    }
 };
+
+OrderErrorClass OE_ClassifyRetcode(const int retcode)
+{
+   switch(retcode)
+   {
+      case TRADE_RETCODE_TRADE_DISABLED:
+      case TRADE_RETCODE_MARKET_CLOSED:
+      case TRADE_RETCODE_NO_MONEY:
+         return ERRORCLASS_FAILFAST;
+
+      case TRADE_RETCODE_CONNECTION:
+      case TRADE_RETCODE_TIMEOUT:
+         return ERRORCLASS_TRANSIENT;
+
+      case TRADE_RETCODE_REQUOTE:
+      case TRADE_RETCODE_PRICE_CHANGED:
+      case TRADE_RETCODE_PRICE_OFF:
+      case TRADE_RETCODE_INVALID_PRICE:
+         return ERRORCLASS_RECOVERABLE;
+   }
+   return ERRORCLASS_UNKNOWN;
+}
+
+bool OE_ShouldFailFast(const OrderErrorClass cls)
+{
+   return (cls == ERRORCLASS_FAILFAST);
+}
+
+bool OE_ShouldRetryClass(const OrderErrorClass cls)
+{
+   return (cls == ERRORCLASS_TRANSIENT || cls == ERRORCLASS_RECOVERABLE);
+}
+
+string OE_ErrorClassName(const OrderErrorClass cls)
+{
+   switch(cls)
+   {
+      case ERRORCLASS_FAILFAST: return "FAIL_FAST";
+      case ERRORCLASS_TRANSIENT: return "TRANSIENT";
+      case ERRORCLASS_RECOVERABLE: return "RECOVERABLE";
+   }
+   return "UNKNOWN";
+}
 
 bool OE_OrderSend(const MqlTradeRequest &request, MqlTradeResult &result);
 void OE_ApplyRetryDelay(const int delay_ms);
@@ -453,6 +619,17 @@ private:
     OCORelationship m_oco_relationships[];
     int             m_oco_count;
     bool            m_execution_locked;
+    int             m_consecutive_failures;
+    int             m_failure_window_count;
+    datetime        m_failure_window_start;
+    datetime        m_last_failure_time;
+    datetime        m_circuit_breaker_until;
+    string          m_breaker_reason;
+    datetime        m_last_alert_time;
+    bool            m_self_heal_active;
+    int             m_self_heal_attempts;
+    string          m_self_heal_reason;
+    datetime        m_next_self_heal_time;
    
    // Configuration (from inputs)
    int             m_max_retry_attempts;
@@ -467,6 +644,13 @@ private:
    bool            m_enable_risk_reduction_sibling_cancel;
    bool            m_enable_detailed_logging;
    int             m_log_buffer_size;
+   int             m_resilience_max_failures;
+   int             m_resilience_failure_window_sec;
+   int             m_resilience_breaker_cooldown_sec;
+   int             m_resilience_self_heal_window_sec;
+   int             m_resilience_self_heal_max_attempts;
+   int             m_resilience_alert_throttle_sec;
+   bool            m_resilience_protective_bypass;
    string          m_log_buffer[];
    int             m_log_buffer_count;
    bool            m_log_buffer_dirty;
@@ -479,6 +663,15 @@ private:
    // Partial fill tracking (Task 8)
    PartialFillState m_partial_fill_states[];
    int              m_partial_fill_count;
+   SLEnforcementEntry m_sl_enforcement_queue[];
+   int                m_sl_enforcement_count;
+   bool               m_sl_state_loaded;
+   OrderIntent        m_recovered_intents[];
+   int                m_recovered_intent_count;
+   PersistedQueuedAction m_recovered_actions[];
+   int                m_recovered_action_count;
+   bool               m_recovery_completed;
+   datetime           m_recovery_timestamp;
 
    // Helper methods
    void LogOE(const string message)
@@ -512,6 +705,15 @@ private:
                              int &out_symbol_positions,
                              int &out_symbol_pending,
                              string &out_violation_reason);
+   bool ValidateRiskConstraints(const OrderRequest &request,
+                                const double entry_price,
+                                const bool is_pending,
+                                double &out_evaluated_risk,
+                                EquityBudgetGateResult &out_gate,
+                                string &out_rejection_reason);
+   NewsGateState EvaluateNewsGate(const string signal_symbol,
+                                  const bool is_protective_exit,
+                                  string &out_detail) const;
    bool ExecuteOrderWithRetry(const OrderRequest &request,
                               const bool is_pending_request,
                               const double evaluated_risk,
@@ -536,6 +738,17 @@ private:
    ulong  HashString64(const string text) const;
    string HashToHex(const ulong value) const;
    bool   IntentExists(const string accept_key, int &out_index) const;
+   void   Audit_LogIntentEvent(const OrderIntent &intent,
+                               const string action_suffix,
+                               const string decision,
+                               const double requested_price,
+                               const double executed_price,
+                               const double requested_vol,
+                               const double filled_vol,
+                               const double remaining_vol,
+                               const int retry_count,
+                               const string gating_reason_override = "",
+                               const string news_state_override = "");
    bool   FindIntentByTicket(const ulong ticket,
                              string &out_intent_id,
                              string &out_accept_key) const;
@@ -547,6 +760,12 @@ private:
    void   CleanupExpiredJournalEntries(const datetime now);
    void   MarkJournalDirty();
    void   TouchJournalSequences();
+   void   TrackSLEnforcement(const ulong ticket, const datetime open_time);
+   void   EnsureSLEnforcementLoaded();
+   void   CheckPendingSLEnforcementInternal();
+   bool   IsMasterAccount() const;
+   void   RemoveSLEnforcementAt(const int index);
+   bool   GetPositionSLByTicket(const ulong ticket, double &out_sl, datetime &out_open_time) const;
    bool   ClearOCOByIndex(const int idx)
    {
       if(idx < 0 || idx >= m_oco_count)
@@ -562,6 +781,19 @@ private:
       m_oco_count = MathMax(0, m_oco_count - 1);
       return true;
    }
+   void   LoadResilienceConfig();
+   void   RestoreEngineStateFromJournal();
+   void   SyncEngineStateToJournal();
+   OrderErrorDecision OrderEngine_HandleError(const OrderError &err);
+   void   OrderEngine_RecordFailure(const datetime now);
+   void   OrderEngine_RecordSuccess();
+   void   OrderEngine_TripCircuitBreaker(const string reason);
+   void   OrderEngine_ResetCircuitBreaker(const string source);
+   bool   OrderEngine_IsCircuitBreakerActive();
+   bool   OrderEngine_ShouldBypassBreaker(const OrderError &err) const;
+   bool   OrderEngine_ShouldBypassBreaker(const bool protective) const;
+   void   OrderEngine_LogErrorHandling(const OrderError &err, const OrderErrorDecision &decision);
+   void   OrderEngine_ScheduleSelfHeal(const string reason);
 
    // Session cutoff override (tests)
    bool     m_cutoff_override_active;
@@ -681,12 +913,75 @@ public:
    {
       return FindIntentByTicket(ticket, out_intent_id, out_accept_key);
    }
+   bool FindIntentById(const string intent_id, OrderIntent &out_intent) const;
+   int  FindIntentIndexById(const string intent_id) const;
+   bool MatchIntentByTicket(const ulong ticket, OrderIntent &out_intent) const;
+
+   void LoadSLEnforcementState()
+   {
+      EnsureSLEnforcementLoaded();
+   }
+
+   void SaveSLEnforcementState() const
+   {
+      if(!m_sl_state_loaded)
+         return;
+      string rows[];
+      int active_count = 0;
+      for(int i = 0; i < m_sl_enforcement_count; i++)
+      {
+         if(!m_sl_enforcement_queue[i].active)
+            continue;
+         active_count++;
+      }
+      ArrayResize(rows, active_count);
+      int cursor = 0;
+      for(int i = 0; i < m_sl_enforcement_count; i++)
+      {
+         if(!m_sl_enforcement_queue[i].active)
+            continue;
+         SLEnforcementEntry entry = m_sl_enforcement_queue[i];
+         string open_iso = Persistence_FormatIso8601(entry.open_time);
+         string sl_iso = (entry.sl_set_time > 0 ? Persistence_FormatIso8601(entry.sl_set_time) : "");
+         rows[cursor++] = StringFormat("{\"ticket\":%llu,\"open_time\":\"%s\",\"sl_set_time\":\"%s\",\"status\":\"%s\",\"sl_set_within_30s\":\"%s\"}",
+                                       entry.ticket,
+                                       open_iso,
+                                       sl_iso,
+                                       entry.status,
+                                       entry.sl_set_within_30s ? "true" : "false");
+      }
+      string payload = "[";
+      for(int i = 0; i < ArraySize(rows); i++)
+      {
+         if(i > 0)
+            payload += ",";
+         payload += rows[i];
+      }
+      payload += "]";
+      Persistence_WriteWholeFile(FILE_SL_ENFORCEMENT, payload);
+   }
+
+   void CheckPendingSLEnforcement()
+   {
+      CheckPendingSLEnforcementInternal();
+   }
    
    // Constructor
    OrderEngine()
    {
       m_oco_count = 0;
       m_execution_locked = false;
+      m_consecutive_failures = 0;
+      m_failure_window_count = 0;
+      m_failure_window_start = (datetime)0;
+      m_last_failure_time = (datetime)0;
+      m_circuit_breaker_until = (datetime)0;
+      m_breaker_reason = "";
+      m_last_alert_time = (datetime)0;
+      m_self_heal_active = false;
+      m_self_heal_attempts = 0;
+      m_self_heal_reason = "";
+      m_next_self_heal_time = (datetime)0;
       
       // Initialize with defaults from config.mqh
       m_max_retry_attempts = DEFAULT_MaxRetryAttempts;
@@ -701,6 +996,13 @@ public:
       m_enable_risk_reduction_sibling_cancel = DEFAULT_EnableRiskReductionSiblingCancel;
       m_enable_detailed_logging = DEFAULT_EnableDetailedLogging;
       m_log_buffer_size = DEFAULT_LogBufferSize;
+      m_resilience_max_failures = DEFAULT_MaxConsecutiveFailures;
+      m_resilience_failure_window_sec = DEFAULT_FailureWindowSec;
+      m_resilience_breaker_cooldown_sec = DEFAULT_CircuitBreakerCooldownSec;
+      m_resilience_self_heal_window_sec = DEFAULT_SelfHealRetryWindowSec;
+      m_resilience_self_heal_max_attempts = DEFAULT_SelfHealMaxAttempts;
+      m_resilience_alert_throttle_sec = DEFAULT_ErrorAlertThrottleSec;
+      m_resilience_protective_bypass = DEFAULT_BreakerProtectiveExitBypass;
       m_log_buffer_count = 0;
       m_log_buffer_dirty = false;
       m_retry_manager.Configure(m_max_retry_attempts,
@@ -711,11 +1013,15 @@ public:
       m_intent_sequence = 0;
       m_action_sequence = 0;
       
-       ArrayResize(m_oco_relationships, 100);
-      m_cutoff_override_active = false;
-      m_cutoff_override = 0;
-      ArrayResize(m_oco_handled_deals, 32);
-      m_oco_handled_deals_count = 0;
+      ArrayResize(m_oco_relationships, 100);
+     m_cutoff_override_active = false;
+     m_cutoff_override = 0;
+     ArrayResize(m_oco_handled_deals, 32);
+     m_oco_handled_deals_count = 0;
+     m_recovered_intent_count = 0;
+     m_recovered_action_count = 0;
+     m_recovery_completed = false;
+     m_recovery_timestamp = 0;
    }
    
    // Destructor
@@ -726,6 +1032,44 @@ public:
       m_log_buffer_count = 0;
       m_log_buffer_dirty = false;
    }
+
+   bool BreakerBlocksAction(const bool is_protective)
+   {
+      return (!OrderEngine_ShouldBypassBreaker(is_protective) && OrderEngine_IsCircuitBreakerActive());
+   }
+
+   OrderErrorDecision ResilienceHandleError(const OrderError &err)
+   {
+      return OrderEngine_HandleError(err);
+   }
+
+   void ResilienceRecordSuccess()
+   {
+      OrderEngine_RecordSuccess();
+   }
+
+   void TestResetResilienceState()
+   {
+      m_consecutive_failures = 0;
+      m_failure_window_count = 0;
+      m_failure_window_start = (datetime)0;
+      m_last_failure_time = (datetime)0;
+      m_circuit_breaker_until = (datetime)0;
+      m_breaker_reason = "";
+      m_last_alert_time = (datetime)0;
+      m_self_heal_active = false;
+      m_self_heal_attempts = 0;
+      m_self_heal_reason = "";
+      m_next_self_heal_time = (datetime)0;
+   }
+
+   int GetConsecutiveFailures() const { return m_consecutive_failures; }
+   int GetFailureWindowCount() const { return m_failure_window_count; }
+   datetime GetBreakerUntil() const { return m_circuit_breaker_until; }
+   string GetBreakerReason() const { return m_breaker_reason; }
+   bool IsSelfHealActive() const { return m_self_heal_active; }
+   int GetSelfHealAttempts() const { return m_self_heal_attempts; }
+   datetime GetNextSelfHealTime() const { return m_next_self_heal_time; }
    
    //===========================================================================
    // Initialization and Lifecycle Methods
@@ -735,6 +1079,7 @@ public:
    {
       LogOE("OrderEngine::Init() - Initializing Order Engine");
       ResetState();
+      LoadResilienceConfig();
       // Initialize partial fill tracking (Task 8)
       m_partial_fill_count = 0;
       ArrayResize(m_partial_fill_states, 100);
@@ -745,6 +1090,7 @@ public:
                                 m_initial_retry_delay_ms,
                                 m_retry_backoff_multiplier);
       LoadIntentJournal();
+      RestoreEngineStateFromJournal();
       CleanupExpiredJournalEntries(TimeCurrent());
       PersistIntentJournal();
       LogOE("OrderEngine::Init() - Initialization complete");
@@ -761,6 +1107,7 @@ public:
 
       PersistIntentJournal();
       FlushLogBuffer();
+      SaveSLEnforcementState();
       ResetState();
       m_log_buffer_count = 0;
       m_log_buffer_dirty = false;
@@ -775,6 +1122,16 @@ public:
       m_action_sequence = 0;
       m_intent_journal_dirty = true;
       PersistIntentJournal();
+   }
+
+   bool TestIsRecoveryComplete() const
+   {
+      return m_recovery_completed;
+   }
+
+   int TestRecoveredIntentCount() const
+   {
+      return m_recovered_intent_count;
    }
 
    //===========================================================================
@@ -962,6 +1319,7 @@ public:
       string accept_key = "";
       bool intent_created = false;
       datetime intent_time = 0;
+      string news_state_detail = "CLEAR";
       
       LogOE(StringFormat("PlaceOrder: %s %s vol=%.2f price=%.5f sl=%.5f tp=%.5f",
             request.symbol, EnumToString(request.type), request.volume, 
@@ -982,6 +1340,17 @@ public:
                      "PLACE_REJECT",
                      StringFormat("{\"reason\":\"missing_symbol\",\"type\":\"%s\"}",
                                   EnumToString(request.type)));
+         return result;
+      }
+
+      if(SymbolBridge_Normalize(request.symbol) == "XAUEUR")
+      {
+         result.error_message = "XAUEUR execution requires proxy mapping";
+         LogOE("PlaceOrder failed: XAUEUR execution must be proxied to XAUUSD");
+         LogDecision("OrderEngine",
+                     "PLACE_REJECT",
+                     StringFormat("{\"symbol\":\"%s\",\"reason\":\"xaueur_direct\"}",
+                                  request.symbol));
          return result;
       }
 
@@ -1014,6 +1383,30 @@ public:
       }
 
       OrderRequest normalized = request;
+      if(StringLen(normalized.signal_symbol) == 0)
+         normalized.signal_symbol = normalized.symbol;
+      normalized.is_proxy = (SymbolBridge_Normalize(normalized.signal_symbol) != SymbolBridge_Normalize(normalized.symbol));
+      if(normalized.proxy_rate <= 0.0)
+         normalized.proxy_rate = 1.0;
+      normalized.is_protective = request.is_protective;
+      if(normalized.is_proxy && StringLen(normalized.proxy_context) == 0)
+         normalized.proxy_context = StringFormat("%s->%s", normalized.signal_symbol, normalized.symbol);
+
+      const string expected_exec = SymbolBridge_GetExecutionSymbol(normalized.signal_symbol);
+      if(SymbolBridge_Normalize(expected_exec) != SymbolBridge_Normalize(normalized.symbol))
+      {
+         result.error_message = StringFormat("Execution symbol mismatch for %s (expected %s got %s)",
+                                             normalized.signal_symbol,
+                                             expected_exec,
+                                             normalized.symbol);
+         LogDecision("OrderEngine",
+                     "PLACE_REJECT",
+                     StringFormat("{\"signal_symbol\":\"%s\",\"expected\":\"%s\",\"received\":\"%s\"}",
+                                  normalized.signal_symbol,
+                                  expected_exec,
+                                  normalized.symbol));
+         return result;
+      }
 
       const double normalized_volume = OE_NormalizeVolume(request.symbol, request.volume);
       if(!MathIsValidNumber(normalized_volume) || normalized_volume <= 0.0)
@@ -1116,6 +1509,7 @@ public:
       intent_record.accept_once_key = accept_key;
       intent_record.timestamp = intent_time;
       intent_record.symbol = normalized.symbol;
+      intent_record.signal_symbol = normalized.signal_symbol;
       intent_record.order_type = normalized.type;
       intent_record.volume = normalized.volume;
       intent_record.price = normalized.price;
@@ -1123,7 +1517,10 @@ public:
       intent_record.tp = normalized.tp;
       intent_record.expiry = normalized.expiry;
       intent_record.status = "PENDING";
-      intent_record.execution_mode = (mode == "" ? "DIRECT" : mode);
+      intent_record.execution_mode = (normalized.is_proxy ? "PROXY" : "DIRECT");
+      intent_record.is_proxy = normalized.is_proxy;
+      intent_record.proxy_rate = normalized.proxy_rate;
+      intent_record.proxy_context = normalized.proxy_context;
       intent_record.oco_sibling_id = "";
       intent_record.retry_count = 0;
       intent_record.reasoning = request.comment;
@@ -1132,6 +1529,24 @@ public:
       ArrayResize(intent_record.error_messages, 0);
       ArrayResize(intent_record.executed_tickets, 0);
       ArrayResize(intent_record.partial_fills, 0);
+      intent_record.confidence = 0.0;
+      intent_record.efficiency = 0.0;
+      intent_record.rho_est = OE_CORRELATION_FALLBACK;
+      intent_record.est_value = 0.0;
+      intent_record.expected_hold_minutes = 0.0;
+      intent_record.gate_open_risk = 0.0;
+      intent_record.gate_pending_risk = 0.0;
+      intent_record.gate_next_risk = 0.0;
+      intent_record.room_today = 0.0;
+      intent_record.room_overall = 0.0;
+      intent_record.gate_pass = false;
+      intent_record.gating_reason = "";
+      intent_record.news_window_state = news_state_detail;
+      intent_record.decision_context = request.comment;
+      ArrayResize(intent_record.tickets_snapshot, 0);
+      intent_record.last_executed_price = 0.0;
+      intent_record.last_filled_volume = 0.0;
+      intent_record.hold_time_seconds = 0.0;
 
   intent_index = ArraySize(m_intent_journal.intents);
   ArrayResize(m_intent_journal.intents, intent_index + 1);
@@ -1162,6 +1577,36 @@ public:
                                           reason_sanitized);
       LogDecision("OrderEngine", "INTENT_ACCEPT", intent_fields);
       LogAuditRow("ORDER_INTENT", "OrderEngine", LOG_INFO, "Intent recorded", intent_fields);
+      Audit_LogIntentEvent(intent_record,
+                           ":INTENT",
+                           "INTENT_CREATED",
+                           intent_record.price,
+                           0.0,
+                           intent_record.volume,
+                           0.0,
+                           intent_record.volume,
+                           0,
+                           "",
+                           intent_record.news_window_state);
+
+      datetime news_gate_timestamp = TimeCurrent();
+      NewsGateState news_gate_state = EvaluateNewsGate(normalized.signal_symbol,
+                                                       normalized.is_protective,
+                                                       news_state_detail);
+      intent_record.news_window_state = news_state_detail;
+
+      if(news_gate_state == NEWS_GATE_BLOCKED)
+      {
+         result.error_message = StringFormat("News blocked for %s (%s)",
+                                             normalized.signal_symbol,
+                                             news_state_detail);
+         LogDecision("OrderEngine",
+                     "NEWS_GATE_BLOCK",
+                     StringFormat("{\"signal_symbol\":\"%s\",\"detail\":\"%s\"}",
+                                  normalized.signal_symbol,
+                                  news_state_detail));
+         return result;
+      }
 
       int total_positions = 0;
       int symbol_positions = 0;
@@ -1234,15 +1679,31 @@ public:
       double entry_price = normalized.price;
       if(is_market)
       {
+         double override_point = 0.0;
+         int override_digits = 0;
+         double override_bid = 0.0;
+         double override_ask = 0.0;
+         int override_stops = 0;
+         const bool has_price_override = OE_Test_GetPriceOverride(normalized.symbol,
+                                                                  override_point,
+                                                                  override_digits,
+                                                                  override_bid,
+                                                                  override_ask,
+                                                                  override_stops);
+
          double quote = 0.0;
          if(normalized.type == ORDER_TYPE_BUY)
          {
-            if(OE_SymbolInfoDoubleSafe("PlaceOrder::BUY", normalized.symbol, SYMBOL_ASK, quote))
+            if(has_price_override && override_ask > 0.0)
+               entry_price = override_ask;
+            else if(OE_SymbolInfoDoubleSafe("PlaceOrder::BUY", normalized.symbol, SYMBOL_ASK, quote))
                entry_price = quote;
          }
          else if(normalized.type == ORDER_TYPE_SELL)
          {
-            if(OE_SymbolInfoDoubleSafe("PlaceOrder::SELL", normalized.symbol, SYMBOL_BID, quote))
+            if(has_price_override && override_bid > 0.0)
+               entry_price = override_bid;
+            else if(OE_SymbolInfoDoubleSafe("PlaceOrder::SELL", normalized.symbol, SYMBOL_BID, quote))
                entry_price = quote;
          }
       }
@@ -1254,54 +1715,170 @@ public:
             entry_price = normalized_entry;
       }
 
-      bool risk_calc_ok = false;
-      double risk_dollars = 0.0;
-
-      if(g_oe_risk_override.active)
+      if(normalized.is_proxy)
       {
-         risk_calc_ok = g_oe_risk_override.ok;
-         risk_dollars = g_oe_risk_override.risk_value;
-      }
-      else
-      {
-         risk_dollars = Equity_CalcRiskDollars(normalized.symbol,
-                                               normalized.volume,
-                                               entry_price,
-                                               normalized.sl,
-                                               risk_calc_ok);
+         if(normalized.proxy_rate <= 0.0)
+         {
+            result.error_message = "Proxy mapping missing EURUSD rate";
+            LogDecision("OrderEngine",
+                        "PLACE_REJECT",
+                        "{\"reason\":\"proxy_rate_invalid\"}");
+            return result;
+         }
+         double point = 0.0;
+         if(!SymbolInfoDouble(normalized.symbol, SYMBOL_POINT, point) || point <= 0.0)
+         {
+            result.error_message = "Unable to validate proxy distance (point missing)";
+            LogDecision("OrderEngine",
+                        "PLACE_REJECT",
+                        "{\"reason\":\"proxy_point_missing\"}");
+            return result;
+         }
+
+         const double distance_tolerance = 0.5;
+         const double rate_tolerance = 0.05;
+         double exec_sl_points = 0.0;
+         double exec_tp_points = 0.0;
+         if(entry_price > 0.0 && normalized.sl > 0.0)
+            exec_sl_points = MathAbs(entry_price - normalized.sl) / point;
+         if(entry_price > 0.0 && normalized.tp > 0.0)
+            exec_tp_points = MathAbs(normalized.tp - entry_price) / point;
+
+         if(exec_sl_points > 0.0)
+         {
+            double mapped = 0.0;
+            double eurusd_rate = 0.0;
+            double signal_points = exec_sl_points / normalized.proxy_rate;
+            if(signal_points <= 0.0 ||
+               !SymbolBridge_MapDistance(normalized.signal_symbol,
+                                         normalized.symbol,
+                                         signal_points,
+                                         mapped,
+                                         eurusd_rate) ||
+               mapped <= 0.0 ||
+               MathAbs(mapped - exec_sl_points) > distance_tolerance ||
+               MathAbs(eurusd_rate - normalized.proxy_rate) > rate_tolerance)
+            {
+               result.error_message = "Proxy SL distance validation failed";
+               LogDecision("OrderEngine",
+                           "PLACE_REJECT",
+                           StringFormat("{\"reason\":\"proxy_sl_validation\",\"mapped\":%.4f,\"expected\":%.4f}",
+                                        mapped,
+                                        exec_sl_points));
+               return result;
+            }
+         }
+
+         if(exec_tp_points > 0.0)
+         {
+            double mapped = 0.0;
+            double eurusd_rate = 0.0;
+            double signal_points = exec_tp_points / normalized.proxy_rate;
+            if(signal_points <= 0.0 ||
+               !SymbolBridge_MapDistance(normalized.signal_symbol,
+                                         normalized.symbol,
+                                         signal_points,
+                                         mapped,
+                                         eurusd_rate) ||
+               mapped <= 0.0 ||
+               MathAbs(mapped - exec_tp_points) > distance_tolerance ||
+               MathAbs(eurusd_rate - normalized.proxy_rate) > rate_tolerance)
+            {
+               result.error_message = "Proxy TP distance validation failed";
+               LogDecision("OrderEngine",
+                           "PLACE_REJECT",
+                           StringFormat("{\"reason\":\"proxy_tp_validation\",\"mapped\":%.4f,\"expected\":%.4f}",
+                                        mapped,
+                                        exec_tp_points));
+               return result;
+            }
+         }
       }
 
-      if(!risk_calc_ok || risk_dollars <= 0.0)
+      double evaluated_risk = 0.0;
+      EquityBudgetGateResult gate_snapshot;
+      ZeroMemory(gate_snapshot);
+      string gate_rejection = "";
+
+      if(!ValidateRiskConstraints(normalized,
+                                   entry_price,
+                                   is_pending,
+                                   evaluated_risk,
+                                   gate_snapshot,
+                                   gate_rejection))
       {
          string fields = StringFormat(
-            "{\"symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"entry\":%.5f,\"sl\":%.5f,\"volume\":%.4f}",
+            "{\"symbol\":\"%s\",\"signal_symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"reason\":\"%s\"}",
             normalized.symbol,
+            normalized.signal_symbol,
             EnumToString(normalized.type),
             mode,
-            entry_price,
-            normalized.sl,
-            normalized.volume);
+            gate_rejection);
 
          LogDecision("OrderEngine", "RISK_BLOCK", fields);
-         LogOE("PlaceOrder blocked: unable to evaluate risk (entry/sl invalid)");
-         result.error_message = "Risk evaluation failed for order request";
+         LogOE(StringFormat("PlaceOrder blocked: %s", gate_rejection));
+         result.error_message = gate_rejection;
          return result;
+      }
+
+      intent_record.gate_open_risk = gate_snapshot.open_risk;
+      intent_record.gate_pending_risk = gate_snapshot.pending_risk;
+      intent_record.gate_next_risk = evaluated_risk;
+      intent_record.room_today = gate_snapshot.room_today;
+      intent_record.room_overall = gate_snapshot.room_overall;
+      intent_record.gate_pass = gate_snapshot.gate_pass;
+      intent_record.gating_reason = gate_snapshot.gating_reason;
+      if(normalized.is_proxy)
+      {
+         string proxy_info = StringFormat("%s eurusd=%.5f",
+                                          normalized.proxy_context,
+                                          normalized.proxy_rate);
+         if(StringLen(intent_record.gating_reason) > 0)
+            intent_record.gating_reason = intent_record.gating_reason + "|" + proxy_info;
+         else
+            intent_record.gating_reason = proxy_info;
       }
 
       LogDecision("OrderEngine",
                   "RISK_EVAL",
-                  StringFormat("{\"symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"entry\":%.5f,\"sl\":%.5f,\"volume\":%.4f,\"risk\":%.2f}",
+                  StringFormat("{\"symbol\":\"%s\",\"signal_symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"entry\":%.5f,\"sl\":%.5f,\"volume\":%.4f,\"risk\":%.2f,\"open\":%.2f,\"pending\":%.2f,\"room_today\":%.2f,\"room_overall\":%.2f}",
                                normalized.symbol,
+                               normalized.signal_symbol,
                                EnumToString(normalized.type),
                                mode,
                                entry_price,
                                normalized.sl,
                                normalized.volume,
-                               risk_dollars));
+                               evaluated_risk,
+                               gate_snapshot.open_risk,
+                               gate_snapshot.pending_risk,
+                               gate_snapshot.room_today,
+                               gate_snapshot.room_overall));
+
+      if(TimeCurrent() - news_gate_timestamp >= 5)
+      {
+         string recheck_state = "";
+         NewsGateState gate_recheck = EvaluateNewsGate(normalized.signal_symbol,
+                                                       normalized.is_protective,
+                                                       recheck_state);
+         intent_record.news_window_state = recheck_state;
+         if(gate_recheck == NEWS_GATE_BLOCKED)
+         {
+            result.error_message = StringFormat("News blocked for %s on recheck (%s)",
+                                                normalized.signal_symbol,
+                                                recheck_state);
+            LogDecision("OrderEngine",
+                        "NEWS_GATE_BLOCK",
+                        StringFormat("{\"signal_symbol\":\"%s\",\"detail\":\"%s\",\"phase\":\"pre_execute\"}",
+                                     normalized.signal_symbol,
+                                     recheck_state));
+            return result;
+         }
+      }
 
       ExecuteOrderWithRetry(normalized,
                             is_pending,
-                            risk_dollars,
+                            evaluated_risk,
                             projected_total,
                             projected_symbol_positions,
                             projected_symbol_pending,
@@ -1317,7 +1894,7 @@ public:
                                   normalized.symbol,
                                   EnumToString(normalized.type),
                                   result.last_retcode));
-         ExecuteMarketFallback(normalized, risk_dollars, result);
+         ExecuteMarketFallback(normalized, evaluated_risk, result);
       }
 
       if(intent_created && intent_index >= 0 && intent_index < ArraySize(m_intent_journal.intents))
@@ -1351,6 +1928,20 @@ public:
                                                  result.executed_price,
                                                  result.executed_volume);
             LogAuditRow("ORDER_INTENT_EXECUTED", "OrderEngine", LOG_INFO, "Intent executed", success_fields);
+            record.last_executed_price = result.executed_price;
+            record.last_filled_volume = result.executed_volume;
+            record.hold_time_seconds = (double)(TimeCurrent() - record.timestamp);
+            Audit_LogIntentEvent(record,
+                                 ":EXECUTED",
+                                 "ORDER_EXECUTED",
+                                 record.price,
+                                 result.executed_price,
+                                 record.volume,
+                                 result.executed_volume,
+                                 MathMax(0.0, record.volume - result.executed_volume),
+                                 result.retry_count,
+                                 "",
+                                 record.news_window_state);
          }
          else
          {
@@ -1368,9 +1959,21 @@ public:
                                               failure_reason,
                                               result.last_retcode);
             LogAuditRow("ORDER_INTENT_FAILED", "OrderEngine", LOG_WARN, "Intent failed", fail_fields);
+            record.hold_time_seconds = (double)(TimeCurrent() - record.timestamp);
+            Audit_LogIntentEvent(record,
+                                 ":FAILED",
+                                 "ORDER_FAILED",
+                                 record.price,
+                                 0.0,
+                                 record.volume,
+                                 0.0,
+                                 record.volume,
+                                 result.retry_count,
+                                 failure_reason,
+                                 record.news_window_state);
          }
-     m_intent_journal.intents[intent_index] = record;
-     MarkJournalDirty();
+   m_intent_journal.intents[intent_index] = record;
+   MarkJournalDirty();
       LogOE(StringFormat("Intent updated: id=%s status=%s retries=%d",
                          record.intent_id,
                          record.status,
@@ -1612,9 +2215,263 @@ public:
    bool ReconcileOnStartup()
    {
       LogOE("ReconcileOnStartup: Starting state reconciliation");
-      CleanupExpiredJournalEntries(TimeCurrent());
+      if(m_recovery_completed)
+      {
+         LogOE("ReconcileOnStartup: Recovery already completed");
+         return true;
+      }
+
+      PersistenceRecoveredState recovered;
+      if(!Persistence_LoadRecoveredState(recovered))
+      {
+         LogOE("ReconcileOnStartup: Failed to load recovered state");
+         return false;
+      }
+
+      ArrayResize(m_recovered_intents, recovered.intents_count);
+      for(int i = 0; i < recovered.intents_count; ++i)
+         m_recovered_intents[i] = recovered.intents[i];
+      m_recovered_intent_count = recovered.intents_count;
+      ArrayResize(m_recovered_actions, recovered.queued_count);
+      for(int i = 0; i < recovered.queued_count; ++i)
+         m_recovered_actions[i] = recovered.queued_actions[i];
+      m_recovered_action_count = recovered.queued_count;
+
+      IntentJournal_Clear(m_intent_journal);
+      ArrayResize(m_intent_journal.intents, recovered.intents_count);
+      for(int i = 0; i < recovered.intents_count; ++i)
+         m_intent_journal.intents[i] = recovered.intents[i];
+      ArrayResize(m_intent_journal.queued_actions, recovered.queued_count);
+      for(int i = 0; i < recovered.queued_count; ++i)
+         m_intent_journal.queued_actions[i] = recovered.queued_actions[i];
+      if(recovered.has_engine_state)
+         m_intent_journal.engine_state = recovered.engine_state;
+      else
+         Persistence_ResetEngineState(m_intent_journal.engine_state);
+      RestoreEngineStateFromJournal();
+      TouchJournalSequences();
+      m_intent_journal_dirty = true;
+
+      const datetime now = TimeCurrent();
+      const bool was_locked = IsExecutionLocked();
+      if(!was_locked)
+         SetExecutionLock(true);
+
+      ulong position_tickets[];
+      int positions_total = PositionsTotal();
+      ArrayResize(position_tickets, positions_total);
+      int position_count = 0;
+      for(int i = 0; i < positions_total; ++i)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket > 0)
+            position_tickets[position_count++] = ticket;
+      }
+      ArrayResize(position_tickets, position_count);
+      ulong pending_tickets[];
+      int orders_total = OrdersTotal();
+      ArrayResize(pending_tickets, orders_total);
+      int pending_count = 0;
+      for(int i = 0; i < orders_total; ++i)
+      {
+         ulong order_ticket = OrderGetTicket(i);
+         if(order_ticket == 0)
+            continue;
+         if(!OrderSelect(order_ticket))
+            continue;
+         ENUM_ORDER_TYPE order_type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+         if(order_type == ORDER_TYPE_BUY || order_type == ORDER_TYPE_SELL)
+            continue;
+         pending_tickets[pending_count++] = order_ticket;
+      }
+      ArrayResize(pending_tickets, pending_count);
+
+      int intents_marked_closed = 0;
+      int intents_marked_cancelled = 0;
+      for(int i = 0; i < ArraySize(m_intent_journal.intents); ++i)
+      {
+         OrderIntent intent = m_intent_journal.intents[i];
+         if(ArraySize(intent.executed_tickets) > 0)
+         {
+            bool ticket_active = false;
+            for(int j = 0; j < ArraySize(intent.executed_tickets) && !ticket_active; ++j)
+            {
+               for(int k = 0; k < position_count; ++k)
+               {
+                  if(position_tickets[k] == intent.executed_tickets[j])
+                  {
+                     ticket_active = true;
+                     break;
+                  }
+               }
+            }
+            if(!ticket_active && (intent.status == "PENDING" || intent.status == "EXECUTED"))
+            {
+               intent.status = "CLOSED";
+               intents_marked_closed++;
+            }
+         }
+         if(intent.status == "PENDING" && ArraySize(intent.executed_tickets) > 0)
+         {
+            bool order_active = false;
+            for(int j = 0; j < ArraySize(intent.executed_tickets) && !order_active; ++j)
+            {
+               for(int k = 0; k < pending_count; ++k)
+               {
+                  if(pending_tickets[k] == intent.executed_tickets[j])
+                  {
+                     order_active = true;
+                     break;
+                  }
+               }
+            }
+            if(!order_active)
+            {
+               intent.status = "CANCELLED";
+               intents_marked_cancelled++;
+            }
+         }
+         m_intent_journal.intents[i] = intent;
+      }
+
+      int orphans_attached = 0;
+      int pending_orphans_attached = 0;
+      for(int i = 0; i < position_count; ++i)
+      {
+         ulong ticket = position_tickets[i];
+         OrderIntent existing;
+         if(MatchIntentByTicket(ticket, existing))
+            continue;
+         if(!PositionSelectByTicket(ticket))
+            continue;
+         OrderIntent orphan;
+         ZeroMemory(orphan);
+         orphan.intent_id = StringFormat("broker_recovery_%llu", ticket);
+         orphan.accept_once_key = orphan.intent_id;
+         orphan.timestamp = (datetime)PositionGetInteger(POSITION_TIME);
+         orphan.symbol = PositionGetString(POSITION_SYMBOL);
+         orphan.signal_symbol = orphan.symbol;
+         ENUM_POSITION_TYPE pos_type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+         orphan.order_type = (pos_type == POSITION_TYPE_SELL ? ORDER_TYPE_SELL : ORDER_TYPE_BUY);
+         orphan.volume = PositionGetDouble(POSITION_VOLUME);
+         orphan.price = PositionGetDouble(POSITION_PRICE_OPEN);
+         orphan.sl = PositionGetDouble(POSITION_SL);
+         orphan.tp = PositionGetDouble(POSITION_TP);
+         orphan.status = "RECOVERED";
+         orphan.execution_mode = "DIRECT";
+         orphan.is_proxy = false;
+         orphan.proxy_rate = 1.0;
+         orphan.retry_count = 0;
+         orphan.reasoning = "broker_recovery";
+         ArrayResize(orphan.executed_tickets, 1);
+         orphan.executed_tickets[0] = ticket;
+         ArrayResize(orphan.partial_fills, 0);
+         ArrayResize(orphan.error_messages, 0);
+         ArrayResize(orphan.tickets_snapshot, 0);
+         int idx = ArraySize(m_intent_journal.intents);
+         ArrayResize(m_intent_journal.intents, idx + 1);
+         m_intent_journal.intents[idx] = orphan;
+         orphans_attached++;
+      }
+      for(int i = 0; i < pending_count; ++i)
+      {
+         ulong ticket = pending_tickets[i];
+         OrderIntent existing;
+         if(MatchIntentByTicket(ticket, existing))
+            continue;
+         if(!OrderSelect(ticket))
+            continue;
+         OrderIntent orphan;
+         ZeroMemory(orphan);
+         orphan.intent_id = StringFormat("broker_pending_%llu", ticket);
+         orphan.accept_once_key = orphan.intent_id;
+         orphan.timestamp = (datetime)OrderGetInteger(ORDER_TIME_SETUP);
+         orphan.symbol = OrderGetString(ORDER_SYMBOL);
+         orphan.signal_symbol = orphan.symbol;
+         ENUM_ORDER_TYPE order_type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+         orphan.order_type = order_type;
+         orphan.volume = OrderGetDouble(ORDER_VOLUME_CURRENT);
+         orphan.price = OrderGetDouble(ORDER_PRICE_OPEN);
+         orphan.sl = OrderGetDouble(ORDER_SL);
+         orphan.tp = OrderGetDouble(ORDER_TP);
+         orphan.status = "PENDING";
+         orphan.execution_mode = "DIRECT";
+         orphan.is_proxy = false;
+         orphan.proxy_rate = 1.0;
+         ArrayResize(orphan.executed_tickets, 1);
+         orphan.executed_tickets[0] = ticket;
+         ArrayResize(orphan.partial_fills, 0);
+         ArrayResize(orphan.error_messages, 0);
+         ArrayResize(orphan.tickets_snapshot, 0);
+         int idx = ArraySize(m_intent_journal.intents);
+         ArrayResize(m_intent_journal.intents, idx + 1);
+         m_intent_journal.intents[idx] = orphan;
+         pending_orphans_attached++;
+      }
+
+      int new_action_count = 0;
+      for(int i = 0; i < ArraySize(m_intent_journal.queued_actions); ++i)
+      {
+         PersistedQueuedAction action = m_intent_journal.queued_actions[i];
+         bool keep = true;
+         if(StringLen(action.intent_id) > 0 && FindIntentIndexById(action.intent_id) < 0)
+            keep = false;
+         if(keep && action.expires_time > 0 && action.expires_time < now)
+            keep = false;
+         if(keep && action.ticket > 0)
+         {
+            if(!PositionSelectByTicket(action.ticket) &&
+               !OrderSelect((ulong)action.ticket))
+               keep = false;
+         }
+         if(keep)
+         {
+            m_intent_journal.queued_actions[new_action_count++] = action;
+         }
+      }
+      ArrayResize(m_intent_journal.queued_actions, new_action_count);
+
+      EnsureSLEnforcementLoaded();
+      bool sl_dirty = false;
+      for(int i = 0; i < m_sl_enforcement_count; )
+      {
+         double sl_value = 0.0;
+         datetime open_time = 0;
+         if(!GetPositionSLByTicket(m_sl_enforcement_queue[i].ticket, sl_value, open_time))
+         {
+            RemoveSLEnforcementAt(i);
+            sl_dirty = true;
+            continue;
+         }
+         i++;
+      }
+      if(sl_dirty)
+         SaveSLEnforcementState();
+
+      CleanupExpiredJournalEntries(now);
       PersistIntentJournal();
-      LogOE("ReconcileOnStartup: Reconciliation complete");
+      Persistence_PruneOldRecoveryBackups();
+
+      if(!was_locked)
+         SetExecutionLock(false);
+
+      m_recovery_completed = true;
+      m_recovery_timestamp = TimeCurrent();
+
+      LogOE(StringFormat("ReconcileOnStartup: intents_total=%d loaded=%d dropped=%d actions_total=%d loaded=%d dropped=%d position_orphans=%d pending_orphans=%d closed=%d cancelled=%d corrupt=%d",
+                         recovered.summary.intents_total,
+                         recovered.summary.intents_loaded,
+                         recovered.summary.intents_dropped,
+                         recovered.summary.actions_total,
+                         recovered.summary.actions_loaded,
+                         recovered.summary.actions_dropped,
+                         orphans_attached,
+                         pending_orphans_attached,
+                         intents_marked_closed,
+                         intents_marked_cancelled,
+                         recovered.summary.corrupt_entries));
+
+      Persistence_FreeRecoveredState(recovered);
       return true;
    }
 };
@@ -1770,6 +2627,143 @@ bool OrderEngine::EvaluatePositionCaps(const OrderRequest &request,
    return true;
 }
 
+bool OrderEngine::ValidateRiskConstraints(const OrderRequest &request,
+                                          const double entry_price,
+                                          const bool is_pending,
+                                          double &out_evaluated_risk,
+                                          EquityBudgetGateResult &out_gate,
+                                          string &out_rejection_reason)
+{
+#ifdef RPEA_ORDER_ENGINE_SKIP_EQUITY
+   out_rejection_reason = "";
+   ZeroMemory(out_gate);
+
+   bool risk_calc_ok = false;
+   if(g_oe_risk_override.active)
+   {
+      risk_calc_ok = g_oe_risk_override.ok;
+      out_evaluated_risk = g_oe_risk_override.risk_value;
+   }
+   else
+   {
+      out_evaluated_risk = Equity_CalcRiskDollars(request.symbol,
+                                                  request.volume,
+                                                  entry_price,
+                                                  request.sl,
+                                                  risk_calc_ok);
+   }
+
+   if(!risk_calc_ok || out_evaluated_risk <= 0.0)
+   {
+      out_rejection_reason = "risk_calc_failed";
+      return false;
+   }
+
+#ifdef RPEA_TEST_RUNNER
+   if(g_test_gate_force_fail)
+   {
+      out_rejection_reason = "forced_fail";
+      return false;
+   }
+#endif
+
+   out_gate.approved = true;
+   out_gate.gate_pass = true;
+   out_gate.gating_reason = "skip_equity";
+   out_gate.room_available = 1e9;
+   out_gate.room_today = 1e9;
+   out_gate.room_overall = 1e9;
+   out_gate.open_risk = 0.0;
+   out_gate.pending_risk = 0.0;
+   out_gate.next_worst_case = out_evaluated_risk;
+   out_gate.calculation_error = false;
+
+   return true;
+#else
+   out_evaluated_risk = 0.0;
+   out_rejection_reason = "";
+   ZeroMemory(out_gate);
+
+   bool risk_calc_ok = false;
+
+   if(g_oe_risk_override.active)
+   {
+      risk_calc_ok = g_oe_risk_override.ok;
+      out_evaluated_risk = g_oe_risk_override.risk_value;
+   }
+   else
+   {
+      out_evaluated_risk = Equity_CalcRiskDollars(request.symbol,
+                                                  request.volume,
+                                                  entry_price,
+                                                  request.sl,
+                                                  risk_calc_ok);
+   }
+
+   if(!risk_calc_ok || out_evaluated_risk <= 0.0)
+   {
+      out_rejection_reason = "risk_calc_failed";
+      return false;
+   }
+
+   out_gate = Equity_EvaluateBudgetGate(g_ctx, out_evaluated_risk);
+
+   double headroom = RiskGateHeadroom;
+   if(headroom <= 0.0 || !MathIsValidNumber(headroom))
+      headroom = DEFAULT_RiskGateHeadroom;
+
+   double min_room = MathMin(out_gate.room_today, out_gate.room_overall);
+   if(min_room < 0.0 || !MathIsValidNumber(min_room))
+      min_room = 0.0;
+
+   const double projected = out_gate.open_risk + out_gate.pending_risk + out_evaluated_risk;
+   const double threshold = headroom * min_room;
+
+   bool gate_allowed = out_gate.gate_pass;
+   if(min_room > 0.0 && MathIsValidNumber(threshold))
+      gate_allowed = (projected <= threshold + 1e-6);
+
+   if(!gate_allowed)
+   {
+      out_rejection_reason = (StringLen(out_gate.gating_reason) > 0
+                              ? out_gate.gating_reason
+                              : "budget_gate");
+      return false;
+   }
+
+   return true;
+#endif
+}
+
+NewsGateState OrderEngine::EvaluateNewsGate(const string signal_symbol,
+                                            const bool is_protective_exit,
+                                            string &out_detail) const
+{
+   string normalized = SymbolBridge_Normalize(signal_symbol);
+   out_detail = "CLEAR";
+
+   if(normalized == "XAUEUR")
+   {
+      const bool xau_blocked = News_IsBlocked("XAUUSD");
+      const bool eur_blocked = News_IsBlocked("EURUSD");
+      if(xau_blocked || eur_blocked)
+      {
+         string leg = (xau_blocked ? "XAUUSD" : "EURUSD");
+         out_detail = leg + (is_protective_exit ? "_PROTECTIVE" : "_BLOCKED");
+         return (is_protective_exit ? NEWS_GATE_PROTECTIVE_ALLOWED : NEWS_GATE_BLOCKED);
+      }
+      return NEWS_GATE_CLEAR;
+   }
+
+   if(News_IsBlocked(signal_symbol))
+   {
+      out_detail = normalized + (is_protective_exit ? "_PROTECTIVE" : "_BLOCKED");
+      return (is_protective_exit ? NEWS_GATE_PROTECTIVE_ALLOWED : NEWS_GATE_BLOCKED);
+   }
+
+   return NEWS_GATE_CLEAR;
+}
+
 bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
                                         const bool is_pending_request,
                                         const double evaluated_risk,
@@ -1826,15 +2820,19 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
                                                 snapshot_ask);
 
    double requested_price = request.price;
-    if(is_market_request && requested_price <= 0.0 && have_snapshot)
-    {
-       const bool buy_init = IsBuyDirection(request.type);
-       const double snapshot_price = buy_init
-                                     ? (snapshot_ask > 0.0 ? snapshot_ask : snapshot_bid)
-                                     : (snapshot_bid > 0.0 ? snapshot_bid : snapshot_ask);
-       if(snapshot_price > 0.0)
-          requested_price = snapshot_price;
-    }
+   double execution_price_hint = request.price;
+   if(is_market_request && requested_price <= 0.0 && have_snapshot)
+   {
+      const bool buy_init = IsBuyDirection(request.type);
+      const double snapshot_price = buy_init
+                                    ? (snapshot_ask > 0.0 ? snapshot_ask : snapshot_bid)
+                                    : (snapshot_bid > 0.0 ? snapshot_bid : snapshot_ask);
+      if(snapshot_price > 0.0)
+      {
+         requested_price = snapshot_price;
+         execution_price_hint = snapshot_price;
+      }
+   }
 
    const double base_point = snapshot_point;
    const double base_multiplier = (base_point > 0.0 ? MathMax(1.0, 1.0 / base_point) : 1.0);
@@ -1848,7 +2846,7 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
    trade_request.symbol = request.symbol;
    trade_request.type = request.type;
    trade_request.volume = request.volume;
-   trade_request.price = request.price;
+   trade_request.price = execution_price_hint;
    trade_request.sl = request.sl;
    trade_request.tp = request.tp;
    trade_request.deviation = base_deviation;
@@ -1886,6 +2884,25 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
    {
       if(attempt > 0)
          retries_performed = attempt;
+
+      if(attempt == 0 &&
+         OrderEngine_IsCircuitBreakerActive() &&
+         !OrderEngine_ShouldBypassBreaker(request.is_protective))
+      {
+         OrderError breaker_err;
+         breaker_err.context = "ExecuteOrderWithRetry";
+         breaker_err.intent_id = result.intent_id;
+         breaker_err.SetRetcode(TRADE_RETCODE_TRADE_DISABLED);
+         breaker_err.attempt = attempt;
+         breaker_err.is_protective_exit = request.is_protective;
+         breaker_err.requested_volume = request.volume;
+         breaker_err.requested_price = requested_price;
+         OrderErrorDecision gate = OrderEngine_HandleError(breaker_err);
+         result.success = false;
+         result.error_message = (gate.gating_reason == "" ? "circuit_breaker_active" : gate.gating_reason);
+         result.last_retcode = breaker_err.retcode;
+         break;
+      }
 
       if(is_market_request)
       {
@@ -1931,6 +2948,8 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
 
          if(requested_price <= 0.0)
             requested_price = quote_price;
+
+         execution_price_hint = quote_price;
 
          const double calc_point = (attempt_point > 0.0
                                     ? attempt_point
@@ -1989,6 +3008,7 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
       }
 
       ZeroMemory(trade_result);
+      trade_request.price = execution_price_hint;
       const bool send_ok = OE_OrderSend(trade_request, trade_result);
       result.last_retcode = (int)trade_result.retcode;
 
@@ -2015,6 +3035,7 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
          result.retry_count = retries_performed;
          result.last_retcode = (int)trade_result.retcode;
          result.error_message = "";
+         OrderEngine_RecordSuccess();
 
          double executed_slippage_pts = 0.0;
          if(snapshot_point > 0.0 && requested_price > 0.0 && trade_result.price > 0.0)
@@ -2042,27 +3063,32 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
          break;
       }
 
-      const RetryPolicy policy = m_retry_manager.GetPolicyForError(trade_result.retcode);
-      const string policy_name = m_retry_manager.PolicyName(policy);
-      const bool retry_allowed = m_retry_manager.ShouldRetry(policy, attempt);
+      OrderError err((int)trade_result.retcode);
+      err.context = "ExecuteOrderWithRetry";
+      err.intent_id = result.intent_id;
+      err.ticket = (trade_result.order != 0 ? trade_result.order : trade_result.deal);
+      err.attempt = attempt;
+      err.requested_price = requested_price;
+      err.executed_price = trade_result.price;
+      err.requested_volume = request.volume;
+      err.is_protective_exit = request.is_protective;
+      OrderErrorDecision decision = OrderEngine_HandleError(err);
 
-      LogOE(StringFormat("ExecuteOrderWithRetry failure: attempt=%d retcode=%d policy=%s retry_allowed=%s slippage=%.2f pts",
+      LogOE(StringFormat("ExecuteOrderWithRetry failure: attempt=%d retcode=%d decision=%d slippage=%.2f pts",
                          attempt,
                          trade_result.retcode,
-                         policy_name,
-                         retry_allowed ? "true" : "false",
+                         (int)decision.type,
                          attempt_slippage));
 
       LogDecision("OrderEngine",
                   "ORDER_RETRY_EVALUATE",
-                  StringFormat("{\"attempt\":%d,\"retcode\":%d,\"policy\":\"%s\",\"retry_allowed\":%s,\"slippage_pts\":%.2f}",
+                  StringFormat("{\"attempt\":%d,\"retcode\":%d,\"decision\":%d,\"retry_delay\":%d,\"slippage_pts\":%.2f}",
                                attempt,
                                trade_result.retcode,
-                               policy_name,
-                               retry_allowed ? "true" : "false",
+                               (int)decision.type,
+                               decision.retry_delay_ms,
                                attempt_slippage));
 
-      // For pending orders that trigger market fallback, stop retrying immediately
       if(is_pending_request && ShouldFallbackToMarket(trade_result.retcode))
       {
          LogOE(StringFormat("ExecuteOrderWithRetry stopping pending retry: fallback to market on retcode %d",
@@ -2070,17 +3096,19 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
          break;
       }
 
-      if(!retry_allowed)
-         break;
-
-      const int delay_ms = m_retry_manager.CalculateDelayMs(attempt + 1, policy);
-      if(delay_ms > 0)
+      if(decision.type != ERROR_DECISION_RETRY)
       {
-         LogOE(StringFormat("ExecuteOrderWithRetry delay before retry %d: %d ms (policy=%s)",
+         if(decision.type == ERROR_DECISION_FAIL_FAST && decision.gating_reason != "")
+            result.error_message = decision.gating_reason;
+         break;
+      }
+
+      if(decision.retry_delay_ms > 0)
+      {
+         LogOE(StringFormat("ExecuteOrderWithRetry delay before retry %d: %d ms",
                             attempt + 1,
-                            delay_ms,
-                            policy_name));
-         OE_ApplyRetryDelay(delay_ms);
+                            decision.retry_delay_ms));
+         OE_ApplyRetryDelay(decision.retry_delay_ms);
       }
    }
 
@@ -2093,6 +3121,15 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
       result.retry_count = retries_performed;
 
       result.error_message = slippage_reject_reason;
+      OrderError err(TRADE_RETCODE_PRICE_OFF);
+      err.context = "ExecuteOrderWithRetry";
+      err.intent_id = result.intent_id;
+      err.attempt = retries_performed;
+      err.requested_price = requested_price;
+      err.executed_price = last_quote_price;
+      err.requested_volume = request.volume;
+      err.is_protective_exit = request.is_protective;
+      OrderEngine_HandleError(err);
 
       LogOE(StringFormat("ExecuteOrderWithRetry slippage rejection: requested=%.5f quote=%.5f slippage=%.2f pts limit=%.2f",
                          requested_price,
@@ -2128,6 +3165,15 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
       result.executed_volume = 0.0;
       result.retry_count = retries_performed;
       result.error_message = quote_failure_reason;
+      OrderError err(TRADE_RETCODE_PRICE_OFF);
+      err.context = "ExecuteOrderWithRetry";
+      err.intent_id = result.intent_id;
+      err.attempt = retries_performed;
+      err.requested_price = requested_price;
+      err.executed_price = last_quote_price;
+      err.requested_volume = request.volume;
+      err.is_protective_exit = request.is_protective;
+      OrderEngine_HandleError(err);
 
       LogOE(StringFormat("ExecuteOrderWithRetry quote failure: %s", quote_failure_reason));
       LogDecision("OrderEngine",
@@ -2162,6 +3208,15 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
       }
 
       result.error_message = fail_message;
+      OrderError err(result.last_retcode);
+      err.context = "ExecuteOrderWithRetry";
+      err.intent_id = result.intent_id;
+      err.attempt = retries_performed;
+      err.requested_price = requested_price;
+      err.executed_price = last_quote_price;
+      err.requested_volume = request.volume;
+      err.is_protective_exit = request.is_protective;
+      OrderEngine_HandleError(err);
 
       LogDecision("OrderEngine",
                   "EXECUTE_ORDER_FAIL",
@@ -2185,6 +3240,13 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
                       requested_price,
                       result.executed_price,
                       final_slippage_pts));
+
+   if(result.success && result.ticket > 0 && !is_pending_request && IsMasterAccount())
+   {
+      TrackSLEnforcement(result.ticket, TimeCurrent());
+      SaveSLEnforcementState();
+   }
+
    return result.success;
 }
 
@@ -2362,6 +3424,219 @@ bool OrderEngine::ExecuteMarketFallback(const OrderRequest &pending_request,
    return executed;
 }
 
+void OrderEngine::EnsureSLEnforcementLoaded()
+{
+   if(m_sl_state_loaded)
+      return;
+   m_sl_state_loaded = true;
+   m_sl_enforcement_count = 0;
+   ArrayResize(m_sl_enforcement_queue, 0);
+
+   string contents = Persistence_ReadWholeFile(FILE_SL_ENFORCEMENT);
+   if(StringLen(contents) == 0)
+      return;
+
+   string objects[];
+   if(!Persistence_SplitJsonArrayObjects(contents, objects))
+      return;
+
+   const int count = ArraySize(objects);
+   if(count <= 0)
+      return;
+
+   ArrayResize(m_sl_enforcement_queue, count);
+   for(int i = 0; i < count; i++)
+   {
+      string obj = objects[i];
+      if(StringLen(obj) == 0)
+         continue;
+
+      SLEnforcementEntry entry;
+      ZeroMemory(entry);
+      entry.active = true;
+      ulong ticket = 0;
+      if(!Persistence_ParseULongField(obj, "ticket", ticket) || ticket == 0)
+         continue;
+      entry.ticket = ticket;
+
+      string str_value = "";
+      if(Persistence_ParseStringField(obj, "open_time", str_value))
+         entry.open_time = Persistence_ParseIso8601(str_value);
+      if(Persistence_ParseStringField(obj, "sl_set_time", str_value))
+         entry.sl_set_time = Persistence_ParseIso8601(str_value);
+      if(Persistence_ParseStringField(obj, "status", str_value))
+         entry.status = str_value;
+      if(Persistence_ParseStringField(obj, "sl_set_within_30s", str_value))
+      {
+         StringToLower(str_value);
+         entry.sl_set_within_30s = (str_value == "true");
+      }
+      else
+      {
+         entry.sl_set_within_30s = false;
+      }
+
+      if(entry.open_time <= 0)
+         entry.open_time = TimeCurrent();
+      if(StringLen(entry.status) == 0)
+         entry.status = "PENDING";
+
+      if(m_sl_enforcement_count >= ArraySize(m_sl_enforcement_queue))
+         ArrayResize(m_sl_enforcement_queue, m_sl_enforcement_count + 4);
+      m_sl_enforcement_queue[m_sl_enforcement_count++] = entry;
+   }
+}
+
+void OrderEngine::TrackSLEnforcement(const ulong ticket, const datetime open_time)
+{
+   if(ticket == 0)
+      return;
+   EnsureSLEnforcementLoaded();
+
+   for(int i = 0; i < m_sl_enforcement_count; i++)
+   {
+      if(m_sl_enforcement_queue[i].ticket == ticket)
+      {
+         m_sl_enforcement_queue[i].open_time = open_time;
+         m_sl_enforcement_queue[i].sl_set_time = 0;
+         m_sl_enforcement_queue[i].sl_set_within_30s = false;
+         m_sl_enforcement_queue[i].status = "PENDING";
+         m_sl_enforcement_queue[i].active = true;
+         SaveSLEnforcementState();
+         return;
+      }
+   }
+
+   if(ArraySize(m_sl_enforcement_queue) <= m_sl_enforcement_count)
+      ArrayResize(m_sl_enforcement_queue, m_sl_enforcement_count + 4);
+
+   SLEnforcementEntry entry;
+   ZeroMemory(entry);
+   entry.ticket = ticket;
+   entry.open_time = open_time;
+   entry.sl_set_time = 0;
+   entry.sl_set_within_30s = false;
+   entry.status = "PENDING";
+   entry.active = true;
+
+   m_sl_enforcement_queue[m_sl_enforcement_count++] = entry;
+   SaveSLEnforcementState();
+}
+
+void OrderEngine::RemoveSLEnforcementAt(const int index)
+{
+   if(index < 0 || index >= m_sl_enforcement_count)
+      return;
+
+   for(int i = index; i < m_sl_enforcement_count - 1; i++)
+      m_sl_enforcement_queue[i] = m_sl_enforcement_queue[i + 1];
+
+   m_sl_enforcement_count = MathMax(0, m_sl_enforcement_count - 1);
+}
+
+bool OrderEngine::GetPositionSLByTicket(const ulong ticket,
+                                        double &out_sl,
+                                        datetime &out_open_time) const
+{
+   int total = PositionsTotal();
+   for(int i = 0; i < total; i++)
+   {
+      ulong pos_ticket = PositionGetTicket(i);
+      if(pos_ticket == ticket)
+      {
+         out_sl = PositionGetDouble(POSITION_SL);
+         out_open_time = (datetime)PositionGetInteger(POSITION_TIME);
+         return true;
+      }
+   }
+   out_sl = 0.0;
+   out_open_time = 0;
+   return false;
+}
+
+void OrderEngine::CheckPendingSLEnforcementInternal()
+{
+   EnsureSLEnforcementLoaded();
+   if(m_sl_enforcement_count <= 0)
+      return;
+
+   const datetime now = TimeCurrent();
+   bool state_dirty = false;
+
+   for(int i = 0; i < m_sl_enforcement_count; )
+   {
+      SLEnforcementEntry entry = m_sl_enforcement_queue[i];
+      if(!entry.active)
+      {
+         RemoveSLEnforcementAt(i);
+         state_dirty = true;
+         continue;
+      }
+
+      double sl_value = 0.0;
+      datetime pos_open_time = 0;
+      const bool has_position = GetPositionSLByTicket(entry.ticket, sl_value, pos_open_time);
+
+      if(!has_position)
+      {
+         entry.status = "UNKNOWN_POSITION";
+         entry.active = false;
+         LogDecision("OrderEngine",
+                     "SL_ENFORCEMENT_DROP",
+                     StringFormat("{\"ticket\":%llu,\"reason\":\"position_missing\"}", entry.ticket));
+         RemoveSLEnforcementAt(i);
+         state_dirty = true;
+         continue;
+      }
+
+      const double elapsed = (double)(now - entry.open_time);
+
+      if(sl_value > 0.0)
+      {
+         entry.sl_set_time = now;
+         entry.sl_set_within_30s = (elapsed <= 30.0 + 1e-6);
+         entry.status = (entry.sl_set_within_30s ? "ON_TIME" : "LATE");
+         entry.active = false;
+         LogDecision("OrderEngine",
+                     "SL_ENFORCEMENT_SET",
+                     StringFormat("{\"ticket\":%llu,\"elapsed\":%.1f,\"status\":\"%s\"}",
+                                  entry.ticket,
+                                  elapsed,
+                                  entry.status));
+         RemoveSLEnforcementAt(i);
+         state_dirty = true;
+         continue;
+      }
+
+      if(elapsed >= 30.0 && entry.status != "MISSING")
+      {
+         entry.status = "MISSING";
+         LogDecision("OrderEngine",
+                     "SL_ENFORCEMENT_MISSING",
+                     StringFormat("{\"ticket\":%llu,\"elapsed\":%.1f}", entry.ticket, elapsed));
+         m_sl_enforcement_queue[i] = entry;
+         state_dirty = true;
+         i++;
+         continue;
+      }
+
+      m_sl_enforcement_queue[i] = entry;
+      i++;
+   }
+
+   if(state_dirty)
+      SaveSLEnforcementState();
+}
+
+bool OrderEngine::IsMasterAccount() const
+{
+   long trade_mode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
+   if(trade_mode != ACCOUNT_TRADE_MODE_REAL)
+      return false;
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   return (MathIsValidNumber(balance) && balance >= 25000.0);
+}
+
 void OrderEngine::AppendLogLine(const string line)
 {
    if(m_log_buffer_size <= 0)
@@ -2438,12 +3713,238 @@ void OrderEngine::PersistIntentJournal()
 {
    if(!m_intent_journal_dirty)
       return;
+   SyncEngineStateToJournal();
    if(!IntentJournal_Save(m_intent_journal))
    {
       PrintFormat("[OrderEngine] PersistIntentJournal: failed to save %s", FILE_INTENTS);
       return;
    }
    m_intent_journal_dirty = false;
+}
+
+void OrderEngine::LoadResilienceConfig()
+{
+   m_resilience_max_failures = Config_GetMaxConsecutiveFailures();
+   m_resilience_failure_window_sec = Config_GetFailureWindowSec();
+   m_resilience_breaker_cooldown_sec = Config_GetCircuitBreakerCooldownSec();
+   m_resilience_self_heal_window_sec = Config_GetSelfHealRetryWindowSec();
+   m_resilience_self_heal_max_attempts = Config_GetSelfHealMaxAttempts();
+   m_resilience_alert_throttle_sec = Config_GetErrorAlertThrottleSec();
+   m_resilience_protective_bypass = Config_GetBreakerProtectiveExitBypass();
+}
+
+void OrderEngine::RestoreEngineStateFromJournal()
+{
+   PersistedEngineState state = m_intent_journal.engine_state;
+   m_consecutive_failures = state.consecutive_failures;
+   m_failure_window_count = state.failure_window_count;
+   m_failure_window_start = state.failure_window_start;
+   m_last_failure_time = state.last_failure_time;
+   m_circuit_breaker_until = state.circuit_breaker_until;
+   m_breaker_reason = state.breaker_reason;
+   m_last_alert_time = state.last_alert_time;
+   m_self_heal_active = state.self_heal_active;
+   m_self_heal_attempts = state.self_heal_attempts;
+   m_self_heal_reason = state.self_heal_reason;
+   m_next_self_heal_time = state.next_self_heal_time;
+}
+
+void OrderEngine::SyncEngineStateToJournal()
+{
+   PersistedEngineState state = m_intent_journal.engine_state;
+   state.consecutive_failures = m_consecutive_failures;
+   state.failure_window_count = m_failure_window_count;
+   state.failure_window_start = m_failure_window_start;
+   state.last_failure_time = m_last_failure_time;
+   state.circuit_breaker_until = m_circuit_breaker_until;
+   state.breaker_reason = m_breaker_reason;
+   state.last_alert_time = m_last_alert_time;
+   state.self_heal_active = m_self_heal_active;
+   state.self_heal_attempts = m_self_heal_attempts;
+   state.self_heal_reason = m_self_heal_reason;
+   state.next_self_heal_time = m_next_self_heal_time;
+   m_intent_journal.engine_state = state;
+}
+
+bool OrderEngine::OrderEngine_IsCircuitBreakerActive()
+{
+   if(m_circuit_breaker_until <= 0)
+      return false;
+   datetime now = TimeCurrent();
+   if(now >= m_circuit_breaker_until)
+   {
+      OrderEngine_ResetCircuitBreaker("cooldown_elapsed");
+      return false;
+   }
+   return true;
+}
+
+bool OrderEngine::OrderEngine_ShouldBypassBreaker(const bool protective) const
+{
+   if(!protective)
+      return false;
+   return m_resilience_protective_bypass;
+}
+
+bool OrderEngine::OrderEngine_ShouldBypassBreaker(const OrderError &err) const
+{
+   return OrderEngine_ShouldBypassBreaker(err.is_protective_exit);
+}
+
+void OrderEngine::OrderEngine_RecordFailure(const datetime now)
+{
+   if(m_failure_window_start <= 0 || (now - m_failure_window_start) > m_resilience_failure_window_sec)
+   {
+      m_failure_window_start = now;
+      m_failure_window_count = 0;
+   }
+   m_failure_window_count++;
+   m_consecutive_failures++;
+   m_last_failure_time = now;
+}
+
+void OrderEngine::OrderEngine_RecordSuccess()
+{
+   m_consecutive_failures = 0;
+   m_failure_window_count = 0;
+   m_failure_window_start = TimeCurrent();
+   m_last_failure_time = 0;
+   if(m_self_heal_active)
+   {
+      m_self_heal_active = false;
+      m_self_heal_reason = "";
+      m_next_self_heal_time = 0;
+      m_self_heal_attempts = 0;
+   }
+   if(m_circuit_breaker_until > 0 && !OrderEngine_IsCircuitBreakerActive())
+      OrderEngine_ResetCircuitBreaker("success");
+}
+
+void OrderEngine::OrderEngine_TripCircuitBreaker(const string reason)
+{
+   datetime now = TimeCurrent();
+   m_circuit_breaker_until = now + m_resilience_breaker_cooldown_sec;
+   m_breaker_reason = reason;
+   m_consecutive_failures = 0;
+   m_failure_window_count = 0;
+   m_failure_window_start = now;
+   OrderEngine_ScheduleSelfHeal(reason);
+   MarkJournalDirty();
+   string fields = StringFormat("{\"reason\":\"%s\",\"until\":%d}", reason, (int)m_circuit_breaker_until);
+   LogDecision("OrderEngine", "BREAKER_TRIP", fields);
+}
+
+void OrderEngine::OrderEngine_ResetCircuitBreaker(const string source)
+{
+   m_circuit_breaker_until = 0;
+   m_breaker_reason = "";
+   m_self_heal_active = false;
+   m_self_heal_reason = "";
+   m_next_self_heal_time = 0;
+    m_self_heal_attempts = 0;
+   MarkJournalDirty();
+   string fields = StringFormat("{\"source\":\"%s\"}", source);
+   LogDecision("OrderEngine", "BREAKER_RESET", fields);
+}
+
+void OrderEngine::OrderEngine_ScheduleSelfHeal(const string reason)
+{
+   if(m_resilience_self_heal_max_attempts <= 0)
+      return;
+   if(m_self_heal_attempts >= m_resilience_self_heal_max_attempts)
+      return;
+   datetime now = TimeCurrent();
+   if(m_self_heal_active && now < m_next_self_heal_time)
+      return;
+   m_self_heal_active = true;
+   m_self_heal_attempts++;
+   m_self_heal_reason = reason;
+   m_next_self_heal_time = now + m_resilience_self_heal_window_sec;
+   MarkJournalDirty();
+}
+
+void OrderEngine::OrderEngine_LogErrorHandling(const OrderError &err,
+                                               const OrderErrorDecision &decision)
+{
+   string json = StringFormat("{\"context\":\"%s\",\"retcode\":%d,\"class\":\"%s\",\"decision\":%d,\"gating\":\"%s\",\"attempt\":%d,\"breaker_until\":%d,\"failures\":%d}",
+                              err.context,
+                              err.retcode,
+                              OE_ErrorClassName(err.cls),
+                              (int)decision.type,
+                              decision.gating_reason,
+                              err.attempt,
+                              (int)m_circuit_breaker_until,
+                              m_consecutive_failures);
+   LogDecision("OrderEngine", "ERROR_HANDLING", json);
+   datetime now = TimeCurrent();
+   if(decision.type == ERROR_DECISION_FAIL_FAST && m_resilience_alert_throttle_sec > 0)
+   {
+      if(m_last_alert_time <= 0 || (now - m_last_alert_time) >= m_resilience_alert_throttle_sec)
+      {
+         PrintFormat("[OrderEngine][ErrorHandling] %s ret=%d cls=%s decision=%d reason=%s",
+                     err.context,
+                     err.retcode,
+                     OE_ErrorClassName(err.cls),
+                     (int)decision.type,
+                     decision.gating_reason);
+         m_last_alert_time = now;
+      }
+   }
+#ifdef RPEA_TEST_RUNNER
+   OE_Test_CaptureDecision("ERROR_HANDLING", json);
+#endif
+}
+
+OrderErrorDecision OrderEngine::OrderEngine_HandleError(const OrderError &err)
+{
+   OrderErrorDecision decision;
+   datetime now = TimeCurrent();
+   const bool bypass = OrderEngine_ShouldBypassBreaker(err);
+   if(OrderEngine_IsCircuitBreakerActive() && !bypass)
+   {
+      decision.type = ERROR_DECISION_FAIL_FAST;
+      decision.gating_reason = "circuit_breaker_active";
+      OrderEngine_LogErrorHandling(err, decision);
+      return decision;
+   }
+
+   if(OE_ShouldFailFast(err.cls) && !bypass)
+   {
+      decision.type = ERROR_DECISION_FAIL_FAST;
+      decision.gating_reason = "fail_fast";
+      if(!bypass)
+         OrderEngine_RecordFailure(now);
+      OrderEngine_TripCircuitBreaker("fail_fast:" + err.context);
+      OrderEngine_LogErrorHandling(err, decision);
+      return decision;
+   }
+
+   if(!bypass)
+      OrderEngine_RecordFailure(now);
+
+   RetryPolicy policy = m_retry_manager.GetPolicyForError(err.retcode);
+   bool allow_retry = (OE_ShouldRetryClass(err.cls) && m_retry_manager.ShouldRetry(policy, err.attempt));
+   if(allow_retry && (!OrderEngine_IsCircuitBreakerActive() || bypass))
+   {
+      decision.type = ERROR_DECISION_RETRY;
+      decision.retry_delay_ms = m_retry_manager.CalculateDelayMs(err.attempt + 1, policy);
+   }
+   else
+   {
+      decision.type = ERROR_DECISION_DROP;
+      decision.gating_reason = (allow_retry ? "" : "retry_exhausted");
+   }
+
+   OrderEngine_LogErrorHandling(err, decision);
+
+   if(!bypass && (m_consecutive_failures >= m_resilience_max_failures ||
+      m_failure_window_count >= m_resilience_max_failures))
+   {
+      if(!OrderEngine_IsCircuitBreakerActive())
+         OrderEngine_TripCircuitBreaker("threshold:" + err.context);
+   }
+
+   return decision;
 }
 
 void OrderEngine::TouchJournalSequences()
@@ -2589,6 +4090,68 @@ string OrderEngine::BuildIntentAcceptKey(const OrderRequest &request) const
    return accept_key;
 }
 
+void OrderEngine::Audit_LogIntentEvent(const OrderIntent &intent,
+                                       const string action_suffix,
+                                       const string decision,
+                                       const double requested_price,
+                                       const double executed_price,
+                                       const double requested_vol,
+                                       const double filled_vol,
+                                       const double remaining_vol,
+                                       const int retry_count,
+                                       const string gating_reason_override,
+                                       const string news_state_override)
+{
+   AuditRecord record;
+   record.timestamp = TimeCurrent();
+   string suffix = action_suffix;
+   if(StringLen(suffix) == 0)
+      suffix = ":EVENT";
+   record.intent_id = intent.intent_id;
+   record.action_id = intent.intent_id + suffix;
+   record.symbol = intent.symbol;
+   record.mode = intent.execution_mode;
+   record.requested_price = requested_price;
+   record.executed_price = executed_price;
+   record.requested_vol = requested_vol;
+   record.filled_vol = filled_vol;
+   record.remaining_vol = remaining_vol;
+   ArrayCopy(record.tickets, intent.executed_tickets);
+   record.retry_count = retry_count;
+   record.gate_open_risk = intent.gate_open_risk;
+   record.gate_pending_risk = intent.gate_pending_risk;
+   record.gate_next_risk = intent.gate_next_risk;
+   record.room_today = intent.room_today;
+   record.room_overall = intent.room_overall;
+   record.gate_pass = intent.gate_pass;
+   record.decision = decision;
+   record.confidence = intent.confidence;
+   record.efficiency = intent.efficiency;
+   record.rho_est = intent.rho_est;
+   record.est_value = intent.est_value;
+   record.hold_time = intent.hold_time_seconds;
+   string gating_reason = intent.gating_reason;
+   if(intent.is_proxy)
+     {
+      string proxy_info = intent.proxy_context;
+      if(StringLen(proxy_info) == 0 && intent.signal_symbol != "" && intent.symbol != intent.signal_symbol)
+         proxy_info = StringFormat("%s->%s rate=%.5f",
+                                   intent.signal_symbol,
+                                   intent.symbol,
+                                   intent.proxy_rate);
+      if(StringLen(proxy_info) > 0 && StringFind(gating_reason, proxy_info) < 0)
+      {
+         if(StringLen(gating_reason) > 0)
+            gating_reason = gating_reason + "|" + proxy_info;
+         else
+            gating_reason = proxy_info;
+      }
+     }
+   record.gating_reason = (StringLen(gating_reason_override) > 0 ? gating_reason_override : gating_reason);
+   record.news_window_state = (StringLen(news_state_override) > 0 ? news_state_override : intent.news_window_state);
+   AuditLogger_Log(record);
+}
+
 // Partial fill state management helpers (Task 8)
 int OrderEngine::FindPartialFillState(const ulong ticket) const
 {
@@ -2672,10 +4235,66 @@ bool OrderEngine::FindIntentByTicket(const ulong ticket,
    return false;
 }
 
+int OrderEngine::FindIntentIndexById(const string intent_id) const
+{
+   for(int i = 0; i < ArraySize(m_intent_journal.intents); ++i)
+   {
+      if(m_intent_journal.intents[i].intent_id == intent_id)
+         return i;
+   }
+   return -1;
+}
+
+bool OrderEngine::FindIntentById(const string intent_id, OrderIntent &out_intent) const
+{
+   int idx = FindIntentIndexById(intent_id);
+   if(idx < 0)
+      return false;
+   out_intent = m_intent_journal.intents[idx];
+   return true;
+}
+
+bool OrderEngine::MatchIntentByTicket(const ulong ticket, OrderIntent &out_intent) const
+{
+   for(int i = 0; i < ArraySize(m_intent_journal.intents); ++i)
+   {
+      OrderIntent intent = m_intent_journal.intents[i];
+      for(int j = 0; j < ArraySize(intent.executed_tickets); ++j)
+      {
+         if(intent.executed_tickets[j] == ticket)
+         {
+            out_intent = intent;
+            return true;
+         }
+      }
+   }
+   return false;
+}
+
 void OrderEngine::ResetState()
 {
    m_oco_count = 0;
    m_execution_locked = false;
+   m_consecutive_failures = 0;
+   m_failure_window_count = 0;
+   m_failure_window_start = (datetime)0;
+   m_last_failure_time = (datetime)0;
+   m_circuit_breaker_until = (datetime)0;
+   m_breaker_reason = "";
+   m_last_alert_time = (datetime)0;
+   m_self_heal_active = false;
+   m_self_heal_attempts = 0;
+   m_self_heal_reason = "";
+   m_next_self_heal_time = (datetime)0;
+   m_sl_enforcement_count = 0;
+   m_sl_state_loaded = false;
+   ArrayResize(m_sl_enforcement_queue, 0);
+   ArrayResize(m_recovered_intents, 0);
+   ArrayResize(m_recovered_actions, 0);
+   m_recovered_intent_count = 0;
+   m_recovered_action_count = 0;
+   m_recovery_completed = false;
+   m_recovery_timestamp = 0;
 }
 
 string OrderEngine::FormatLogLine(const string message)
@@ -2701,6 +4320,21 @@ bool OrderEngine_GetIntentMetadata(const ulong ticket,
                                    string &out_accept_key)
 {
    return g_order_engine.GetIntentMetadata(ticket, out_intent_id, out_accept_key);
+}
+
+bool OrderEngine_FindIntentById(const string intent_id, OrderIntent &out_intent)
+{
+   return g_order_engine.FindIntentById(intent_id, out_intent);
+}
+
+int OrderEngine_FindIntentIndexById(const string intent_id)
+{
+   return g_order_engine.FindIntentIndexById(intent_id);
+}
+
+bool OrderEngine_FindIntentByTicket(const ulong ticket, OrderIntent &out_intent)
+{
+   return g_order_engine.MatchIntentByTicket(ticket, out_intent);
 }
 
 //------------------------------------------------------------------------------
@@ -3057,6 +4691,16 @@ void OE_Test_ClearOverrides()
 void OE_Test_ResetIntentJournal()
 {
    g_order_engine.TestResetIntentJournal();
+}
+
+bool OE_Test_IsRecoveryComplete()
+{
+   return g_order_engine.TestIsRecoveryComplete();
+}
+
+int OE_Test_GetRecoveredIntentCount()
+{
+   return g_order_engine.TestRecoveredIntentCount();
 }
 
 bool OE_Test_GetVolumeOverride(const string symbol,
@@ -3594,6 +5238,15 @@ bool Queue_OrderEngine_ApplyAction(const QueuedAction &qa,
    MqlTradeResult  res;
    ZeroMemory(req);
    ZeroMemory(res);
+   const bool is_protective_action = (qa.action_type == QA_SL_MODIFY ||
+                                      qa.action_type == QA_TP_MODIFY ||
+                                      qa.action_type == QA_CLOSE);
+
+   if(g_order_engine.BreakerBlocksAction(is_protective_action))
+   {
+      out_reason_code = "BREAKER_ACTIVE";
+      return false;
+   }
 
    if(qa.action_type == QA_SL_MODIFY || qa.action_type == QA_TP_MODIFY)
    {
@@ -3650,37 +5303,34 @@ bool Queue_OrderEngine_ApplyAction(const QueuedAction &qa,
       if(OE_OrderSend(req, res))
       {
          out_reason_code = "APPLY_OK";
+         g_order_engine.ResilienceRecordSuccess();
          return true;
       }
 
-      int ret = (int)res.retcode;
-      if(ret == TRADE_RETCODE_REQUOTE ||
-         ret == TRADE_RETCODE_PRICE_CHANGED ||
-         ret == TRADE_RETCODE_PRICE_OFF)
+      OrderError err((int)res.retcode);
+      err.context = "QueueAction";
+      err.intent_id = qa.intent_id;
+      err.action_id = qa.context_hex;
+      err.ticket = (ulong)qa.ticket;
+      err.attempt = attempt;
+      err.requested_volume = req.volume;
+      err.requested_price = req.price;
+      err.executed_price = res.price;
+      err.is_protective_exit = is_protective_action;
+      OrderErrorDecision decision = g_order_engine.ResilienceHandleError(err);
+      if(decision.type == ERROR_DECISION_RETRY && attempt + 1 < max_attempts)
       {
-         if(attempt + 1 < max_attempts)
-         {
-            Sleep(300);
-            out_reason_code = "APPLY_RETRY";
-            continue;
-         }
-      }
-      if(ret == TRADE_RETCODE_TRADE_DISABLED ||
-         ret == TRADE_RETCODE_NO_MONEY)
-      {
-         out_permanent_failure = true;
-         out_reason_code = "APPLY_FAIL_PERMANENT";
-         return false;
-      }
-
-      if(attempt + 1 < max_attempts)
-      {
-         Sleep(300);
+         if(decision.retry_delay_ms > 0)
+            OE_ApplyRetryDelay(decision.retry_delay_ms);
          out_reason_code = "APPLY_RETRY";
          continue;
       }
-
-      out_reason_code = "APPLY_RETRY";
+      if(decision.type == ERROR_DECISION_FAIL_FAST)
+      {
+         out_reason_code = (decision.gating_reason == "" ? "APPLY_FAIL" : decision.gating_reason);
+         return false;
+      }
+      out_reason_code = "APPLY_FAIL";
       return false;
    }
 
@@ -3862,4 +5512,5 @@ void OrderEngine_OnTradeTxn(const MqlTradeTransaction& trans,
 }
 
 // End include guard
+#undef OE_CORRELATION_FALLBACK
 #endif // RPEA_ORDER_ENGINE_MQH

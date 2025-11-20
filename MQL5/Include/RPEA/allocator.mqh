@@ -7,6 +7,7 @@
 #include <RPEA/logging.mqh>
 #include <RPEA/risk.mqh>
 #include <RPEA/equity_guardian.mqh>
+#include <RPEA/symbol_bridge.mqh>
 
 struct AppContext;
 
@@ -14,6 +15,7 @@ struct OrderPlan
 {
    bool            valid;
    string          symbol;
+   string          signal_symbol;
    ENUM_ORDER_TYPE order_type;
    double          volume;
    double          price;
@@ -24,6 +26,11 @@ struct OrderPlan
    string          setup_type;
    double          bias;
    string          rejection_reason;
+   bool            is_proxy;
+   double          proxy_rate;
+   double          signal_sl_points;
+   double          signal_tp_points;
+   string          proxy_context;
 };
 
 // Helpers ----------------------------------------------------------
@@ -96,17 +103,27 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
 {
    OrderPlan plan;
    plan.valid = false;
-   plan.symbol = symbol;
+   const string signal_symbol = symbol;
+   const string exec_symbol = SymbolBridge_GetExecutionSymbol(signal_symbol);
+   plan.symbol = exec_symbol;
+   plan.signal_symbol = signal_symbol;
    plan.order_type = ORDER_TYPE_BUY;
    plan.volume = 0.0;
    plan.price = 0.0;
    plan.sl = 0.0;
    plan.tp = 0.0;
    plan.comment = "";
-   plan.magic = Allocator_ComputeMagic(ctx, symbol);
+   plan.magic = Allocator_ComputeMagic(ctx, exec_symbol);
    plan.setup_type = "None";
    plan.bias = 0.0;
    plan.rejection_reason = "";
+   plan.proxy_rate = 1.0;
+   plan.signal_sl_points = (double)slPoints;
+   plan.signal_tp_points = (double)tpPoints;
+   plan.proxy_context = "";
+   plan.is_proxy = (signal_symbol != exec_symbol);
+   if(plan.is_proxy)
+      plan.proxy_context = signal_symbol + "->" + exec_symbol;
 
    string rejection = "";
 
@@ -114,7 +131,7 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
    {
       rejection = "unsupported_strategy";
    }
-   else if(symbol == "")
+   else if(exec_symbol == "")
    {
       rejection = "invalid_symbol";
    }
@@ -136,18 +153,18 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
    double point = 0.0;
    double value_per_point = 0.0;
    int digits = 0;
-   if(rejection == "" && !Allocator_GetContractDetails(symbol, point, value_per_point, digits))
+   if(rejection == "" && !Allocator_GetContractDetails(exec_symbol, point, value_per_point, digits))
       rejection = "symbol_contract";
 
-   double bid = 0.0;
-   double ask = 0.0;
-   if(rejection == "")
-   {
-      if(!SymbolInfoDouble(symbol, SYMBOL_BID, bid) || !MathIsValidNumber(bid))
+  double bid = 0.0;
+  double ask = 0.0;
+  if(rejection == "")
+  {
+      if(!SymbolInfoDouble(exec_symbol, SYMBOL_BID, bid) || !MathIsValidNumber(bid))
          rejection = "symbol_bid";
-      if(!SymbolInfoDouble(symbol, SYMBOL_ASK, ask) || !MathIsValidNumber(ask))
+      if(!SymbolInfoDouble(exec_symbol, SYMBOL_ASK, ask) || !MathIsValidNumber(ask))
          rejection = "symbol_ask";
-   }
+  }
 
   ENUM_ORDER_TYPE order_type = ORDER_TYPE_BUY;
   string setup_type = "";
@@ -247,14 +264,56 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
          rejection = "msc_not_limit";
    }
 
+   double exec_sl_points = plan.signal_sl_points;
+   double exec_tp_points = plan.signal_tp_points;
+   if(rejection == "" && plan.is_proxy)
+     {
+      double mapped = 0.0;
+      double eurusd_rate = 0.0;
+      if(!SymbolBridge_MapDistance(signal_symbol,
+                                   exec_symbol,
+                                   plan.signal_sl_points,
+                                   mapped,
+                                   eurusd_rate) ||
+         mapped <= 0.0)
+        {
+         rejection = "xaueur_distance_unavailable";
+        }
+      else
+        {
+         exec_sl_points = mapped;
+         plan.proxy_rate = eurusd_rate;
+        }
+
+      if(rejection == "")
+        {
+         double mapped_tp = 0.0;
+         double eurusd_tp = 0.0;
+         if(!SymbolBridge_MapDistance(signal_symbol,
+                                      exec_symbol,
+                                      plan.signal_tp_points,
+                                      mapped_tp,
+                                      eurusd_tp) ||
+            mapped_tp <= 0.0)
+           {
+            rejection = "xaueur_distance_unavailable";
+           }
+         else
+           {
+            exec_tp_points = mapped_tp;
+            plan.proxy_rate = eurusd_tp;
+           }
+        }
+     }
+
    double sl_distance = 0.0;
    double tp_distance = 0.0;
    double sl_price = 0.0;
    double tp_price = 0.0;
    if(rejection == "")
    {
-      sl_distance = (double)slPoints * point;
-      tp_distance = (double)tpPoints * point;
+      sl_distance = exec_sl_points * point;
+      tp_distance = exec_tp_points * point;
       if(sl_distance <= 0.0 || tp_distance <= 0.0)
          rejection = "distance_zero";
       else
@@ -292,7 +351,7 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
    double volume = 0.0;
    if(rejection == "")
    {
-      volume = Risk_SizingByATRDistanceForSymbol(symbol, entry_price, sl_price, equity, RiskPct);
+      volume = Risk_SizingByATRDistanceForSymbol(exec_symbol, entry_price, sl_price, equity, RiskPct);
       if(volume <= 0.0)
          rejection = "volume_zero";
    }
@@ -337,9 +396,9 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
            if(scale > 0.0 && scale < 1.0)
            {
               double step=0.0, vmin=0.0, vmax=0.0;
-              if(!SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP, step) || step<=0.0) step = 0.01;
-              if(!SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN, vmin) || vmin<=0.0) vmin = step;
-              if(!SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX, vmax) || vmax<=0.0) vmax = 100.0;
+              if(!SymbolInfoDouble(exec_symbol, SYMBOL_VOLUME_STEP, step) || step<=0.0) step = 0.01;
+              if(!SymbolInfoDouble(exec_symbol, SYMBOL_VOLUME_MIN, vmin) || vmin<=0.0) vmin = step;
+              if(!SymbolInfoDouble(exec_symbol, SYMBOL_VOLUME_MAX, vmax) || vmax<=0.0) vmax = 100.0;
               double vol_scaled = volume * scale;
               // Quantize to step and clamp
               vol_scaled = MathFloor(vol_scaled/step) * step;
@@ -386,7 +445,7 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
    int symbol_pending = 0;
    if(rejection == "")
    {
-      if(!Equity_CheckPositionCaps(symbol, total_positions, symbol_positions, symbol_pending))
+      if(!Equity_CheckPositionCaps(exec_symbol, total_positions, symbol_positions, symbol_pending))
          rejection = "position_caps";
    }
 
@@ -411,7 +470,8 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
         plan.bias = (double)(-direction) * bias_magnitude;
 
      string ts = TimeToString(ctx.current_server_time, TIME_DATE|TIME_MINUTES);
-     string comment = StringFormat("BWISC-%s b=%.2f conf=%.2f %s", setup_type, plan.bias, sanitized_confidence, ts);
+     string prefix = (plan.is_proxy ? "PX " : "");
+     string comment = StringFormat("%sBWISC-%s b=%.2f conf=%.2f %s", prefix, setup_type, plan.bias, sanitized_confidence, ts);
      plan.comment = Allocator_TrimComment(comment);
   }
    else
@@ -424,8 +484,9 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
    }
 
    string log_fields = StringFormat(
-      "{\"symbol\":\"%s\",\"strategy\":\"%s\",\"setup_type\":\"%s\",\"order_type\":%d,\"entry_price\":%.5f,\"sl\":%.5f,\"tp\":%.5f,\"volume\":%.4f,\"magic\":\"%s\",\"bias\":%.4f,\"valid\":%s,\"sl_points\":%d,\"tp_points\":%d,\"direction\":%d,\"positions_total\":%d,\"positions_symbol\":%d,\"pendings_symbol\":%d",
-      symbol,
+      "{\"signal_symbol\":\"%s\",\"exec_symbol\":\"%s\",\"strategy\":\"%s\",\"setup_type\":\"%s\",\"order_type\":%d,\"entry_price\":%.5f,\"sl\":%.5f,\"tp\":%.5f,\"volume\":%.4f,\"magic\":\"%s\",\"bias\":%.4f,\"valid\":%s,\"signal_sl_points\":%.2f,\"exec_sl_points\":%.2f,\"signal_tp_points\":%.2f,\"exec_tp_points\":%.2f,\"direction\":%d,\"positions_total\":%d,\"positions_symbol\":%d,\"pendings_symbol\":%d,\"proxy\":%s,\"proxy_rate\":%.5f",
+      signal_symbol,
+      exec_symbol,
       strategy,
       plan.setup_type,
       (int)plan.order_type,
@@ -436,12 +497,16 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
       IntegerToString(plan.magic),
       plan.bias,
       plan.valid ? "true" : "false",
-      slPoints,
-      tpPoints,
+      plan.signal_sl_points,
+      exec_sl_points,
+      plan.signal_tp_points,
+      exec_tp_points,
       direction,
       total_positions,
       symbol_positions,
-      symbol_pending);
+      symbol_pending,
+      plan.is_proxy ? "true" : "false",
+      plan.proxy_rate);
 
    if(rejection != "")
       log_fields += StringFormat(",\"rejection_reason\":\"%s\"", rejection);

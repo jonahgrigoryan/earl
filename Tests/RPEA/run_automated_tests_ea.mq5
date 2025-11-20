@@ -32,6 +32,13 @@ input double RiskGateHeadroom           = 0.90;
 #define NewsBufferS            300
 #define MaxSpreadPoints        40
 #define MaxSlippagePoints      10
+#define MaxConsecutiveFailures 3
+#define FailureWindowSec       900
+#define CircuitBreakerCooldownSec 120
+#define SelfHealRetryWindowSec 300
+#define SelfHealMaxAttempts    2
+#define ErrorAlertThrottleSec  60
+#define BreakerProtectiveExitBypass true
 #define NewsCSVPath            "Files/RPEA/news/calendar_high_impact.csv"
 #define NewsCSVMaxAgeHours     24
 #define RPEA_ORDER_ENGINE_SKIP_RISK
@@ -39,10 +46,13 @@ input double RiskGateHeadroom           = 0.90;
 #define RPEA_ORDER_ENGINE_SKIP_SESSIONS
 
 // Include test reporter
+#define RPEA_TEST_RUNNER
 #include <RPEA/app_context.mqh>
 #include <RPEA/test_reporter.mqh>
+#include <RPEA/logging.mqh>
 
 AppContext g_ctx;
+bool g_test_gate_force_fail = false;
 
 // Include test files
 #include "test_order_engine.mqh"
@@ -65,6 +75,14 @@ AppContext g_ctx;
 #include "test_queue_manager.mqh"
 // Trailing manager tests (Task 13)
 #include "test_trailing.mqh"
+// Audit logger tests (Task 14)
+#include "test_logging.mqh"
+// Recovery tests (Task 16)
+#include "test_order_engine_recovery.mqh"
+// Integration tests (Task 15)
+#include "test_order_engine_integration.mqh"
+// Error handling tests (Task 17)
+#include "test_order_engine_errors.mqh"
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -103,6 +121,33 @@ bool Equity_IsPendingOrderType(const int type)
    }
    return false;
 }
+
+EquityBudgetGateResult Equity_EvaluateBudgetGate(const AppContext& ctx,
+                                                 const double next_trade_worst_case)
+{
+   EquityBudgetGateResult result;
+   result.approved = true;
+   result.gate_pass = true;
+   result.gating_reason = "test_pass";
+   result.room_available = 100.0;
+   result.room_today = 100.0;
+   result.room_overall = 100.0;
+   result.open_risk = 0.0;
+   result.pending_risk = 0.0;
+   result.next_worst_case = next_trade_worst_case;
+   result.calculation_error = false;
+   if(g_test_gate_force_fail)
+   {
+      result.gate_pass = false;
+      result.gating_reason = "forced_fail";
+      result.room_today = 10.0;
+      result.room_overall = 10.0;
+      result.open_risk = 5.0;
+      result.pending_risk = 4.0;
+   }
+   return result;
+}
+
 #endif
 
 // Global flag to track if tests have been run
@@ -116,7 +161,7 @@ int OnInit()
    Print("==========================================");
    Print("RPEA AUTOMATED TEST RUNNER");
    Print("==========================================");
-
+   AuditLogger_Init(RPEA_LOGS_DIR, DEFAULT_LogBufferSize, true);
    g_test_reporter.SetOutputPath("RPEA/test_results/test_results.json");
    g_test_reporter.SetVerbose(true);
 
@@ -150,6 +195,7 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+   AuditLogger_Shutdown();
    if(!g_tests_executed)
    {
       Print("[WARNING] Tests were not executed before shutdown");
@@ -255,6 +301,40 @@ void RunAllTests()
    g_test_reporter.RecordTest(suite13, "TestTrailing_RunAll", task13_result,
                                task13_result ? "Trailing manager tests passed" : "Trailing manager tests failed");
    g_test_reporter.EndSuite(suite13);
+
+   // Task 14: Audit Logger
+   Print("=================================================================");
+   Print("RPEA Audit Logger Tests - Task 14");
+   Print("=================================================================");
+   int suite14 = g_test_reporter.BeginSuite("Task14_Audit_Logger");
+   bool task14_result = TestLogging_RunAll();
+   g_test_reporter.RecordTest(suite14, "TestLogging_RunAll", task14_result,
+                               task14_result ? "Audit logger tests passed" : "Audit logger tests failed");
+   g_test_reporter.EndSuite(suite14);
+
+   int suite15 = g_test_reporter.BeginSuite("Task15_Risk_XAUEUR");
+   bool task15_result = TestIntegration_RunAll();
+   g_test_reporter.RecordTest(suite15, "TestIntegration_RunAll", task15_result,
+                               task15_result ? "Integration tests passed" : "Integration tests failed");
+   g_test_reporter.EndSuite(suite15);
+
+   Print("=================================================================");
+   Print("RPEA State Recovery Tests - Task 16");
+   Print("=================================================================");
+   int suite16 = g_test_reporter.BeginSuite("Task16_State_Recovery");
+   bool task16_result = TestRecovery_RunAll();
+   g_test_reporter.RecordTest(suite16, "TestRecovery_RunAll", task16_result,
+                               task16_result ? "State recovery tests passed" : "State recovery tests failed");
+   g_test_reporter.EndSuite(suite16);
+
+   Print("=================================================================");
+   Print("RPEA Error Handling & Resilience Tests - Task 17");
+   Print("=================================================================");
+   int suite17 = g_test_reporter.BeginSuite("Task17_Error_Handling");
+   bool task17_result = TestOrderEngineErrors_RunAll();
+   g_test_reporter.RecordTest(suite17, "TestOrderEngineErrors_RunAll", task17_result,
+                               task17_result ? "Error handling tests passed" : "Error handling tests failed");
+   g_test_reporter.EndSuite(suite17);
 
    Print("Test execution complete.");
 }

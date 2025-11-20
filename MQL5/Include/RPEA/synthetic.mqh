@@ -328,6 +328,7 @@ bool SyntheticManager::AlignRatesToBars(const MqlRates &xau_rates[], const int x
    MqlRates e_last;
    bool x_has_last = false;
    bool e_has_last = false;
+   bool warmup_active = true;
    int x_gap = 0;
    int e_gap = 0;
    forward_filled = 0;
@@ -358,6 +359,12 @@ bool SyntheticManager::AlignRatesToBars(const MqlRates &xau_rates[], const int x
          {
             if(m_forward_fill_enabled && x_has_last && (x_gap + 1) > m_max_gap_bars)
             {
+               if(warmup_active)
+               {
+                  x_has_last = false;
+                  x_gap = 0;
+                  continue;
+               }
                PrintFormat("[Synthetic] Gap exceeded (bars=%d) leg=%s", x_gap + 1, SYNTH_LEG_XAUUSD);
                return false;
             }
@@ -384,6 +391,12 @@ bool SyntheticManager::AlignRatesToBars(const MqlRates &xau_rates[], const int x
          {
             if(m_forward_fill_enabled && e_has_last && (e_gap + 1) > m_max_gap_bars)
             {
+               if(warmup_active)
+               {
+                  e_has_last = false;
+                  e_gap = 0;
+                  continue;
+               }
                PrintFormat("[Synthetic] Gap exceeded (bars=%d) leg=%s", e_gap + 1, SYNTH_LEG_EURUSD);
                return false;
             }
@@ -414,13 +427,20 @@ bool SyntheticManager::AlignRatesToBars(const MqlRates &xau_rates[], const int x
       int current_size = ArraySize(out_bars);
       ArrayResize(out_bars, current_size + 1);
       out_bars[current_size] = bar;
+
+      if(warmup_active && x_actual && e_actual)
+         warmup_active = false;
    }
 
    int available = ArraySize(out_bars);
    if(available < count)
    {
-      PrintFormat("[Synthetic] Insufficient bars for %s requested=%d available=%d", SYNTH_SYMBOL_XAUEUR, count, available);
-      return false;
+      if(available <= 0)
+      {
+         PrintFormat("[Synthetic] Insufficient bars for %s requested=%d available=%d", SYNTH_SYMBOL_XAUEUR, count, available);
+         return false;
+      }
+      PrintFormat("[Synthetic] Partial bar build for %s requested=%d available=%d", SYNTH_SYMBOL_XAUEUR, count, available);
    }
 
    int trim = available - count;
@@ -558,8 +578,12 @@ bool SyntheticManager::BuildSyntheticBars(const string synthetic_symbol, const E
 
    if(xau_size < count || eur_size < count)
    {
-      PrintFormat("[Synthetic] Insufficient raw bars xau=%d eur=%d required=%d", xau_size, eur_size, count);
-      return false;
+      if(xau_size <= 0 || eur_size <= 0)
+      {
+         Print("[Synthetic] Insufficient raw bars for XAUEUR build");
+         return false;
+      }
+      PrintFormat("[Synthetic] Insufficient raw bars xau=%d eur=%d required=%d, continuing with min available", xau_size, eur_size, count);
    }
 
    // CopyRates returns series arrays (index 0 = most recent). We'll reorder by using helper loops.
@@ -575,9 +599,19 @@ bool SyntheticManager::BuildSyntheticBars(const string synthetic_symbol, const E
    for(int j=0;j<eur_size;j++)
       eur_ordered[j] = eur_rates[eur_size - 1 - j];
 
+   int effective_count = count;
+   int max_available = MathMin(xau_size, eur_size);
+   if(max_available <= 0)
+   {
+      Print("[Synthetic] No overlapping XAUEUR bars available");
+      return false;
+   }
+   if(max_available < effective_count)
+      effective_count = max_available;
+
    SyntheticBar built_bars[];
    int forward_filled = 0;
-   if(!AlignRatesToBars(xau_ordered, xau_size, eur_ordered, eur_size, tf, count, built_bars, forward_filled))
+   if(!AlignRatesToBars(xau_ordered, xau_size, eur_ordered, eur_size, tf, effective_count, built_bars, forward_filled))
       return false;
 
    int cache_index = FindCacheIndex(synthetic_symbol, tf);

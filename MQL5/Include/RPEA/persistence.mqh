@@ -20,6 +20,7 @@ struct OrderIntent
    string           accept_once_key;
    datetime         timestamp;
    string           symbol;
+   string           signal_symbol;
    ENUM_ORDER_TYPE  order_type;
    double           volume;
    double           price;
@@ -28,12 +29,33 @@ struct OrderIntent
    datetime         expiry;
    string           status;
    string           execution_mode;
+   bool             is_proxy;
+   double           proxy_rate;
+   string           proxy_context;
    string           oco_sibling_id;
    int              retry_count;
    string           reasoning;
    string           error_messages[];
    ulong            executed_tickets[];
    double           partial_fills[];
+   double           confidence;
+   double           efficiency;
+   double           rho_est;
+   double           est_value;
+   double           expected_hold_minutes;
+   double           gate_open_risk;
+   double           gate_pending_risk;
+   double           gate_next_risk;
+   double           room_today;
+   double           room_overall;
+   bool             gate_pass;
+   string           gating_reason;
+   string           news_window_state;
+   string           decision_context;
+   ulong            tickets_snapshot[];
+   double           last_executed_price;
+   double           last_filled_volume;
+   double           hold_time_seconds;
 };
 
 struct PersistedQueuedAction
@@ -47,12 +69,65 @@ struct PersistedQueuedAction
    datetime queued_time;
    datetime expires_time;
    string   trigger_condition;
+   string   intent_id;
+   string   intent_key;
+   double   queued_confidence;
+   double   queued_efficiency;
+   double   rho_est;
+   double   est_value;
+   double   gate_open_risk;
+   double   gate_pending_risk;
+   double   gate_next_risk;
+   double   room_today;
+   double   room_overall;
+   bool     gate_pass;
+   string   gating_reason;
+   string   news_window_state;
+};
+
+struct PersistedEngineState
+{
+   int       consecutive_failures;
+   int       failure_window_count;
+   datetime  failure_window_start;
+   datetime  last_failure_time;
+   datetime  circuit_breaker_until;
+   string    breaker_reason;
+   datetime  last_alert_time;
+   bool      self_heal_active;
+   int       self_heal_attempts;
+   string    self_heal_reason;
+   datetime  next_self_heal_time;
 };
 
 struct IntentJournal
 {
    OrderIntent            intents[];
    PersistedQueuedAction  queued_actions[];
+   PersistedEngineState   engine_state;
+};
+
+struct PersistenceRecoverySummary
+{
+   int  intents_total;
+   int  intents_loaded;
+   int  intents_dropped;
+   int  actions_total;
+   int  actions_loaded;
+   int  actions_dropped;
+   int  corrupt_entries;
+   bool renamed_corrupt_file;
+};
+
+struct PersistenceRecoveredState
+{
+   OrderIntent   intents[];
+   int           intents_count;
+   PersistedQueuedAction queued_actions[];
+   int           queued_count;
+   PersistedEngineState engine_state;
+   bool          has_engine_state;
+   PersistenceRecoverySummary summary;
 };
 
 //==============================================================================
@@ -86,9 +161,23 @@ bool  Persistence_ActionToJson(const PersistedQueuedAction &action, string &out_
 bool  Persistence_OrderIntentFromJson(const string json, OrderIntent &out_intent);
 bool  Persistence_ActionFromJson(const string json, PersistedQueuedAction &out_action);
 string Persistence_ExtractJsonArray(const string json, const string key);
+string Persistence_ExtractJsonObject(const string json, const string key);
+string Persistence_BuildEmptyIntentJournal();
 string Persistence_ReadWholeFile(const string path);
 bool   Persistence_WriteWholeFile(const string path, const string contents);
 bool   Persistence_EnsureIntentFileExists();
+bool   Persistence_LoadRecoveredState(PersistenceRecoveredState &out_state);
+void   Persistence_FreeRecoveredState(PersistenceRecoveredState &state);
+bool   Persistence_RenameCorruptIntentFile(const string reason, PersistenceRecoverySummary &summary);
+bool   Persistence_AttachRecoveredIntent(OrderIntent &intents[],
+                                         int &count,
+                                         const OrderIntent &candidate,
+                                         PersistenceRecoverySummary &summary);
+bool   Persistence_AttachRecoveredAction(PersistedQueuedAction &actions[],
+                                         int &count,
+                                         const PersistedQueuedAction &candidate,
+                                         PersistenceRecoverySummary &summary);
+bool   Persistence_PruneOldRecoveryBackups(const int max_files = 5);
 
 // Ensure all parent folders exist under MQL5/Files/RPEA/**
 void Persistence_EnsureFolders()
@@ -112,13 +201,13 @@ void Persistence_EnsurePlaceholderFiles()
 {
    // State files
    int h;
-    h = FileOpen(FILE_INTENTS, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
-    if(h!=INVALID_HANDLE)
-    {
-       if(FileSize(h)==0)
-          FileWrite(h, "{\"intents\":[],\"queued_actions\":[]}");
-       FileClose(h);
-    }
+   h = FileOpen(FILE_INTENTS, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(h!=INVALID_HANDLE)
+   {
+      if(FileSize(h)==0)
+          FileWrite(h, Persistence_BuildEmptyIntentJournal());
+      FileClose(h);
+   }
 
    h = FileOpen(FILE_QUEUE_ACTIONS, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
    if(h!=INVALID_HANDLE)
@@ -132,6 +221,14 @@ void Persistence_EnsurePlaceholderFiles()
    if(h!=INVALID_HANDLE)
    {
       if(FileSize(h)==0) FileWrite(h, "timestamp,impact,countries,symbols");
+      FileClose(h);
+   }
+   // SL enforcement state
+   h = FileOpen(FILE_SL_ENFORCEMENT, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(h!=INVALID_HANDLE)
+   {
+      if(FileSize(h)==0)
+         FileWrite(h, "[]");
       FileClose(h);
    }
    // EMRT, Q-table, bandit, liquidity, calibration
@@ -306,7 +403,7 @@ string Persistence_EscapeJson(const string value)
          case '\n': escaped += "\\n";  break;
          case '\t': escaped += "\\t";  break;
          default:
-            escaped += CharToString(ch);
+            escaped += StringSubstr(value, i, 1);
             break;
       }
    }
@@ -331,13 +428,13 @@ string Persistence_UnescapeJson(const string value)
             case 'r': result += "\r"; break;
             case 'n': result += "\n"; break;
             case 't': result += "\t"; break;
-            default: result += CharToString(next); break;
+            default: result += StringSubstr(value, i + 1, 1); break;
          }
          i++;
       }
       else
       {
-         result += CharToString(ch);
+         result += StringSubstr(value, i, 1);
       }
    }
    return result;
@@ -359,9 +456,9 @@ datetime Persistence_ParseIso8601(const string value)
    if(value == "" || value == "null")
       return (datetime)0;
    string normalized = value;
-   normalized = StringReplace(normalized, "T", " ");
-   normalized = StringReplace(normalized, "Z", "");
-   normalized = StringReplace(normalized, "-", ".");
+   StringReplace(normalized, "T", " ");
+   StringReplace(normalized, "Z", "");
+   StringReplace(normalized, "-", ".");
    return StringToTime(normalized);
 }
 
@@ -421,7 +518,7 @@ bool Persistence_SplitJsonArrayObjects(const string json, string &objects[])
       ushort ch = StringGetCharacter(trimmed, i);
       if(in_string)
       {
-         current += CharToString(ch);
+         current += StringSubstr(trimmed, i, 1);
          if(escape)
          {
             escape = false;
@@ -470,7 +567,7 @@ bool Persistence_SplitJsonArrayObjects(const string json, string &objects[])
          continue;
       }
 
-      current += CharToString(ch);
+      current += StringSubstr(trimmed, i, 1);
    }
 
    return true;
@@ -500,6 +597,185 @@ bool Persistence_WriteWholeFile(const string path, const string contents)
       return false;
    FileWrite(handle, contents);
    FileClose(handle);
+   return true;
+}
+
+void Persistence_FreeRecoveredState(PersistenceRecoveredState &state)
+{
+   ArrayResize(state.intents, 0);
+   ArrayResize(state.queued_actions, 0);
+   state.intents_count = 0;
+   state.queued_count = 0;
+   state.has_engine_state = false;
+   Persistence_ResetEngineState(state.engine_state);
+   state.summary.intents_total = 0;
+   state.summary.intents_loaded = 0;
+   state.summary.intents_dropped = 0;
+   state.summary.actions_total = 0;
+   state.summary.actions_loaded = 0;
+   state.summary.actions_dropped = 0;
+   state.summary.corrupt_entries = 0;
+   state.summary.renamed_corrupt_file = false;
+}
+
+bool Persistence_AttachRecoveredIntent(OrderIntent &intents[],
+                                       int &count,
+                                       const OrderIntent &candidate,
+                                       PersistenceRecoverySummary &summary)
+{
+   if(StringLen(candidate.intent_id) == 0)
+   {
+      summary.corrupt_entries++;
+      summary.intents_dropped++;
+      return false;
+   }
+   for(int i = 0; i < count; ++i)
+   {
+      if(intents[i].intent_id == candidate.intent_id)
+      {
+         summary.intents_dropped++;
+         return false;
+      }
+   }
+   if(ArrayResize(intents, count + 1) < 0)
+      return false;
+   intents[count] = candidate;
+   count++;
+   summary.intents_loaded++;
+   return true;
+}
+
+bool Persistence_AttachRecoveredAction(PersistedQueuedAction &actions[],
+                                       int &count,
+                                       const PersistedQueuedAction &candidate,
+                                       PersistenceRecoverySummary &summary)
+{
+   if(StringLen(candidate.action_id) == 0)
+   {
+      summary.corrupt_entries++;
+      summary.actions_dropped++;
+      return false;
+   }
+   for(int i = 0; i < count; ++i)
+   {
+      if(actions[i].action_id == candidate.action_id)
+      {
+         summary.actions_dropped++;
+         return false;
+      }
+   }
+   if(ArrayResize(actions, count + 1) < 0)
+      return false;
+   actions[count] = candidate;
+   count++;
+   summary.actions_loaded++;
+   return true;
+}
+
+bool Persistence_RenameCorruptIntentFile(const string reason, PersistenceRecoverySummary &summary)
+{
+   string backup = StringFormat("%s.corrupt.%d", FILE_INTENTS, (int)TimeCurrent());
+   FileDelete(backup);
+   if(FileMove(FILE_INTENTS, 0, backup, 0))
+   {
+      summary.renamed_corrupt_file = true;
+      PrintFormat("[Persistence] Intent journal renamed to %s due to %s", backup, reason);
+      return true;
+   }
+   PrintFormat("[Persistence] Failed to rename corrupt journal (%s)", reason);
+   return false;
+}
+
+bool Persistence_LoadRecoveredState(PersistenceRecoveredState &out_state)
+{
+   Persistence_FreeRecoveredState(out_state);
+   string contents = Persistence_ReadWholeFile(FILE_INTENTS);
+   if(StringLen(contents) == 0)
+      return true;
+
+   int schema_version = 0;
+   if(Persistence_ParseIntField(contents, "schema_version", schema_version))
+   {
+      if(schema_version > 4)
+         PrintFormat("[Persistence] Warning: intent journal schema_version=%d exceeds expected 4", schema_version);
+   }
+
+   string intents_raw = Persistence_ExtractJsonArray(contents, "intents");
+   string actions_raw = Persistence_ExtractJsonArray(contents, "queued_actions");
+   string engine_state_raw = Persistence_ExtractJsonObject(contents, "engine_state");
+   Persistence_ResetEngineState(out_state.engine_state);
+   out_state.has_engine_state = false;
+   if(StringLen(engine_state_raw) > 0)
+   {
+      if(Persistence_ParseEngineState(engine_state_raw, out_state.engine_state))
+         out_state.has_engine_state = true;
+   }
+   bool intents_present = (StringFind(contents, "\"intents\":[") >= 0);
+   bool actions_present = (StringFind(contents, "\"queued_actions\":[") >= 0);
+   if(!intents_present || !actions_present)
+   {
+      Persistence_RenameCorruptIntentFile("invalid_json", out_state.summary);
+      return true;
+   }
+
+   string intent_objects[];
+   if(!Persistence_SplitJsonArrayObjects(intents_raw, intent_objects))
+   {
+      Persistence_RenameCorruptIntentFile("split_error", out_state.summary);
+      return true;
+   }
+
+   out_state.summary.intents_total = ArraySize(intent_objects);
+   for(int i = 0; i < ArraySize(intent_objects); ++i)
+   {
+      OrderIntent intent;
+      ZeroMemory(intent);
+      if(Persistence_OrderIntentFromJson(intent_objects[i], intent))
+      {
+         if(!Persistence_AttachRecoveredIntent(out_state.intents,
+                                               out_state.intents_count,
+                                               intent,
+                                               out_state.summary))
+         {
+            continue;
+         }
+      }
+      else
+      {
+         out_state.summary.corrupt_entries++;
+         out_state.summary.intents_dropped++;
+      }
+   }
+
+   string action_objects[];
+   if(!Persistence_SplitJsonArrayObjects(actions_raw, action_objects))
+   {
+      ArrayResize(action_objects, 0);
+   }
+   out_state.summary.actions_total = ArraySize(action_objects);
+   for(int i = 0; i < ArraySize(action_objects); ++i)
+   {
+      PersistedQueuedAction action;
+      ZeroMemory(action);
+      if(Persistence_ActionFromJson(action_objects[i], action))
+      {
+         Persistence_AttachRecoveredAction(out_state.queued_actions,
+                                           out_state.queued_count,
+                                           action,
+                                           out_state.summary);
+      }
+      else
+      {
+         out_state.summary.corrupt_entries++;
+         out_state.summary.actions_dropped++;
+      }
+   }
+
+   return true;
+}
+
+bool Persistence_PruneOldRecoveryBackups(const int max_files)
+{
    return true;
 }
 
@@ -560,6 +836,70 @@ string Persistence_ExtractJsonArray(const string json, const string key)
    return "";
 }
 
+string Persistence_ExtractJsonObject(const string json, const string key)
+{
+   string pattern = "\"" + key + "\":";
+   int start = StringFind(json, pattern);
+   if(start < 0)
+      return "";
+   start += StringLen(pattern);
+   int len = StringLen(json);
+   while(start < len)
+   {
+      ushort ch = StringGetCharacter(json, start);
+      if(ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t')
+      {
+         start++;
+         continue;
+      }
+      break;
+   }
+   if(start >= len || StringGetCharacter(json, start) != '{')
+      return "";
+   int depth = 0;
+   bool in_string = false;
+   bool escape = false;
+   int content_start = start + 1;
+   for(int i = start; i < len; ++i)
+   {
+      ushort ch = StringGetCharacter(json, i);
+      if(in_string)
+      {
+         if(escape)
+         {
+            escape = false;
+         }
+         else if(ch == '\\')
+         {
+            escape = true;
+         }
+         else if(ch == '"')
+         {
+            in_string = false;
+         }
+         continue;
+      }
+      if(ch == '"')
+      {
+         in_string = true;
+         continue;
+      }
+      if(ch == '{')
+      {
+         depth++;
+         continue;
+      }
+      if(ch == '}')
+      {
+         depth--;
+         if(depth == 0)
+            return StringSubstr(json, content_start, i - content_start);
+         continue;
+      }
+   }
+   return "";
+}
+
 bool Persistence_ParseStringField(const string json, const string key, string &out_value)
 {
    string pattern = "\"" + key + "\":";
@@ -600,7 +940,7 @@ bool Persistence_ParseStringField(const string json, const string key, string &o
             out_value = Persistence_Trim(buffer);
             return (StringLen(out_value) > 0);
          }
-         buffer += CharToString(ch);
+         buffer += StringSubstr(json, i, 1);
       }
       out_value = Persistence_Trim(buffer);
       return (StringLen(out_value) > 0);
@@ -615,7 +955,7 @@ bool Persistence_ParseStringField(const string json, const string key, string &o
       ch = StringGetCharacter(json, i);
       if(escape)
       {
-         buffer += CharToString(ch);
+         buffer += StringSubstr(json, i, 1);
          escape = false;
          continue;
       }
@@ -629,7 +969,7 @@ bool Persistence_ParseStringField(const string json, const string key, string &o
          out_value = Persistence_UnescapeJson(buffer);
          return true;
       }
-      buffer += CharToString(ch);
+      buffer += StringSubstr(json, i, 1);
    }
    PrintFormat("DEBUG ParseStringField failed: key='%s' snippet='%s'", key,
                StringSubstr(json, MathMax(0, start - 10), 80));
@@ -652,7 +992,7 @@ bool Persistence_ParseNumberField(const string json, const string key, double &o
          break;
       if(ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n')
          continue;
-      buffer += CharToString(ch);
+      buffer += StringSubstr(json, i, 1);
    }
    buffer = Persistence_Trim(buffer);
    if(buffer == "" || buffer == "null")
@@ -709,7 +1049,7 @@ bool Persistence_ParseArrayOfStrings(const string json, const string key, string
       {
          if(escape)
          {
-            current += CharToString(ch);
+            current += StringSubstr(json, i, 1);
             escape = false;
          }
          else if(ch == '\\')
@@ -726,7 +1066,7 @@ bool Persistence_ParseArrayOfStrings(const string json, const string key, string
          }
          else
          {
-            current += CharToString(ch);
+            current += StringSubstr(json, i, 1);
          }
          continue;
       }
@@ -770,7 +1110,7 @@ bool Persistence_ParseArrayOfULong(const string json, const string key, ulong &o
             break;
          continue;
       }
-      current += CharToString(ch);
+      current += StringSubstr(json, i, 1);
    }
    return true;
 }
@@ -802,9 +1142,155 @@ bool Persistence_ParseArrayOfDouble(const string json, const string key, double 
             break;
          continue;
       }
-      current += CharToString(ch);
+      current += StringSubstr(json, i, 1);
    }
    return true;
+}
+
+bool Persistence_ParseBoolField(const string json, const string key, bool &out_value)
+{
+   string pattern = "\"" + key + "\":";
+   int start = StringFind(json, pattern);
+   if(start < 0)
+      return false;
+   start += StringLen(pattern);
+   int len = StringLen(json);
+   string buffer = "";
+   for(int i = start; i < len; ++i)
+   {
+      ushort ch = StringGetCharacter(json, i);
+      if(ch == ',' || ch == '}' || ch == ']')
+         break;
+      if(ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n')
+         continue;
+      buffer += StringSubstr(json, i, 1);
+   }
+   buffer = Persistence_Trim(buffer);
+   if(buffer == "")
+      return false;
+   string lowered = buffer;
+   StringToLower(lowered);
+   if(lowered == "true" || lowered == "1")
+   {
+      out_value = true;
+      return true;
+   }
+   if(lowered == "false" || lowered == "0")
+   {
+      out_value = false;
+      return true;
+   }
+   return false;
+}
+
+void Persistence_ResetEngineState(PersistedEngineState &state)
+{
+   state.consecutive_failures = 0;
+   state.failure_window_count = 0;
+   state.failure_window_start = (datetime)0;
+   state.last_failure_time = (datetime)0;
+   state.circuit_breaker_until = (datetime)0;
+   state.breaker_reason = "";
+   state.last_alert_time = (datetime)0;
+   state.self_heal_active = false;
+   state.self_heal_attempts = 0;
+   state.self_heal_reason = "";
+   state.next_self_heal_time = (datetime)0;
+}
+
+string Persistence_EngineStateToJson(const PersistedEngineState &state)
+{
+   string json = "{";
+   json += "\"consecutive_failures\":" + (string)state.consecutive_failures + ",";
+   json += "\"failure_window_count\":" + (string)state.failure_window_count + ",";
+   json += "\"failure_window_start\":" + (string)state.failure_window_start + ",";
+   json += "\"last_failure_time\":" + (string)state.last_failure_time + ",";
+   json += "\"circuit_breaker_until\":" + (string)state.circuit_breaker_until + ",";
+   json += "\"breaker_reason\":\"" + Persistence_EscapeJson(state.breaker_reason) + "\",";
+   json += "\"last_alert_time\":" + (string)state.last_alert_time + ",";
+   json += "\"self_heal_active\":" + (state.self_heal_active ? "true" : "false") + ",";
+   json += "\"self_heal_attempts\":" + (string)state.self_heal_attempts + ",";
+   json += "\"self_heal_reason\":\"" + Persistence_EscapeJson(state.self_heal_reason) + "\",";
+   json += "\"next_self_heal_time\":" + (string)state.next_self_heal_time;
+   json += "}";
+   return json;
+}
+
+string Persistence_BuildEmptyIntentJournal()
+{
+   PersistedEngineState state;
+   Persistence_ResetEngineState(state);
+   string json = "{";
+   json += "\"schema_version\":4,";
+   json += "\"engine_state\":" + Persistence_EngineStateToJson(state) + ",";
+   json += "\"intents\":[],\"queued_actions\":[]";
+   json += "}";
+   return json;
+}
+
+bool Persistence_ParseEngineState(const string json, PersistedEngineState &out_state)
+{
+   bool parsed_any = false;
+   int int_value = 0;
+   if(Persistence_ParseIntField(json, "consecutive_failures", int_value))
+   {
+      out_state.consecutive_failures = int_value;
+      parsed_any = true;
+   }
+   if(Persistence_ParseIntField(json, "failure_window_count", int_value))
+   {
+      out_state.failure_window_count = int_value;
+      parsed_any = true;
+   }
+   long long_value = 0;
+   if(Persistence_ParseIntegerField(json, "failure_window_start", long_value))
+   {
+      out_state.failure_window_start = (datetime)long_value;
+      parsed_any = true;
+   }
+   if(Persistence_ParseIntegerField(json, "last_failure_time", long_value))
+   {
+      out_state.last_failure_time = (datetime)long_value;
+      parsed_any = true;
+   }
+   if(Persistence_ParseIntegerField(json, "circuit_breaker_until", long_value))
+   {
+      out_state.circuit_breaker_until = (datetime)long_value;
+      parsed_any = true;
+   }
+   string str_value;
+   if(Persistence_ParseStringField(json, "breaker_reason", str_value))
+   {
+      out_state.breaker_reason = str_value;
+      parsed_any = true;
+   }
+   if(Persistence_ParseIntegerField(json, "last_alert_time", long_value))
+   {
+      out_state.last_alert_time = (datetime)long_value;
+      parsed_any = true;
+   }
+   bool bool_value = false;
+   if(Persistence_ParseBoolField(json, "self_heal_active", bool_value))
+   {
+      out_state.self_heal_active = bool_value;
+      parsed_any = true;
+   }
+   if(Persistence_ParseIntField(json, "self_heal_attempts", int_value))
+   {
+      out_state.self_heal_attempts = int_value;
+      parsed_any = true;
+   }
+   if(Persistence_ParseStringField(json, "self_heal_reason", str_value))
+   {
+      out_state.self_heal_reason = str_value;
+      parsed_any = true;
+   }
+   if(Persistence_ParseIntegerField(json, "next_self_heal_time", long_value))
+   {
+      out_state.next_self_heal_time = (datetime)long_value;
+      parsed_any = true;
+   }
+   return parsed_any;
 }
 
 bool Persistence_OrderIntentToJson(const OrderIntent &intent, string &out_json)
@@ -812,12 +1298,14 @@ bool Persistence_OrderIntentToJson(const OrderIntent &intent, string &out_json)
    string error_messages_json = Persistence_JoinJsonStringArray(intent.error_messages);
    string tickets_json = Persistence_JoinJsonULongArray(intent.executed_tickets);
    string partials_json = Persistence_JoinJsonArray(intent.partial_fills);
+   string ticket_snap_json = Persistence_JoinJsonULongArray(intent.tickets_snapshot);
 
    out_json = "{";
    out_json += "\"intent_id\":\"" + Persistence_EscapeJson(intent.intent_id) + "\",";
    out_json += "\"accept_once_key\":\"" + Persistence_EscapeJson(intent.accept_once_key) + "\",";
    out_json += "\"timestamp\":\"" + Persistence_EscapeJson(Persistence_FormatIso8601(intent.timestamp)) + "\",";
    out_json += "\"symbol\":\"" + Persistence_EscapeJson(intent.symbol) + "\",";
+   out_json += "\"signal_symbol\":\"" + Persistence_EscapeJson(intent.signal_symbol) + "\",";
    out_json += "\"order_type\":\"" + Persistence_EscapeJson(EnumToString(intent.order_type)) + "\",";
    out_json += "\"volume\":" + DoubleToString(intent.volume, 4) + ",";
    out_json += "\"price\":" + DoubleToString(intent.price, 5) + ",";
@@ -826,12 +1314,33 @@ bool Persistence_OrderIntentToJson(const OrderIntent &intent, string &out_json)
    out_json += "\"expiry\":\"" + Persistence_EscapeJson(Persistence_FormatIso8601(intent.expiry)) + "\",";
    out_json += "\"status\":\"" + Persistence_EscapeJson(intent.status) + "\",";
    out_json += "\"execution_mode\":\"" + Persistence_EscapeJson(intent.execution_mode) + "\",";
+   out_json += "\"is_proxy\":" + (intent.is_proxy ? "true" : "false") + ",";
+   out_json += "\"proxy_rate\":" + DoubleToString(intent.proxy_rate, 5) + ",";
+   out_json += "\"proxy_context\":\"" + Persistence_EscapeJson(intent.proxy_context) + "\",";
    out_json += "\"oco_sibling_id\":\"" + Persistence_EscapeJson(intent.oco_sibling_id) + "\",";
    out_json += "\"retry_count\":" + (string)intent.retry_count + ",";
    out_json += "\"reasoning\":\"" + Persistence_EscapeJson(intent.reasoning) + "\",";
    out_json += "\"error_messages\":" + error_messages_json + ",";
    out_json += "\"executed_tickets\":" + tickets_json + ",";
-   out_json += "\"partial_fills\":" + partials_json;
+   out_json += "\"partial_fills\":" + partials_json + ",";
+   out_json += "\"confidence\":" + DoubleToString(intent.confidence, 4) + ",";
+   out_json += "\"efficiency\":" + DoubleToString(intent.efficiency, 4) + ",";
+   out_json += "\"rho_est\":" + DoubleToString(intent.rho_est, 4) + ",";
+   out_json += "\"est_value\":" + DoubleToString(intent.est_value, 4) + ",";
+   out_json += "\"expected_hold_minutes\":" + DoubleToString(intent.expected_hold_minutes, 2) + ",";
+   out_json += "\"gate_open_risk\":" + DoubleToString(intent.gate_open_risk, 4) + ",";
+   out_json += "\"gate_pending_risk\":" + DoubleToString(intent.gate_pending_risk, 4) + ",";
+   out_json += "\"gate_next_risk\":" + DoubleToString(intent.gate_next_risk, 4) + ",";
+   out_json += "\"room_today\":" + DoubleToString(intent.room_today, 4) + ",";
+   out_json += "\"room_overall\":" + DoubleToString(intent.room_overall, 4) + ",";
+   out_json += "\"gate_pass\":" + (intent.gate_pass ? "true" : "false") + ",";
+   out_json += "\"gating_reason\":\"" + Persistence_EscapeJson(intent.gating_reason) + "\",";
+   out_json += "\"news_window_state\":\"" + Persistence_EscapeJson(intent.news_window_state) + "\",";
+   out_json += "\"decision_context\":\"" + Persistence_EscapeJson(intent.decision_context) + "\",";
+   out_json += "\"tickets_snapshot\":" + ticket_snap_json + ",";
+   out_json += "\"last_executed_price\":" + DoubleToString(intent.last_executed_price, 5) + ",";
+   out_json += "\"last_filled_volume\":" + DoubleToString(intent.last_filled_volume, 4) + ",";
+   out_json += "\"hold_time_seconds\":" + DoubleToString(intent.hold_time_seconds, 2);
    out_json += "}";
    return true;
 }
@@ -878,6 +1387,8 @@ bool Persistence_OrderIntentFromJson(const string json, OrderIntent &out_intent)
       out_intent.timestamp = Persistence_ParseIso8601(value);
    if(Persistence_ParseStringField(json, "symbol", value))
       out_intent.symbol = value;
+   if(Persistence_ParseStringField(json, "signal_symbol", value))
+      out_intent.signal_symbol = value;
    else
       PrintFormat("[Persistence] Load intent missing symbol in %s", json);
    if(Persistence_ParseStringField(json, "order_type", value))
@@ -899,6 +1410,15 @@ bool Persistence_OrderIntentFromJson(const string json, OrderIntent &out_intent)
       PrintFormat("[Persistence] Load intent missing status in %s", json);
    if(Persistence_ParseStringField(json, "execution_mode", value))
       out_intent.execution_mode = value;
+   if(Persistence_ParseStringField(json, "is_proxy", value))
+   {
+      StringToLower(value);
+      out_intent.is_proxy = (value == "true");
+   }
+   if(Persistence_ParseNumberField(json, "proxy_rate", dbl_value))
+      out_intent.proxy_rate = dbl_value;
+   if(Persistence_ParseStringField(json, "proxy_context", value))
+      out_intent.proxy_context = value;
    else
       PrintFormat("[Persistence] Load intent missing execution_mode in %s", json);
    if(Persistence_ParseStringField(json, "oco_sibling_id", value))
@@ -912,6 +1432,65 @@ bool Persistence_OrderIntentFromJson(const string json, OrderIntent &out_intent)
    Persistence_ParseArrayOfStrings(json, "error_messages", out_intent.error_messages);
    Persistence_ParseArrayOfULong(json, "executed_tickets", out_intent.executed_tickets);
    Persistence_ParseArrayOfDouble(json, "partial_fills", out_intent.partial_fills);
+
+   out_intent.confidence = 0.0;
+   if(Persistence_ParseNumberField(json, "confidence", dbl_value))
+      out_intent.confidence = dbl_value;
+   out_intent.efficiency = 0.0;
+   if(Persistence_ParseNumberField(json, "efficiency", dbl_value))
+      out_intent.efficiency = dbl_value;
+   out_intent.rho_est = 0.0;
+   if(Persistence_ParseNumberField(json, "rho_est", dbl_value))
+      out_intent.rho_est = dbl_value;
+   out_intent.est_value = 0.0;
+   if(Persistence_ParseNumberField(json, "est_value", dbl_value))
+      out_intent.est_value = dbl_value;
+   out_intent.expected_hold_minutes = 0.0;
+   if(Persistence_ParseNumberField(json, "expected_hold_minutes", dbl_value))
+      out_intent.expected_hold_minutes = dbl_value;
+   out_intent.gate_open_risk = 0.0;
+   if(Persistence_ParseNumberField(json, "gate_open_risk", dbl_value))
+      out_intent.gate_open_risk = dbl_value;
+   out_intent.gate_pending_risk = 0.0;
+   if(Persistence_ParseNumberField(json, "gate_pending_risk", dbl_value))
+      out_intent.gate_pending_risk = dbl_value;
+   out_intent.gate_next_risk = 0.0;
+   if(Persistence_ParseNumberField(json, "gate_next_risk", dbl_value))
+      out_intent.gate_next_risk = dbl_value;
+   out_intent.room_today = 0.0;
+   if(Persistence_ParseNumberField(json, "room_today", dbl_value))
+      out_intent.room_today = dbl_value;
+   out_intent.room_overall = 0.0;
+   if(Persistence_ParseNumberField(json, "room_overall", dbl_value))
+      out_intent.room_overall = dbl_value;
+   out_intent.gate_pass = false;
+   if(Persistence_ParseStringField(json, "gate_pass", value))
+      out_intent.gate_pass = (StringCompare(value, "true") == 0 || value == "1");
+   if(Persistence_ParseStringField(json, "gating_reason", value))
+      out_intent.gating_reason = value;
+   if(Persistence_ParseStringField(json, "news_window_state", value))
+      out_intent.news_window_state = value;
+   if(Persistence_ParseStringField(json, "decision_context", value))
+      out_intent.decision_context = value;
+   Persistence_ParseArrayOfULong(json, "tickets_snapshot", out_intent.tickets_snapshot);
+   out_intent.last_executed_price = 0.0;
+   if(Persistence_ParseNumberField(json, "last_executed_price", dbl_value))
+      out_intent.last_executed_price = dbl_value;
+   out_intent.last_filled_volume = 0.0;
+   if(Persistence_ParseNumberField(json, "last_filled_volume", dbl_value))
+      out_intent.last_filled_volume = dbl_value;
+   out_intent.hold_time_seconds = 0.0;
+   if(Persistence_ParseNumberField(json, "hold_time_seconds", dbl_value))
+      out_intent.hold_time_seconds = dbl_value;
+
+   if(StringLen(out_intent.signal_symbol) == 0)
+      out_intent.signal_symbol = out_intent.symbol;
+   if(!out_intent.is_proxy && out_intent.signal_symbol != out_intent.symbol)
+      out_intent.is_proxy = true;
+   if(out_intent.proxy_rate <= 0.0)
+      out_intent.proxy_rate = 1.0;
+   if(StringLen(out_intent.execution_mode) == 0)
+      out_intent.execution_mode = "DIRECT";
 
    return true;
 }
@@ -927,7 +1506,21 @@ bool Persistence_ActionToJson(const PersistedQueuedAction &action, string &out_j
    out_json += "\"validation_threshold\":" + DoubleToString(action.validation_threshold, 4) + ",";
    out_json += "\"queued_time\":\"" + Persistence_EscapeJson(Persistence_FormatIso8601(action.queued_time)) + "\",";
    out_json += "\"expires_time\":\"" + Persistence_EscapeJson(Persistence_FormatIso8601(action.expires_time)) + "\",";
-  out_json += "\"trigger_condition\":\"" + Persistence_EscapeJson(action.trigger_condition) + "\"";
+   out_json += "\"trigger_condition\":\"" + Persistence_EscapeJson(action.trigger_condition) + "\",";
+   out_json += "\"intent_id\":\"" + Persistence_EscapeJson(action.intent_id) + "\",";
+   out_json += "\"intent_key\":\"" + Persistence_EscapeJson(action.intent_key) + "\",";
+   out_json += "\"queued_confidence\":" + DoubleToString(action.queued_confidence, 4) + ",";
+   out_json += "\"queued_efficiency\":" + DoubleToString(action.queued_efficiency, 4) + ",";
+   out_json += "\"rho_est\":" + DoubleToString(action.rho_est, 4) + ",";
+   out_json += "\"est_value\":" + DoubleToString(action.est_value, 4) + ",";
+   out_json += "\"gate_open_risk\":" + DoubleToString(action.gate_open_risk, 4) + ",";
+   out_json += "\"gate_pending_risk\":" + DoubleToString(action.gate_pending_risk, 4) + ",";
+   out_json += "\"gate_next_risk\":" + DoubleToString(action.gate_next_risk, 4) + ",";
+   out_json += "\"room_today\":" + DoubleToString(action.room_today, 4) + ",";
+   out_json += "\"room_overall\":" + DoubleToString(action.room_overall, 4) + ",";
+   out_json += "\"gate_pass\":" + (action.gate_pass ? "true" : "false") + ",";
+   out_json += "\"gating_reason\":\"" + Persistence_EscapeJson(action.gating_reason) + "\",";
+   out_json += "\"news_window_state\":\"" + Persistence_EscapeJson(action.news_window_state) + "\"";
    out_json += "}";
    return true;
 }
@@ -955,6 +1548,34 @@ bool Persistence_ActionFromJson(const string json, PersistedQueuedAction &out_ac
       out_action.expires_time = Persistence_ParseIso8601(str_value);
    if(Persistence_ParseStringField(json, "trigger_condition", str_value))
       out_action.trigger_condition = str_value;
+   if(Persistence_ParseStringField(json, "intent_id", str_value))
+      out_action.intent_id = str_value;
+   if(Persistence_ParseStringField(json, "intent_key", str_value))
+      out_action.intent_key = str_value;
+   if(Persistence_ParseNumberField(json, "queued_confidence", dbl_value))
+      out_action.queued_confidence = dbl_value;
+   if(Persistence_ParseNumberField(json, "queued_efficiency", dbl_value))
+      out_action.queued_efficiency = dbl_value;
+   if(Persistence_ParseNumberField(json, "rho_est", dbl_value))
+      out_action.rho_est = dbl_value;
+   if(Persistence_ParseNumberField(json, "est_value", dbl_value))
+      out_action.est_value = dbl_value;
+   if(Persistence_ParseNumberField(json, "gate_open_risk", dbl_value))
+      out_action.gate_open_risk = dbl_value;
+   if(Persistence_ParseNumberField(json, "gate_pending_risk", dbl_value))
+      out_action.gate_pending_risk = dbl_value;
+   if(Persistence_ParseNumberField(json, "gate_next_risk", dbl_value))
+      out_action.gate_next_risk = dbl_value;
+   if(Persistence_ParseNumberField(json, "room_today", dbl_value))
+      out_action.room_today = dbl_value;
+   if(Persistence_ParseNumberField(json, "room_overall", dbl_value))
+      out_action.room_overall = dbl_value;
+   if(Persistence_ParseStringField(json, "gate_pass", str_value))
+      out_action.gate_pass = (StringCompare(str_value, "true") == 0 || str_value == "1");
+   if(Persistence_ParseStringField(json, "gating_reason", str_value))
+      out_action.gating_reason = str_value;
+   if(Persistence_ParseStringField(json, "news_window_state", str_value))
+      out_action.news_window_state = str_value;
    return true;
 }
 
@@ -978,7 +1599,7 @@ bool Persistence_EnsureIntentFileExists()
    if(handle == INVALID_HANDLE)
       return false;
    if(FileSize(handle) == 0)
-      FileWrite(handle, "{\"intents\":[],\"queued_actions\":[]}");
+      FileWrite(handle, Persistence_BuildEmptyIntentJournal());
    FileClose(handle);
    return true;
 }
@@ -987,6 +1608,7 @@ void IntentJournal_Clear(IntentJournal &journal)
 {
    ArrayResize(journal.intents, 0);
    ArrayResize(journal.queued_actions, 0);
+   Persistence_ResetEngineState(journal.engine_state);
 }
 
 bool IntentJournal_Load(IntentJournal &journal)
@@ -1000,6 +1622,10 @@ bool IntentJournal_Load(IntentJournal &journal)
 
    string intents_raw = Persistence_ExtractJsonArray(contents, "intents");
    string actions_raw = Persistence_ExtractJsonArray(contents, "queued_actions");
+   string engine_state_raw = Persistence_ExtractJsonObject(contents, "engine_state");
+   Persistence_ResetEngineState(journal.engine_state);
+   if(StringLen(engine_state_raw) > 0)
+      Persistence_ParseEngineState(engine_state_raw, journal.engine_state);
 
    string intent_objects[];
    Persistence_SplitJsonArrayObjects(intents_raw, intent_objects);
@@ -1033,11 +1659,19 @@ bool IntentJournal_Save(const IntentJournal &journal)
       Persistence_ActionToJson(journal.queued_actions[i], objects_actions[i]);
 
    string serialized = "{";
+   serialized += "\"schema_version\":4,";
+   serialized += "\"engine_state\":" + Persistence_EngineStateToJson(journal.engine_state) + ",";
    serialized += "\"intents\":" + Persistence_JoinJsonObjects(objects_intents) + ",";
    serialized += "\"queued_actions\":" + Persistence_JoinJsonObjects(objects_actions);
    serialized += "}";
 
-   return Persistence_WriteWholeFile(FILE_INTENTS, serialized);
+   string temp_path = FILE_INTENTS + ".tmp";
+   if(!Persistence_WriteWholeFile(temp_path, serialized))
+      return false;
+   FileDelete(FILE_INTENTS);
+   if(!FileMove(temp_path, 0, FILE_INTENTS, 0))
+      return false;
+   return true;
 }
 
 int IntentJournal_FindIntentById(const IntentJournal &journal, const string intent_id)

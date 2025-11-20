@@ -282,6 +282,35 @@ bool Queue_OrderEngine_IsRiskReducing(const QueuedAction &qa,
 
 double Queue_OrderEngine_GetMinStopDistancePoints(const string symbol);
 
+void Queue_LogAuditEvent(const QueuedAction &qa,
+                         const string symbol,
+                         const string decision,
+                         const string context_json)
+  {
+     AuditRecord record;
+     record.timestamp = TimeCurrent();
+     record.intent_id = (StringLen(qa.intent_id) > 0 ? qa.intent_id : "queue");
+     record.action_id = StringFormat("%s:QUEUE:%I64d", record.intent_id, qa.id);
+     record.symbol = (StringLen(symbol) > 0 ? symbol : qa.symbol);
+     record.mode = "QUEUE";
+     record.requested_price = (qa.action_type == QA_SL_MODIFY ? qa.new_sl :
+                               qa.action_type == QA_TP_MODIFY ? qa.new_tp : 0.0);
+     record.executed_price = 0.0;
+     record.requested_vol = 0.0;
+     record.filled_vol = 0.0;
+     record.remaining_vol = 0.0;
+     if(qa.ticket > 0)
+     {
+        ArrayResize(record.tickets, 1);
+        record.tickets[0] = (ulong)qa.ticket;
+     }
+     record.retry_count = qa.retry_count;
+     record.decision = decision;
+     record.gating_reason = context_json;
+     record.news_window_state = News_GetWindowState(record.symbol, false);
+     AuditLogger_Log(record);
+  }
+
 //------------------------------------------------------------------------------
 // Test hooks
 //------------------------------------------------------------------------------
@@ -713,6 +742,7 @@ bool Queue_Add(const string symbol,
      string fields = StringFormat("{\"queue_id\":%I64d,\"ticket\":%I64d,\"action\":%d,\"priority\":%d,\"reason\":\"QUEUED_NEWS\"}",
                                   qa.id, qa.ticket, (int)qa.action_type, (int)qa.priority);
      LogAuditRow("QUEUE", "OrderEngine", LOG_INFO, "QUEUED_NEWS", fields);
+     Queue_LogAuditEvent(qa, symbol, "QUEUED_NEWS", context);
      return true;
   }
 
@@ -1121,6 +1151,11 @@ int Queue_LoadFromDiskAndReconcile()
            int part_count = StringSplit(line, ',', parts);
            if(part_count < 11)
               continue;
+           for(int p = 0; p < part_count; p++)
+           {
+              StringTrimLeft(parts[p]);
+              StringTrimRight(parts[p]);
+           }
 
            QueuedAction qa;
            qa.id = (long)StringToInteger(parts[0]);

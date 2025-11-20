@@ -111,6 +111,27 @@ MQL5/
 
 Tip: Use the Strategy Tester (Every tick based on real ticks) to validate initialization, logging, and timer behavior before enabling trading logic.
 
+## 📄 Audit Logging (Task 14)
+
+Task 14 delivers a production-grade audit trail that captures every significant lifecycle event (intent creation, sends/retries, fills/partials, cancels, queue actions, trailing updates, protective exits).
+
+- **File location**: `MQL5/Files/RPEA/logs/audit_YYYYMMDD.csv` (per-day rotation). Each row follows the locked schema:
+
+  ```csv
+  timestamp,intent_id,action_id,symbol,mode(proxy|repl),requested_price,executed_price,requested_vol,filled_vol,remaining_vol,tickets[],retry_count,gate_open_risk,gate_pending_risk,gate_next_risk,room_today,room_overall,gate_pass,decision,confidence,efficiency,rho_est,est_value,hold_time,gating_reason,news_window_state
+  ```
+
+- **Configuration**: new EA inputs (`EnableDetailedLogging`, `LogBufferSize`, `AuditLogPath`) control buffering and output path; defaults live in `config.mqh`. Folders are created automatically via `Persistence_EnsureFolders`.
+- **Buffering**: the logger batches up to `LogBufferSize` entries, flushes on buffer-full, daily rollover, or EA shutdown, and is safe inside Strategy Tester sessions.
+- **Telemetry**: risk snapshots (`gate_*`, `room_*`, `gate_pass`, `gating_reason`), strategy context (`confidence`, `efficiency`, `rho_est`, `est_value`, `hold_time`), execution fields, ticket lists, and `news_window_state` are persisted with intents so restarts can recreate compliant rows.
+- **Sample row**:
+
+  ```csv
+  2024-02-12T09:15:23.512Z,rpea_20240212_091523_007,act_00042,XAUUSD,proxy,2050.50,2050.47,0.10,0.10,0.00,"[123456789]",1,120.00,45.00,60.00,400.00,600.00,true,ORDER_EXECUTED,0.82,0.78,0.15,1.95,540,"London bias gate","CLEAR"
+  ```
+
+- **Testing**: `Tests/RPEA/test_logging.mqh` validates header formatting, buffering, and flush behavior; order-engine/queue/trailing suites include assertions that representative events emit audit rows. The Strategy Tester runner (`run_automated_tests_ea.mq5`) now executes the logging suite alongside the earlier tasks.
+
 ## 🔧 Implementation Priorities
 
 ### Critical Project Specification Requirements

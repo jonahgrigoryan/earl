@@ -70,6 +70,11 @@ void RetryTests_BuildOrderRequest(OrderRequest &request,
    request.is_oco_primary = false;
    request.oco_sibling_ticket = 0;
    request.expiry = TimeCurrent() + 3600;
+   request.signal_symbol = request.symbol;
+   request.is_protective = false;
+   request.is_proxy = false;
+   request.proxy_rate = 1.0;
+   request.proxy_context = "";
 }
 
 //------------------------------------------------------------------------------
