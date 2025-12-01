@@ -41,6 +41,7 @@ input double RiskGateHeadroom           = 0.90;
 #define BreakerProtectiveExitBypass true
 #define NewsCSVPath            "Files/RPEA/news/calendar_high_impact.csv"
 #define NewsCSVMaxAgeHours     24
+#define SpreadMultATR          0.005
 #define RPEA_ORDER_ENGINE_SKIP_RISK
 #define RPEA_ORDER_ENGINE_SKIP_EQUITY
 #define RPEA_ORDER_ENGINE_SKIP_SESSIONS
@@ -83,6 +84,8 @@ bool g_test_gate_force_fail = false;
 #include "test_order_engine_integration.mqh"
 // Error handling tests (Task 17)
 #include "test_order_engine_errors.mqh"
+// Liquidity filter tests (Task 22)
+#include "test_liquidity.mqh"
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -335,6 +338,16 @@ void RunAllTests()
    g_test_reporter.RecordTest(suite17, "TestOrderEngineErrors_RunAll", task17_result,
                                task17_result ? "Error handling tests passed" : "Error handling tests failed");
    g_test_reporter.EndSuite(suite17);
+
+   // Task 22: Liquidity Filter
+   Print("=================================================================");
+   Print("RPEA Liquidity Filter Tests - Task 22");
+   Print("=================================================================");
+   int suite22 = g_test_reporter.BeginSuite("Task22_Liquidity_Filter");
+   bool task22_result = TestLiquidity_RunAll();
+   g_test_reporter.RecordTest(suite22, "TestLiquidity_RunAll", task22_result,
+                               task22_result ? "Liquidity filter tests passed" : "Liquidity filter tests failed");
+   g_test_reporter.EndSuite(suite22);
 
    Print("Test execution complete.");
 }
