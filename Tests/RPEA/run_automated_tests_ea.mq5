@@ -85,6 +85,8 @@ bool g_test_gate_force_fail = false;
 #include "test_order_engine_errors.mqh"
 // Risk Sizing tests (Task 21)
 #include "test_risk_sizing.mqh"
+// Liquidity filter tests (Task 22)
+#include "test_liquidity.mqh"
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -346,6 +348,16 @@ void RunAllTests()
    g_test_reporter.RecordTest(suite21, "TestRiskSizing_RunAll", task21_result,
                                task21_result ? "All risk sizing tests passed" : "Some risk sizing tests failed");
    g_test_reporter.EndSuite(suite21);
+
+   // Task 22: Liquidity Filter
+   Print("=================================================================");
+   Print("RPEA Liquidity Filter Tests - Task 22");
+   Print("=================================================================");
+   int suite22 = g_test_reporter.BeginSuite("Task22_Liquidity_Filter");
+   bool task22_result = TestLiquidity_RunAll();
+   g_test_reporter.RecordTest(suite22, "TestLiquidity_RunAll", task22_result,
+                               task22_result ? "Liquidity filter tests passed" : "Liquidity filter tests failed");
+   g_test_reporter.EndSuite(suite22);
 
    Print("Test execution complete.");
 }

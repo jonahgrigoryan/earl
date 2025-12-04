@@ -108,6 +108,9 @@
 #define DEFAULT_QueueTTLMinutes              5
 #define DEFAULT_EnableQueuePrioritization    true
 
+// Liquidity Configuration (Task 22)
+#define DEFAULT_SpreadMultATR                0.005
+
 #ifdef __MQL5__
 //------------------------------------------------------------------------------
 // Task 17 Resilience Config Helpers
@@ -188,6 +191,26 @@ inline bool Config_GetBreakerProtectiveExitBypass()
 {
    bool configured = BreakerProtectiveExitBypass;
    return configured;
+}
+
+//------------------------------------------------------------------------------
+// Task 22 Liquidity Config Helper
+//------------------------------------------------------------------------------
+
+inline double Config_GetSpreadMultATR()
+{
+#ifdef RPEA_TEST_RUNNER
+   // In test runner, inputs are defined as macros.
+   // Guard against missing macro definition.
+   #ifdef SpreadMultATR
+      return SpreadMultATR;
+   #else
+      return DEFAULT_SpreadMultATR;
+   #endif
+#else
+   // In EA, inputs are global variables visible to included files.
+   return SpreadMultATR;
+#endif
 }
 #endif // __MQL5__
 
