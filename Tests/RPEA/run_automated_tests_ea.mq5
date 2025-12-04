@@ -84,6 +84,8 @@ bool g_test_gate_force_fail = false;
 #include "test_order_engine_integration.mqh"
 // Error handling tests (Task 17)
 #include "test_order_engine_errors.mqh"
+// Risk sizing tests (Task 21)
+#include "test_risk_sizing.mqh"
 // Liquidity filter tests (Task 22)
 #include "test_liquidity.mqh"
 
@@ -338,6 +340,15 @@ void RunAllTests()
    g_test_reporter.RecordTest(suite17, "TestOrderEngineErrors_RunAll", task17_result,
                                task17_result ? "Error handling tests passed" : "Error handling tests failed");
    g_test_reporter.EndSuite(suite17);
+
+   Print("=================================================================");
+   Print("RPEA Dynamic Position Sizing Tests - Task 21");
+   Print("=================================================================");
+   int suite21 = g_test_reporter.BeginSuite("Task21_Risk_Sizing");
+   bool task21_result = TestRiskSizing_RunAll();
+   g_test_reporter.RecordTest(suite21, "TestRiskSizing_RunAll", task21_result,
+                               task21_result ? "All risk sizing tests passed" : "Some risk sizing tests failed");
+   g_test_reporter.EndSuite(suite21);
 
    // Task 22: Liquidity Filter
    Print("=================================================================");
