@@ -87,6 +87,11 @@ bool g_test_gate_force_fail = false;
 #include "test_risk_sizing.mqh"
 // Liquidity filter tests (Task 22)
 #include "test_liquidity.mqh"
+// Breakeven tests (Task 23)
+#include "test_order_engine_breakeven.mqh"
+
+// Forward declaration to ensure the breakeven suite is visible when compiling.
+bool TestBreakeven_RunAll();
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -358,6 +363,16 @@ void RunAllTests()
    g_test_reporter.RecordTest(suite22, "TestLiquidity_RunAll", task22_result,
                                task22_result ? "Liquidity filter tests passed" : "Liquidity filter tests failed");
    g_test_reporter.EndSuite(suite22);
+
+   // Task 23: Breakeven Manager
+   Print("=================================================================");
+   Print("RPEA Breakeven Manager Tests - Task 23");
+   Print("=================================================================");
+   int suite23 = g_test_reporter.BeginSuite("Task23_Breakeven_Manager");
+   bool task23_result = TestBreakeven_RunAll();
+   g_test_reporter.RecordTest(suite23, "TestBreakeven_RunAll", task23_result,
+                               task23_result ? "Breakeven tests passed" : "Breakeven tests failed");
+   g_test_reporter.EndSuite(suite23);
 
    Print("Test execution complete.");
 }

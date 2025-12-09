@@ -11,6 +11,7 @@
 #include <RPEA/persistence.mqh>
 #include <RPEA/queue.mqh>
 #include <RPEA/trailing.mqh>
+#include <RPEA/breakeven.mqh>
 #include <RPEA/news.mqh>
 #include <RPEA/symbol_bridge.mqh>
 #ifndef RPEA_ORDER_ENGINE_SKIP_SESSIONS
@@ -34,6 +35,10 @@ static string g_order_engine_lock_reason = "";
 
 #define OE_INTENT_TTL_MINUTES   1440
 #define OE_ACTION_TTL_MINUTES   1440
+
+#ifdef RPEA_TEST_RUNNER
+bool OE_Test_Modify(const QueuedAction &qa);
+#endif
 
 #ifndef RPEA_ORDER_ENGINE_SKIP_RISK
 #include <RPEA/risk.mqh>
@@ -5220,6 +5225,14 @@ bool Queue_OrderEngine_ApplyAction(const QueuedAction &qa,
    out_permanent_failure = false;
    out_reason_code = "APPLY_OK";
 
+#ifdef RPEA_TEST_RUNNER
+   if(OE_Test_Modify(qa))
+   {
+      out_reason_code = "APPLY_OK";
+      return true;
+   }
+#endif
+
    if(qa.ticket <= 0 || StringLen(qa.symbol) == 0)
    {
       out_permanent_failure = true;
@@ -5444,6 +5457,7 @@ void OrderEngine_ProcessQueueAndTrailing()
 
    Queue_CancelExpired();
    Queue_RevalidateAndApply();
+   Breakeven_HandleOnTickOrTimer();
    Trail_HandleOnTickOrTimer();
 
    OrderEngine_ExitCritical("queue_process");
@@ -5462,6 +5476,7 @@ void OrderEngine_OnTradeTransaction(const MqlTradeTransaction &trans,
       if(entry == DEAL_ENTRY_OUT && position_id > 0)
       {
          Queue_ClearForTicket(position_id);
+         Breakeven_OnPositionClosed(position_id);
          Trail_OnPositionClosed(position_id);
       }
    }
@@ -5488,6 +5503,7 @@ void OrderEngine_RestoreStateOnInit(const int queue_ttl_minutes,
 
    Queue_Init(ttl_minutes, max_queue, prioritization);
    int restored = Queue_LoadFromDiskAndReconcile();
+   Breakeven_Init();
    Trail_Init();
 
    string fields = StringFormat("{\"restored\":%d}", restored);

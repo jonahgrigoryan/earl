@@ -40,7 +40,7 @@ claude-flow
 hive-mind-prompt-*.txt
 
 # Local automation and helper artifacts (not part of M3 deliverables)
-CLAUDE.md
+#CLAUDE.md
 claude-flow.cmd
 docs/
 mt5_test_config.ini
@@ -50,3 +50,6 @@ test_runner.ps1
 MQL5/Files/RPEA/
 automated.txt
 intents.json
+
+.gemini/
+gha-creds-*.json

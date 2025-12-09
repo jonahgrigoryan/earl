@@ -111,6 +111,10 @@
 // Liquidity Configuration (Task 22)
 #define DEFAULT_SpreadMultATR                0.005
 
+// Breakeven Configuration (Task 23)
+// Optional additive buffer (points) on top of live spread when moving SL to breakeven.
+#define DEFAULT_BreakevenExtraPoints         0
+
 #ifdef __MQL5__
 //------------------------------------------------------------------------------
 // Task 17 Resilience Config Helpers
@@ -210,6 +214,27 @@ inline double Config_GetSpreadMultATR()
 #else
    // In EA, inputs are global variables visible to included files.
    return SpreadMultATR;
+#endif
+}
+
+//------------------------------------------------------------------------------
+// Task 23 Breakeven Config Helper
+//------------------------------------------------------------------------------
+
+inline double Config_GetBreakevenExtraPoints()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef BreakevenExtraPoints
+      return BreakevenExtraPoints;
+   #else
+      return DEFAULT_BreakevenExtraPoints;
+   #endif
+#else
+   #ifdef BreakevenExtraPoints
+      return BreakevenExtraPoints;
+   #else
+      return DEFAULT_BreakevenExtraPoints;
+   #endif
 #endif
 }
 #endif // __MQL5__
