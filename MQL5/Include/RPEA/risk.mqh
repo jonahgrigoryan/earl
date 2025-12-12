@@ -17,7 +17,8 @@ inline double Risk_FloorToStep(const double value, const double step)
 double Risk_SizingByATRDistanceForSymbol(const string symbol,
                                           const double entry, const double stop,
                                           const double equity, const double riskPct,
-                                          double availableRoom = -1.0)
+                                          double availableRoom = -1.0,
+                                          double confidence = 1.0)
 {
    if(symbol == NULL || symbol == "")
       return 0.0;
@@ -26,6 +27,11 @@ double Risk_SizingByATRDistanceForSymbol(const string symbol,
       return 0.0;
    if(entry <= 0.0 || equity <= 0.0 || riskPct <= 0.0)
       return 0.0;
+
+   // Defense-in-depth: sanitize confidence even though allocator may have sanitized it
+   if(!MathIsValidNumber(confidence)) confidence = 0.0; // Fail safe for NaN
+   double effective_conf = MathMin(MathMax(confidence, 0.0), 1.0); // Clamp to [0.0, 1.0]
+   double effective_risk_pct = riskPct * effective_conf;
 
    double point = 0.0;
    double tick_size = 0.0;
@@ -51,7 +57,7 @@ double Risk_SizingByATRDistanceForSymbol(const string symbol,
    if(distance <= 0.0)
       return 0.0;
 
-   double risk_money = equity * (riskPct / 100.0);
+   double risk_money = equity * (effective_risk_pct / 100.0);
    if(risk_money <= 0.0)
       return 0.0;
 
@@ -160,11 +166,13 @@ double Risk_SizingByATRDistanceForSymbol(const string symbol,
    }
 
    string log_fields = StringFormat(
-      "{\"symbol\":\"%s\",\"entry\":%.5f,\"stop\":%.5f,\"risk_money\":%.2f,\"sl_points\":%.2f,\"raw_volume\":%.4f,\"final_volume\":%.4f,\"margin_used_pct\":%.2f,\"room_cap\":%.2f,\"clamped\":%s}",
+      "{\"symbol\":\"%s\",\"entry\":%.5f,\"stop\":%.5f,\"risk_money\":%.2f,\"confidence\":%.2f,\"effective_risk_pct\":%.2f,\"sl_points\":%.2f,\"raw_volume\":%.4f,\"final_volume\":%.4f,\"margin_used_pct\":%.2f,\"room_cap\":%.2f,\"clamped\":%s}",
       symbol,
       entry,
       stop,
       risk_money,
+      effective_conf,
+      effective_risk_pct,
       sl_points,
       raw_volume,
       final_volume,
@@ -177,9 +185,10 @@ double Risk_SizingByATRDistanceForSymbol(const string symbol,
 }
 
 double Risk_SizingByATRDistance(const double entry, const double stop,
-                                const double equity, const double riskPct)
+                                const double equity, const double riskPct,
+                                double confidence = 1.0)
 {
-   return Risk_SizingByATRDistanceForSymbol(_Symbol, entry, stop, equity, riskPct);
+   return Risk_SizingByATRDistanceForSymbol(_Symbol, entry, stop, equity, riskPct, -1.0, confidence);
 }
 
 #endif // RPEA_RISK_MQH

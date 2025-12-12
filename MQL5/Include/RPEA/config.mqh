@@ -70,6 +70,7 @@
 #define DEFAULT_MinHoldSeconds               120
 #define DEFAULT_EnableExecutionLock          true
 #define DEFAULT_PendingExpiryGraceSeconds    60
+#define DEFAULT_PendingExpirySeconds         2700
 #define DEFAULT_AutoCancelOCOSibling         true
 #define DEFAULT_OCOCancellationTimeoutMs     1000
 #define DEFAULT_EnableRiskReductionSiblingCancel true
@@ -107,6 +108,13 @@
 #define DEFAULT_MaxQueueSize                 1000
 #define DEFAULT_QueueTTLMinutes              5
 #define DEFAULT_EnableQueuePrioritization    true
+
+// Liquidity Configuration (Task 22)
+#define DEFAULT_SpreadMultATR                0.005
+
+// Breakeven Configuration (Task 23)
+// Optional additive buffer (points) on top of live spread when moving SL to breakeven.
+#define DEFAULT_BreakevenExtraPoints         0
 
 #ifdef __MQL5__
 //------------------------------------------------------------------------------
@@ -188,6 +196,47 @@ inline bool Config_GetBreakerProtectiveExitBypass()
 {
    bool configured = BreakerProtectiveExitBypass;
    return configured;
+}
+
+//------------------------------------------------------------------------------
+// Task 22 Liquidity Config Helper
+//------------------------------------------------------------------------------
+
+inline double Config_GetSpreadMultATR()
+{
+#ifdef RPEA_TEST_RUNNER
+   // In test runner, inputs are defined as macros.
+   // Guard against missing macro definition.
+   #ifdef SpreadMultATR
+      return SpreadMultATR;
+   #else
+      return DEFAULT_SpreadMultATR;
+   #endif
+#else
+   // In EA, inputs are global variables visible to included files.
+   return SpreadMultATR;
+#endif
+}
+
+//------------------------------------------------------------------------------
+// Task 23 Breakeven Config Helper
+//------------------------------------------------------------------------------
+
+inline double Config_GetBreakevenExtraPoints()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef BreakevenExtraPoints
+      return BreakevenExtraPoints;
+   #else
+      return DEFAULT_BreakevenExtraPoints;
+   #endif
+#else
+   #ifdef BreakevenExtraPoints
+      return BreakevenExtraPoints;
+   #else
+      return DEFAULT_BreakevenExtraPoints;
+   #endif
+#endif
 }
 #endif // __MQL5__
 

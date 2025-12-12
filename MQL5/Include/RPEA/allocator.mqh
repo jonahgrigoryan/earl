@@ -351,7 +351,7 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
    double volume = 0.0;
    if(rejection == "")
    {
-      volume = Risk_SizingByATRDistanceForSymbol(exec_symbol, entry_price, sl_price, equity, RiskPct);
+      volume = Risk_SizingByATRDistanceForSymbol(exec_symbol, entry_price, sl_price, equity, RiskPct, -1.0, confidence);
       if(volume <= 0.0)
          rejection = "volume_zero";
    }

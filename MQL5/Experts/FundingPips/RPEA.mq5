@@ -67,6 +67,7 @@ input double GivebackCapDayPct          = 0.50; // 0.25–0.50
 input int    NewsBufferS                = 300;
 input int    MaxSpreadPoints            = 40;
 input int    MaxSlippagePoints          = 10;
+input double SpreadMultATR              = 0.005; // Max spread as fraction of Daily ATR
 input int    MinHoldSeconds             = 120;
 input int    QueueTTLMinutes           = DEFAULT_QueueTTLMinutes;
 input int    MaxQueueSize               = DEFAULT_MaxQueueSize;
