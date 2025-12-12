@@ -89,9 +89,12 @@ bool g_test_gate_force_fail = false;
 #include "test_liquidity.mqh"
 // Breakeven tests (Task 23)
 #include "test_order_engine_breakeven.mqh"
+// Pending expiry tests (Task 24)
+#include "test_order_engine_pending_expiry.mqh"
 
 // Forward declaration to ensure the breakeven suite is visible when compiling.
 bool TestBreakeven_RunAll();
+bool TestOrderEnginePendingExpiry_RunAll();
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -373,6 +376,15 @@ void RunAllTests()
    g_test_reporter.RecordTest(suite23, "TestBreakeven_RunAll", task23_result,
                                task23_result ? "Breakeven tests passed" : "Breakeven tests failed");
    g_test_reporter.EndSuite(suite23);
+
+   Print("=================================================================");
+   Print("RPEA Pending Expiry Tests - Task 24");
+   Print("=================================================================");
+   int suite24 = g_test_reporter.BeginSuite("Task24_Pending_Expiry");
+   bool task24_result = TestOrderEnginePendingExpiry_RunAll();
+   g_test_reporter.RecordTest(suite24, "TestOrderEnginePendingExpiry_RunAll", task24_result,
+                               task24_result ? "Pending expiry tests passed" : "Pending expiry tests failed");
+   g_test_reporter.EndSuite(suite24);
 
    Print("Test execution complete.");
 }

@@ -644,6 +644,7 @@ private:
    int             m_min_hold_seconds;
    bool            m_enable_execution_lock;
    int             m_pending_expiry_grace_seconds;
+   int             m_pending_expiry_seconds;
    bool            m_auto_cancel_oco_sibling;
    int             m_oco_cancellation_timeout_ms;
    bool            m_enable_risk_reduction_sibling_cancel;
@@ -911,6 +912,13 @@ private:
       return cutoff;
    }
 
+   datetime OE_CalcPendingExpiry(const datetime custom_expiry) const
+   {
+      if(custom_expiry > 0)
+         return custom_expiry;
+      return TimeCurrent() + m_pending_expiry_seconds;
+   }
+
 public:
    bool GetIntentMetadata(const ulong ticket,
                           string &out_intent_id,
@@ -996,6 +1004,7 @@ public:
       m_min_hold_seconds = DEFAULT_MinHoldSeconds;
       m_enable_execution_lock = DEFAULT_EnableExecutionLock;
       m_pending_expiry_grace_seconds = DEFAULT_PendingExpiryGraceSeconds;
+      m_pending_expiry_seconds = DEFAULT_PendingExpirySeconds;
       m_auto_cancel_oco_sibling = DEFAULT_AutoCancelOCOSibling;
       m_oco_cancellation_timeout_ms = DEFAULT_OCOCancellationTimeoutMs;
       m_enable_risk_reduction_sibling_cancel = DEFAULT_EnableRiskReductionSiblingCancel;
@@ -1155,6 +1164,11 @@ public:
       m_cutoff_override = 0;
    }
 
+   datetime OE_Test_CalcPendingExpiry(const datetime custom_expiry) const
+   {
+      return OE_CalcPendingExpiry(custom_expiry);
+   }
+
    bool OE_Test_EstablishOCO(const ulong primary_ticket,
                              const ulong sibling_ticket,
                              const string symbol,
@@ -1165,12 +1179,20 @@ public:
       return EstablishOCO(primary_ticket, sibling_ticket, symbol, primary_volume, sibling_volume, expiry);
    }
 
-  bool OE_Test_ProcessOCOFill(const ulong filled_ticket,
-                              const double explicit_deal_volume = -1.0,
-                              const ulong deal_id = 0)
-  {
-     return ProcessOCOFill(filled_ticket, explicit_deal_volume, deal_id);
-  }
+   bool OE_Test_GetOCOState(const int index, OCORelationship &out_relationship) const
+   {
+      if(index < 0 || index >= m_oco_count)
+         return false;
+      out_relationship = m_oco_relationships[index];
+      return true;
+   }
+
+   bool OE_Test_ProcessOCOFill(const ulong filled_ticket,
+                               const double explicit_deal_volume = -1.0,
+                               const ulong deal_id = 0)
+   {
+      return ProcessOCOFill(filled_ticket, explicit_deal_volume, deal_id);
+   }
    
    //===========================================================================
    // Event Handlers
@@ -1211,6 +1233,7 @@ public:
             ord_volume = OrderGetDouble(ORDER_VOLUME_INITIAL);
             ord_expiry = (datetime)OrderGetInteger(ORDER_TIME_EXPIRATION);
          }
+         const datetime calc_expiry = OE_CalcPendingExpiry(ord_expiry);
          int pidx = OCO_FindPendingForSymbol(sym);
          if(pidx < 0)
          {
@@ -1221,7 +1244,7 @@ public:
             m_oco_pending_links[pidx].has_primary = true;
             m_oco_pending_links[pidx].primary_ticket = trans.order;
             m_oco_pending_links[pidx].primary_volume = ord_volume;
-            m_oco_pending_links[pidx].primary_expiry = (ord_expiry > 0 ? ord_expiry : (TimeCurrent() + m_pending_expiry_grace_seconds));
+            m_oco_pending_links[pidx].primary_expiry = (ord_expiry > 0 ? ord_expiry : calc_expiry);
             m_oco_pending_links[pidx].has_sibling = false;
          }
          else
@@ -1231,21 +1254,28 @@ public:
                m_oco_pending_links[pidx].has_primary = true;
                m_oco_pending_links[pidx].primary_ticket = trans.order;
                m_oco_pending_links[pidx].primary_volume = ord_volume;
-               m_oco_pending_links[pidx].primary_expiry = (ord_expiry > 0 ? ord_expiry : (TimeCurrent() + m_pending_expiry_grace_seconds));
+               m_oco_pending_links[pidx].primary_expiry = (ord_expiry > 0 ? ord_expiry : calc_expiry);
             }
             else if(!m_oco_pending_links[pidx].has_sibling)
             {
                m_oco_pending_links[pidx].has_sibling = true;
                m_oco_pending_links[pidx].sibling_ticket = trans.order;
                m_oco_pending_links[pidx].sibling_volume = ord_volume;
-               m_oco_pending_links[pidx].sibling_expiry = (ord_expiry > 0 ? ord_expiry : (TimeCurrent() + m_pending_expiry_grace_seconds));
+               m_oco_pending_links[pidx].sibling_expiry = (ord_expiry > 0 ? ord_expiry : m_oco_pending_links[pidx].primary_expiry);
+               if(m_oco_pending_links[pidx].sibling_expiry <= 0)
+                  m_oco_pending_links[pidx].sibling_expiry = calc_expiry;
+               datetime paired_expiry = m_oco_pending_links[pidx].primary_expiry;
+               if(paired_expiry <= 0)
+                  paired_expiry = m_oco_pending_links[pidx].sibling_expiry;
+               if(paired_expiry <= 0)
+                  paired_expiry = calc_expiry;
                // Establish when both present
                EstablishOCO(m_oco_pending_links[pidx].primary_ticket,
                             m_oco_pending_links[pidx].sibling_ticket,
                             sym,
                             MathMax(0.0, m_oco_pending_links[pidx].primary_volume),
                             MathMax(0.0, m_oco_pending_links[pidx].sibling_volume),
-                            (m_oco_pending_links[pidx].primary_expiry > 0 ? m_oco_pending_links[pidx].primary_expiry : m_oco_pending_links[pidx].sibling_expiry));
+                            paired_expiry);
                // Update intent journal sibling ids
                OCO_UpdateIntentSiblingIds(sym);
                OCO_ClearPendingAt(pidx);
@@ -1485,6 +1515,27 @@ public:
             }
             normalized.tp = normalized_tp;
          }
+      }
+
+      if(is_pending)
+      {
+         const datetime calculated_expiry = OE_CalcPendingExpiry(request.expiry);
+         normalized.expiry = calculated_expiry;
+         string expiry_reason = (request.expiry > 0 ? "custom_expiry" : "default_pending_ttl");
+         string expiry_fields = StringFormat("{\"symbol\":\"%s\",\"reason\":\"%s\",\"expiry\":\"%s\"}",
+                                             normalized.symbol,
+                                             expiry_reason,
+                                             TimeToString(calculated_expiry));
+         LogOE(StringFormat("Pending expiry set for %s (%s): %s",
+                            normalized.symbol,
+                            expiry_reason,
+                            TimeToString(calculated_expiry)));
+         LogDecision("OrderEngine", "PENDING_EXPIRY_SET", expiry_fields);
+         OE_Test_CaptureDecision("PENDING_EXPIRY_SET", expiry_fields);
+      }
+      else
+      {
+         normalized.expiry = 0;
       }
 
       intent_time = TimeCurrent();
@@ -2011,11 +2062,17 @@ public:
                      const string symbol, const double primary_volume, 
                      const double sibling_volume, const datetime expiry)
    {
+      const datetime broker_expiry = OE_CalcPendingExpiry(expiry);
       LogOE(StringFormat("EstablishOCO: primary=%llu sibling=%llu symbol=%s expiry=%s",
-            primary_ticket, sibling_ticket, symbol, TimeToString(expiry)));
+            primary_ticket, sibling_ticket, symbol, TimeToString(broker_expiry)));
 
       if(m_oco_count >= ArraySize(m_oco_relationships))
          return false;
+
+      const datetime session_cutoff = GetSessionCutoffAligned(symbol, TimeCurrent());
+      datetime aligned_expiry = broker_expiry;
+      if(session_cutoff > 0)
+         aligned_expiry = (broker_expiry > 0 ? MathMin(broker_expiry, session_cutoff) : session_cutoff);
 
       int idx = m_oco_count;
       m_oco_relationships[idx].primary_ticket = primary_ticket;
@@ -2025,9 +2082,9 @@ public:
       m_oco_relationships[idx].sibling_volume = sibling_volume;
       m_oco_relationships[idx].primary_volume_original = primary_volume;  // Task 8: Never modified
       m_oco_relationships[idx].sibling_volume_original = sibling_volume;  // Task 8: Never modified
-      m_oco_relationships[idx].expiry = expiry;
-      m_oco_relationships[idx].expiry_broker = expiry;
-      m_oco_relationships[idx].expiry_aligned = GetSessionCutoffAligned(symbol, TimeCurrent());
+      m_oco_relationships[idx].expiry = broker_expiry;
+      m_oco_relationships[idx].expiry_broker = broker_expiry;
+      m_oco_relationships[idx].expiry_aligned = aligned_expiry;
       m_oco_relationships[idx].established_time = TimeCurrent();
       m_oco_relationships[idx].establish_reason = "establish";
       m_oco_relationships[idx].primary_filled = 0.0;
@@ -2035,13 +2092,14 @@ public:
       m_oco_relationships[idx].is_active = true;
       m_oco_count++;
 
-      string fields = StringFormat("{\"primary_ticket\":%llu,\"sibling_ticket\":%llu,\"symbol\":\"%s\",\"primary_vol\":%.2f,\"sibling_vol\":%.2f,\"expiry_broker\":\"%s\",\"established\":\"%s\"}",
+      string fields = StringFormat("{\"primary_ticket\":%llu,\"sibling_ticket\":%llu,\"symbol\":\"%s\",\"primary_vol\":%.2f,\"sibling_vol\":%.2f,\"expiry_broker\":\"%s\",\"expiry_aligned\":\"%s\",\"established\":\"%s\"}",
                                    primary_ticket,
                                    sibling_ticket,
                                    symbol,
                                    primary_volume,
                                    sibling_volume,
-                                   TimeToString(expiry),
+                                   TimeToString(broker_expiry),
+                                   TimeToString(aligned_expiry),
                                    TimeToString(m_oco_relationships[idx].established_time));
       LogDecision("OrderEngine", "OCO_ESTABLISH", fields);
       OE_Test_CaptureDecision("OCO_ESTABLISH", fields);
