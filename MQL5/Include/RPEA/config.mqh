@@ -70,6 +70,7 @@
 #define DEFAULT_MinHoldSeconds               120
 #define DEFAULT_EnableExecutionLock          true
 #define DEFAULT_PendingExpiryGraceSeconds    60
+#define DEFAULT_PendingExpirySeconds         2700
 #define DEFAULT_AutoCancelOCOSibling         true
 #define DEFAULT_OCOCancellationTimeoutMs     1000
 #define DEFAULT_EnableRiskReductionSiblingCancel true
