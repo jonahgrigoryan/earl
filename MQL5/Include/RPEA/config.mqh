@@ -113,6 +113,10 @@
 #define DEFAULT_SpreadMultATR                0.005
 
 // Breakeven Configuration (Task 23)
+// Performance and maintainability constants
+#define BREAKEVEN_TRIGGER_R_MULTIPLE         0.5
+#define EPS_SL_CHANGE                        1e-6
+#define LEGACY_LOG_FLUSH_THRESHOLD           64
 // Optional additive buffer (points) on top of live spread when moving SL to breakeven.
 #define DEFAULT_BreakevenExtraPoints         0
 

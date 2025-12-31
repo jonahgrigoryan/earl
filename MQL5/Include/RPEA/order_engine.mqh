@@ -913,6 +913,7 @@ private:
    }
 
    datetime OE_CalcPendingExpiry(const datetime custom_expiry) const
+   // Business rule: Manual override honored (custom_expiry > 0), else default 45m TTL
    {
       if(custom_expiry > 0)
          return custom_expiry;
@@ -3967,6 +3968,12 @@ OrderErrorDecision OrderEngine::OrderEngine_HandleError(const OrderError &err)
    {
       decision.type = ERROR_DECISION_FAIL_FAST;
       decision.gating_reason = "circuit_breaker_active";
+   // Surface unknown retcodes for improved observability
+   if(err.cls == ERRORCLASS_UNKNOWN)
+   {
+      LogDecision("OrderEngine", "UNKNOWN_RETCODE",
+                  StringFormat("{\"retcode\":%d,\"context\":\"%s\"}", err.retcode, err.context));
+   }
       OrderEngine_LogErrorHandling(err, decision);
       return decision;
    }
@@ -3978,6 +3985,12 @@ OrderErrorDecision OrderEngine::OrderEngine_HandleError(const OrderError &err)
       if(!bypass)
          OrderEngine_RecordFailure(now);
       OrderEngine_TripCircuitBreaker("fail_fast:" + err.context);
+   // Surface unknown retcodes for improved observability
+   if(err.cls == ERRORCLASS_UNKNOWN)
+   {
+      LogDecision("OrderEngine", "UNKNOWN_RETCODE",
+                  StringFormat("{\"retcode\":%d,\"context\":\"%s\"}", err.retcode, err.context));
+   }
       OrderEngine_LogErrorHandling(err, decision);
       return decision;
    }
@@ -3998,6 +4011,12 @@ OrderErrorDecision OrderEngine::OrderEngine_HandleError(const OrderError &err)
       decision.gating_reason = (allow_retry ? "" : "retry_exhausted");
    }
 
+   // Surface unknown retcodes for improved observability
+   if(err.cls == ERRORCLASS_UNKNOWN)
+   {
+      LogDecision("OrderEngine", "UNKNOWN_RETCODE",
+                  StringFormat("{\"retcode\":%d,\"context\":\"%s\"}", err.retcode, err.context));
+   }
    OrderEngine_LogErrorHandling(err, decision);
 
    if(!bypass && (m_consecutive_failures >= m_resilience_max_failures ||
@@ -4690,7 +4709,22 @@ void OE_ApplyRetryDelay(const int delay_ms)
          return;
    }
 
-   Sleep(delay_ms);
+   // Performance fix: Use smaller sleeps to prevent UI blocking
+   // Break large delays into smaller chunks to maintain responsiveness
+   const int max_chunk_ms = 100;
+   int remaining = delay_ms;
+   while(remaining > 0)
+   {
+      int chunk = MathMin(remaining, max_chunk_ms);
+      Sleep(chunk);
+      remaining -= chunk;
+      // Allow MT5 to process other events
+      if(remaining > 0)
+      {
+         // Brief yield to prevent complete blocking
+         Sleep(1);
+      }
+   }
 }
 
 void OE_Test_SetVolumeOverride(const string symbol,

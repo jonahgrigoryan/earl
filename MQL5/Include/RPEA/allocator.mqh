@@ -8,6 +8,7 @@
 #include <RPEA/risk.mqh>
 #include <RPEA/equity_guardian.mqh>
 #include <RPEA/symbol_bridge.mqh>
+#include <RPEA/liquidity.mqh>
 
 struct AppContext;
 
@@ -348,6 +349,12 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
          rejection = "equity_snapshot";
    }
 
+   // Task 22: Check spread filter before risk sizing
+   double spread_val = 0.0, spread_thresh = 0.0;
+   if(rejection == "" && !Liquidity_SpreadOK(exec_symbol, spread_val, spread_thresh))
+   {
+      rejection = "spread_filter";
+   }
    double volume = 0.0;
    if(rejection == "")
    {

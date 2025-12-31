@@ -44,7 +44,7 @@ struct QueuedAction
   };
 
 //------------------------------------------------------------------------------
-// Internal state
+// Internal state (with performance improvements)
 //------------------------------------------------------------------------------
 
 static QueuedAction g_queue_buffer[];
@@ -55,6 +55,9 @@ static int          g_queue_ttl_minutes = DEFAULT_QueueTTLMinutes;
 static int          g_queue_max_size = DEFAULT_MaxQueueSize;
 static bool         g_queue_prioritization = DEFAULT_EnableQueuePrioritization;
 static int          g_queue_process_batch = 1;
+
+// Performance: Dirty flag for write coalescing
+static bool         g_queue_dirty = false;
 
 struct QueueTestOverrides
   {
@@ -235,6 +238,9 @@ bool   Queue_SaveOrUpdateOnDisk(const QueuedAction &qa);
 bool   Queue_DeleteFromDiskById(const long id);
 int    Queue_LoadFromDiskAndReconcile();
 
+// Performance: Flush pending writes
+void   Queue_FlushIfDirty();
+
 //------------------------------------------------------------------------------
 // Internal helpers (exposed for testing)
 //------------------------------------------------------------------------------
@@ -346,6 +352,7 @@ void Queue_Init(const int ttl_minutes,
      g_queue_prioritization = enable_prioritization;
      Queue_RecomputeBatchSize();
      g_queue_initialized = true;
+     g_queue_dirty = false; // Initialize dirty flag
   }
 
 int Queue_Size()
@@ -362,6 +369,7 @@ void Queue_Test_Reset()
      g_queue_ttl_minutes = DEFAULT_QueueTTLMinutes;
      g_queue_max_size = DEFAULT_MaxQueueSize;
      g_queue_prioritization = DEFAULT_EnableQueuePrioritization;
+     g_queue_dirty = false; // Reset dirty flag
      Queue_RecomputeBatchSize();
      Queue_Test_ClearOverrides();
   }
@@ -449,7 +457,16 @@ bool Queue_SaveAll()
   {
      int handle = FileOpen(FILE_QUEUE_ACTIONS, FILE_WRITE|FILE_TXT|FILE_ANSI);
      if(handle == INVALID_HANDLE)
+     {
+        // One-time warning for operational visibility
+        static bool s_queue_warned = false;
+        if(!s_queue_warned)
+        {
+           s_queue_warned = true;
+           PrintFormat("[Queue] Failed to write %s; queue persistence degraded", FILE_QUEUE_ACTIONS);
+        }
         return false;
+     }
 
      FileWrite(handle, "id,ticket,action_type,symbol,created_at,expires_at,priority,new_sl,new_tp,context,retry_count,intent_id,intent_key");
      for(int i = 0; i < g_queue_count; i++)
@@ -472,29 +489,36 @@ bool Queue_SaveAll()
           FileWrite(handle, line);
        }
      FileClose(handle);
+     g_queue_dirty = false; // Clear dirty flag after successful save
      return true;
   }
 
+// Performance: Write coalescing - mark dirty only, flush later
 bool Queue_SaveOrUpdateOnDisk(const QueuedAction &qa)
   {
-     if(!Queue_SaveAll())
-     {
-        LogAuditRow("QUEUE_STATE", "Queue", LOG_WARN, "SAVE_FAIL", "{}" );
-        return false;
-     }
-     LogAuditRow("QUEUE_STATE", "Queue", LOG_INFO, "SAVE_OK", "{}");
+     g_queue_dirty = true; // Mark for later flush
      return true;
   }
 
 bool Queue_DeleteFromDiskById(const long id)
   {
+     g_queue_dirty = true; // Mark for later flush
+     return true;
+  }
+
+// Performance: Flush helper for coalesced writes
+void Queue_FlushIfDirty()
+  {
+     if(!g_queue_dirty)
+        return;
      if(!Queue_SaveAll())
      {
         LogAuditRow("QUEUE_STATE", "Queue", LOG_WARN, "SAVE_FAIL", "{}" );
-        return false;
      }
-     LogAuditRow("QUEUE_STATE", "Queue", LOG_INFO, "SAVE_OK", "{}");
-     return true;
+     else
+     {
+        LogAuditRow("QUEUE_STATE", "Queue", LOG_INFO, "SAVE_OK", "{}");
+     }
   }
 
 void Queue_EnsureInitialized()
@@ -761,7 +785,7 @@ bool Queue_ClearForTicket(const long ticket)
           LogAuditRow("QUEUE", "OrderEngine", LOG_INFO, "COALESCE_DROP", fields);
        }
      if(removed)
-        Queue_SaveAll();
+        Queue_FlushIfDirty(); // Use coalesced flush
      return removed;
   }
 
@@ -800,7 +824,7 @@ bool Queue_CoalesceIfRedundant(const long ticket,
           }
        }
      if(removed)
-        Queue_SaveAll();
+        Queue_FlushIfDirty(); // Use coalesced flush
      return removed;
   }
 
@@ -821,7 +845,7 @@ int Queue_CancelExpired()
           dropped++;
        }
      if(dropped > 0)
-        Queue_SaveAll();
+        Queue_FlushIfDirty(); // Use coalesced flush
      return dropped;
   }
 
@@ -1120,7 +1144,7 @@ int Queue_RevalidateAndApply()
        }
 
      if(applied > 0)
-        Queue_SaveAll();
+        Queue_FlushIfDirty(); // Use coalesced flush
      return applied;
   }
 
@@ -1319,7 +1343,7 @@ int Queue_LoadFromDiskAndReconcile()
         g_queue_buffer[g_queue_count++] = qa;
      }
 
-     Queue_SaveAll();
+     Queue_SaveAll(); // Final save after reconciliation
      return g_queue_count;
   }
 

@@ -38,6 +38,7 @@ input double RiskGateHeadroom           = 0.90;
 #define SelfHealRetryWindowSec 300
 #define SelfHealMaxAttempts    2
 #define ErrorAlertThrottleSec  60
+#define SpreadMultATR 0.005
 #define BreakerProtectiveExitBypass true
 #define NewsCSVPath            "Files/RPEA/news/calendar_high_impact.csv"
 #define NewsCSVMaxAgeHours     24
