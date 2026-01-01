@@ -916,4 +916,324 @@ bool Equity_IsSmallRoomPause(const AppContext& ctx)
    return state.small_room_pause;
 }
 
+//==============================================================================
+// M4-Task02: Micro-Mode, Hard-Stop, and Giveback Protection
+//==============================================================================
+
+// Forward declarations for inputs (defined in RPEA.mq5)
+#ifdef RPEA_TEST_RUNNER
+#ifndef TargetProfitPct
+#define TargetProfitPct DEFAULT_TargetProfitPct
+#endif
+#ifndef MicroRiskPct
+#define MicroRiskPct DEFAULT_MicroRiskPct
+#endif
+#ifndef MicroTimeStopMin
+#define MicroTimeStopMin DEFAULT_MicroTimeStopMin
+#endif
+#ifndef GivebackCapDayPct
+#define GivebackCapDayPct DEFAULT_GivebackCapDayPct
+#endif
+#ifndef MaxSlippagePoints
+#define MaxSlippagePoints 10
+#endif
+#ifndef MinTradeDaysRequired
+#define MinTradeDaysRequired 3
+#endif
+#endif
+
+// Global context forward declaration
+#ifndef GLOBAL_CTX_FORWARD_DECLARED
+#define GLOBAL_CTX_FORWARD_DECLARED
+#endif
+
+// Forward declaration for persistence flush
+#ifndef PERSISTENCE_FORWARD_DECLARED
+#define PERSISTENCE_FORWARD_DECLARED
+void Persistence_Flush();
+#endif
+
+//------------------------------------------------------------------------------
+// Micro-Mode Functions
+//------------------------------------------------------------------------------
+
+// Check if Micro-Mode is currently active
+bool Equity_IsMicroModeActive()
+{
+   ChallengeState st = State_Get();
+   return st.micro_mode;
+}
+
+// Check and activate Micro-Mode if conditions are met
+// Activates when: profit target achieved AND gDaysTraded < MinTradeDaysRequired
+void Equity_CheckMicroMode(const AppContext &ctx)
+{
+   ChallengeState st = State_Get();
+   
+   // Already in Micro-Mode or permanently disabled
+   if(st.micro_mode || st.disabled_permanent)
+      return;
+   
+   // Condition 1: Profit target achieved
+   double current_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double baseline = ctx.initial_baseline;
+   if(!MathIsValidNumber(baseline) || baseline <= 0.0)
+      baseline = st.initial_baseline;
+   if(!MathIsValidNumber(baseline) || baseline <= 0.0)
+      return;
+   
+   double target_equity = baseline * (1.0 + TargetProfitPct / 100.0);
+   
+   if(current_equity < target_equity)
+      return;
+   
+   // Condition 2: gDaysTraded still below requirement
+   if(st.gDaysTraded >= MinTradeDaysRequired)
+      return;
+   
+   // Activate Micro-Mode
+   st.micro_mode = true;
+   st.micro_mode_activated_at = TimeCurrent();
+   State_Set(st);
+   
+   LogAuditRow("MICRO_MODE_ACTIVATED", "EQUITY", 1,
+               StringFormat("Equity %.2f hit target %.2f, days %d/%d", 
+                           current_equity, target_equity, st.gDaysTraded, MinTradeDaysRequired),
+               StringFormat("{\"equity\":%.2f,\"target\":%.2f,\"days_traded\":%d,\"micro_risk_pct\":%.2f}",
+                           current_equity, target_equity, st.gDaysTraded, MicroRiskPct));
+}
+
+// Check if Micro-Mode time stop has been exceeded for a position
+bool Equity_MicroTimeStopExceeded(const datetime entry_time)
+{
+   if(!Equity_IsMicroModeActive())
+      return false;
+   
+   int elapsed_min = (int)((TimeCurrent() - entry_time) / 60);
+   return elapsed_min >= MicroTimeStopMin;
+}
+
+//------------------------------------------------------------------------------
+// Hard-Stop Functions
+//------------------------------------------------------------------------------
+
+// Check if trading is hard-stopped
+bool Equity_IsHardStopped()
+{
+   ChallengeState st = State_Get();
+   return st.disabled_permanent;
+}
+
+// Close all open positions (used by hard-stop and giveback)
+void Equity_CloseAllPositions(const string reason)
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         string symbol = PositionGetString(POSITION_SYMBOL);
+         double volume = PositionGetDouble(POSITION_VOLUME);
+         
+         MqlTradeRequest request = {};
+         MqlTradeResult result = {};
+         
+         request.action = TRADE_ACTION_DEAL;
+         request.position = ticket;
+         request.symbol = symbol;
+         request.volume = volume;
+         request.type = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) 
+                        ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+         request.price = (request.type == ORDER_TYPE_BUY) 
+                         ? SymbolInfoDouble(symbol, SYMBOL_ASK)
+                         : SymbolInfoDouble(symbol, SYMBOL_BID);
+         request.deviation = MaxSlippagePoints;
+         request.comment = reason;
+         
+         if(!OrderSend(request, result))
+         {
+            PrintFormat("[HardStop] Failed to close position %d: %d", ticket, result.retcode);
+         }
+      }
+   }
+}
+
+// Cancel all pending orders (used by hard-stop and giveback)
+void Equity_CancelAllPendingOrders(const string reason)
+{
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket > 0)
+      {
+         MqlTradeRequest request = {};
+         MqlTradeResult result = {};
+         
+         request.action = TRADE_ACTION_REMOVE;
+         request.order = ticket;
+         request.comment = reason;
+         
+         if(!OrderSend(request, result))
+         {
+            PrintFormat("[HardStop] Failed to cancel order %d: %d", ticket, result.retcode);
+         }
+      }
+   }
+}
+
+// Trigger hard-stop with reason
+void Equity_TriggerHardStop(const string reason)
+{
+   ChallengeState st = State_Get();
+   
+   if(st.disabled_permanent)
+      return;  // Already stopped
+   
+   st.disabled_permanent = true;
+   st.trading_enabled = false;
+   st.hard_stop_reason = reason;
+   st.hard_stop_time = TimeCurrent();
+   st.hard_stop_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   State_Set(st);
+   
+   // Note: g_ctx.permanently_disabled is set by RPEA.mq5 after checking Equity_IsHardStopped()
+   
+   LogAuditRow("HARD_STOP_ACTIVATED", "EQUITY", 0, reason,
+               StringFormat("{\"equity\":%.2f,\"reason\":\"%s\",\"days_traded\":%d}",
+                           st.hard_stop_equity, reason, st.gDaysTraded));
+   
+   // Close all positions and cancel all orders
+   Equity_CloseAllPositions("HARD_STOP");
+   Equity_CancelAllPendingOrders("HARD_STOP");
+   
+   // Persist immediately
+   Persistence_Flush();
+}
+
+// Check for hard-stop conditions
+void Equity_CheckHardStopConditions(const AppContext &ctx)
+{
+   ChallengeState st = State_Get();
+   
+   if(st.disabled_permanent)
+      return;
+   
+   double current_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double baseline = ctx.initial_baseline;
+   if(!MathIsValidNumber(baseline) || baseline <= 0.0)
+      baseline = st.initial_baseline;
+   if(!MathIsValidNumber(baseline) || baseline <= 0.0)
+      return;
+   
+   // Check 1: Overall drawdown floor breach
+   double overall_floor = baseline * (1.0 - OverallLossCapPct / 100.0);
+   if(current_equity <= overall_floor)
+   {
+      Equity_TriggerHardStop(StringFormat("Overall floor breach: %.2f <= %.2f", 
+                                          current_equity, overall_floor));
+      return;
+   }
+   
+   // Check 2: Challenge complete (success hard-stop)
+   double target_equity = baseline * (1.0 + TargetProfitPct / 100.0);
+   if(current_equity >= target_equity && st.gDaysTraded >= MinTradeDaysRequired)
+   {
+      LogAuditRow("CHALLENGE_COMPLETE", "EQUITY", 1,
+                  StringFormat("Target %.2f achieved with %d days", target_equity, st.gDaysTraded),
+                  StringFormat("{\"equity\":%.2f,\"target\":%.2f,\"days_traded\":%d}",
+                              current_equity, target_equity, st.gDaysTraded));
+      Equity_TriggerHardStop("Challenge completed successfully");
+      return;
+   }
+   
+   // Check 3: Target hit but MinTradeDays not met - log warning
+   if(current_equity >= target_equity && st.gDaysTraded < MinTradeDaysRequired && !st.micro_mode)
+   {
+      LogAuditRow("TARGET_PENDING_DAYS", "EQUITY", 1,
+                  StringFormat("Target hit, need %d more days", MinTradeDaysRequired - st.gDaysTraded),
+                  StringFormat("{\"equity\":%.2f,\"days_traded\":%d,\"required\":%d}",
+                              current_equity, st.gDaysTraded, MinTradeDaysRequired));
+   }
+}
+
+//------------------------------------------------------------------------------
+// Giveback Protection Functions (Micro-Mode Only)
+//------------------------------------------------------------------------------
+
+// Update peak equity tracking
+void Equity_UpdatePeakTracking()
+{
+   double current_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   ChallengeState st = State_Get();
+   
+   // Update intraday peak
+   if(current_equity > st.day_peak_equity)
+   {
+      st.day_peak_equity = current_equity;
+   }
+   
+   // Update overall peak
+   if(current_equity > st.overall_peak_equity)
+   {
+      st.overall_peak_equity = current_equity;
+   }
+   
+   State_Set(st);
+}
+
+// Check and trigger giveback protection (Micro-Mode only)
+bool Equity_CheckGivebackProtection()
+{
+   ChallengeState st = State_Get();
+   
+   // Only active in Micro-Mode
+   if(!st.micro_mode)
+      return false;
+   
+   if(st.day_peak_equity <= 0.0)
+      return false;
+   
+   double current_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double drawdown_from_peak = (st.day_peak_equity - current_equity) / st.day_peak_equity;
+   
+   if(drawdown_from_peak >= GivebackCapDayPct / 100.0)
+   {
+      if(st.trading_enabled)
+      {
+         st.trading_enabled = false;
+         State_Set(st);
+         
+         LogAuditRow("GIVEBACK_PROTECTION", "EQUITY", 0,
+                     StringFormat("DD %.2f%% from peak %.2f", drawdown_from_peak * 100, st.day_peak_equity),
+                     StringFormat("{\"equity\":%.2f,\"peak\":%.2f,\"dd_pct\":%.2f}",
+                                 current_equity, st.day_peak_equity, drawdown_from_peak * 100));
+         
+         Equity_CloseAllPositions("GIVEBACK_PROTECTION");
+         Equity_CancelAllPendingOrders("GIVEBACK_PROTECTION");
+      }
+      return true;
+   }
+   
+   return !st.trading_enabled;
+}
+
+// Read-only gate for order engine
+bool Equity_IsGivebackProtectionActive()
+{
+   ChallengeState st = State_Get();
+   return st.micro_mode && !st.trading_enabled;
+}
+
+// Reset daily tracking on server-day rollover
+void Equity_OnServerDayRollover()
+{
+   ChallengeState st = State_Get();
+   st.day_peak_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   if(!st.disabled_permanent)
+      st.trading_enabled = true;
+   State_Set(st);
+   
+   LogAuditRow("DAY_ROLLOVER_SERVER", "EQUITY", 1, "Daily peak reset", "{}");
+}
+
 #endif // EQUITY_GUARDIAN_MQH

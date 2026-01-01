@@ -42,7 +42,7 @@
 #endif
 
 //+------------------------------------------------------------------+
-// Inputs (consolidated) – names and defaults per finalspec.md
+// Inputs (consolidated) - names and defaults per finalspec.md
 // Risk & governance
 input double DailyLossCapPct            = 4.0;
 input double OverallLossCapPct          = 6.0;
@@ -59,9 +59,10 @@ input int    StartHourNY                = 12;
 input int    ORMinutes                  = 60;   // {30,45,60,75}
 input int    CutoffHour                 = 16;   // server hour
 input double RiskPct                    = 1.5;
-input double MicroRiskPct               = 0.10; // 0.05–0.20
-input int    MicroTimeStopMin           = 45;   // 30–60
-input double GivebackCapDayPct          = 0.50; // 0.25–0.50
+input double MicroRiskPct               = 0.10; // 0.05-0.20
+input int    MicroTimeStopMin           = 45;   // 30-60
+input double GivebackCapDayPct          = 0.50; // 0.25-0.50
+input double TargetProfitPct            = 10.0; // Challenge profit target percentage
 
 // Compliance
 input int    NewsBufferS                = 300;
@@ -95,10 +96,10 @@ input int    ServerToCEST_OffsetMinutes = 0;
 // Symbols & leverage
 input string InpSymbols                 = "EURUSD;XAUUSD";
 input bool   UseXAUEURProxy             = true;
-input int    LeverageOverrideFX         = 50;   // 0 → use account
+input int    LeverageOverrideFX         = 50;   // 0 = use account
 input int    LeverageOverrideMetals     = 20;
 
-// Synthetic manager (Task 11 acceptance §Synthetic Manager Interface)
+// Synthetic manager (Task 11 acceptance Synthetic Manager Interface)
 input int    SyntheticBarCacheSize      = DEFAULT_SyntheticBarCacheSize;
 input bool   ForwardFillGaps            = DEFAULT_ForwardFillGaps;
 input int    MaxGapBars                 = DEFAULT_MaxGapBars;
@@ -236,6 +237,22 @@ int OnInit()
    // 8) Initialize timer (30s)
    EventSetTimer(30);
 
+   // 9) M4-Task02: Initialize peak tracking and check hard-stop state
+   ChallengeState init_st = State_Get();
+   if(init_st.day_peak_equity <= 0.0)
+   {
+      init_st.day_peak_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+      init_st.overall_peak_equity = init_st.day_peak_equity;
+      State_Set(init_st);
+   }
+   
+   // Check if already hard-stopped from previous session
+   if(Equity_IsHardStopped())
+   {
+      g_ctx.permanently_disabled = true;
+      PrintFormat("[RPEA] EA is hard-stopped: %s", State_Get().hard_stop_reason);
+   }
+
    return(INIT_SUCCEEDED);
 }
 
@@ -279,8 +296,23 @@ void OnTimer()
       LogAuditRow("ROLLOVER", "Scheduler", 1, "New server day baseline anchored", "{}");
 
       // Day-count handled in OnTradeTransaction on first DEAL_ENTRY_IN (per spec)
+      
+      // M4-Task02: Server-day rollover handling
+      Equity_OnServerDayRollover();
    }
    g_ctx.timer_last_check = g_ctx.current_server_time;
+   
+   // M4-Task02: Update peak tracking
+   Equity_UpdatePeakTracking();
+   
+   // M4-Task02: Check Micro-Mode activation (target hit but days remaining)
+   Equity_CheckMicroMode(g_ctx);
+   
+   // M4-Task02: Check giveback protection (Micro-Mode only)
+   Equity_CheckGivebackProtection();
+   
+   // M4-Task02: Check hard-stop conditions (floor breach or challenge complete)
+   Equity_CheckHardStopConditions(g_ctx);
 
     // Refresh indicators per symbol (lightweight in M1)
     int synth_idx = Indicators_FindSlot(SYNTH_SYMBOL_XAUEUR);
@@ -338,7 +370,15 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
       ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
       if(entry == DEAL_ENTRY_IN)
       {
-         State_MarkTradeDayOnce();
+         // M4-Task02: Use explicit server timestamp for deterministic tracking
+         datetime deal_time = (datetime)HistoryDealGetInteger(trans.deal, DEAL_TIME);
+         if(deal_time <= 0)
+            deal_time = TimeCurrent();
+         State_MarkTradeDayServer(deal_time);
+         
+         // M4-Task02: Track Micro-Mode entry usage per day
+         if(Equity_IsMicroModeActive())
+            State_MarkMicroEntryServer(deal_time);
       }
    }
 }

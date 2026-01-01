@@ -5621,4 +5621,56 @@ void OrderEngine_OnTradeTxn(const MqlTradeTransaction& trans,
 
 // End include guard
 #undef OE_CORRELATION_FALLBACK
+//==============================================================================
+// M4-Task02: Hard-Stop, Giveback, and Micro-Mode Entry Gates
+//==============================================================================
+#define OE_ERR_HARD_STOPPED         10001
+#define OE_ERR_GIVEBACK_PROTECTION  10002
+#define OE_ERR_MICRO_DAY_LIMIT      10003
+
+struct M4GateResult
+{
+   bool   allowed;
+   int    error_code;
+   string error_message;
+   M4GateResult() { allowed = true; error_code = 0; error_message = ""; }
+};
+
+M4GateResult OE_CheckM4EntryGates(const bool is_entry)
+{
+   M4GateResult result;
+   if(Equity_IsHardStopped()) {
+      result.allowed = false;
+      result.error_code = OE_ERR_HARD_STOPPED;
+      result.error_message = "Trading permanently disabled (hard-stop active)";
+      LogAuditRow("HARD_STOP_REJECTED", "OrderEngine", 0, result.error_message, "{}");
+      return result;
+   }
+   if(!is_entry) return result;
+   if(Equity_IsGivebackProtectionActive()) {
+      result.allowed = false;
+      result.error_code = OE_ERR_GIVEBACK_PROTECTION;
+      result.error_message = "New entries blocked (giveback protection)";
+      LogAuditRow("GIVEBACK_REJECTED", "OrderEngine", 0, result.error_message, "{}");
+      return result;
+   }
+   if(Equity_IsMicroModeActive() && !State_MicroEntryAllowed(TimeCurrent())) {
+      result.allowed = false;
+      result.error_code = OE_ERR_MICRO_DAY_LIMIT;
+      result.error_message = "Micro-Mode limit: one entry per server day";
+      LogAuditRow("MICRO_MODE_DAY_LIMIT", "OrderEngine", 0, result.error_message, "{}");
+      return result;
+   }
+   return result;
+}
+
+void OE_MarkMicroModeEntry()
+{
+   if(Equity_IsMicroModeActive()) {
+      State_MarkMicroEntryServer(TimeCurrent());
+      LogAuditRow("MICRO_MODE_TRADE", "OrderEngine", 1, 
+                  StringFormat("Entry at %.2f%% risk", MicroRiskPct), "{}");
+   }
+}
+
 #endif // RPEA_ORDER_ENGINE_MQH

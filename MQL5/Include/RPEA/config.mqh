@@ -121,6 +121,25 @@
 #define DEFAULT_BreakevenExtraPoints         0
 
 #ifdef __MQL5__
+//==============================================================================
+// M4-Task02: Micro-Mode + Hard-Stop Configuration (moved above for visibility)
+//==============================================================================
+// These are defined here so they're available before inline functions
+#ifndef DEFAULT_TargetProfitPct
+#define DEFAULT_TargetProfitPct              10.0
+#endif
+#ifndef DEFAULT_MicroRiskPct
+#define DEFAULT_MicroRiskPct                 0.10
+#endif
+#ifndef DEFAULT_MicroTimeStopMin
+#define DEFAULT_MicroTimeStopMin             45
+#endif
+#ifndef DEFAULT_GivebackCapDayPct
+#define DEFAULT_GivebackCapDayPct            0.50
+#endif
+#ifndef DEFAULT_ServerToCEST_OffsetMinutes
+#define DEFAULT_ServerToCEST_OffsetMinutes   0
+#endif
 //------------------------------------------------------------------------------
 // Task 17 Resilience Config Helpers
 //------------------------------------------------------------------------------

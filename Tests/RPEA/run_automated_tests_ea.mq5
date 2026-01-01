@@ -92,10 +92,16 @@ bool g_test_gate_force_fail = false;
 #include "test_order_engine_breakeven.mqh"
 // Pending expiry tests (Task 24)
 #include "test_order_engine_pending_expiry.mqh"
+// M4-Task02: Day tracking and Micro-Mode tests
+#include "test_day_tracking.mqh"
+#include "test_micro_mode.mqh"
 
 // Forward declaration to ensure the breakeven suite is visible when compiling.
 bool TestBreakeven_RunAll();
 bool TestOrderEnginePendingExpiry_RunAll();
+// M4-Task02 forward declarations
+bool TestDayTracking_RunAll();
+bool TestMicroMode_RunAll();
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -386,6 +392,26 @@ void RunAllTests()
    g_test_reporter.RecordTest(suite24, "TestOrderEnginePendingExpiry_RunAll", task24_result,
                                task24_result ? "Pending expiry tests passed" : "Pending expiry tests failed");
    g_test_reporter.EndSuite(suite24);
+
+   // M4-Task02: Day Tracking Tests
+   Print("=================================================================");
+   Print("M4-Task02: Day Tracking Tests");
+   Print("=================================================================");
+   int suiteM4a = g_test_reporter.BeginSuite("M4Task02_Day_Tracking");
+   bool taskM4a_result = TestDayTracking_RunAll();
+   g_test_reporter.RecordTest(suiteM4a, "TestDayTracking_RunAll", taskM4a_result,
+                               taskM4a_result ? "Day tracking tests passed" : "Day tracking tests failed");
+   g_test_reporter.EndSuite(suiteM4a);
+
+   // M4-Task02: Micro-Mode Tests
+   Print("=================================================================");
+   Print("M4-Task02: Micro-Mode & Hard-Stop Tests");
+   Print("=================================================================");
+   int suiteM4b = g_test_reporter.BeginSuite("M4Task02_MicroMode_HardStop");
+   bool taskM4b_result = TestMicroMode_RunAll();
+   g_test_reporter.RecordTest(suiteM4b, "TestMicroMode_RunAll", taskM4b_result,
+                               taskM4b_result ? "Micro-Mode tests passed" : "Micro-Mode tests failed");
+   g_test_reporter.EndSuite(suiteM4b);
 
    Print("Test execution complete.");
 }

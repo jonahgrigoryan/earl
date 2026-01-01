@@ -191,4 +191,30 @@ double Risk_SizingByATRDistance(const double entry, const double stop,
    return Risk_SizingByATRDistanceForSymbol(_Symbol, entry, stop, equity, riskPct, -1.0, confidence);
 }
 
+//==============================================================================
+// M4-Task02: Micro-Mode Risk Override
+//==============================================================================
+
+// Forward declaration for Micro-Mode check
+#ifndef EQUITY_MICRO_FORWARD_DECLARED
+#define EQUITY_MICRO_FORWARD_DECLARED
+bool Equity_IsMicroModeActive();
+#endif
+
+// Forward declarations for inputs (defined in RPEA.mq5)
+#ifdef RPEA_TEST_RUNNER
+#ifndef RiskPct
+#define RiskPct 1.0
+#endif
+#ifndef MicroRiskPct
+#define MicroRiskPct DEFAULT_MicroRiskPct
+#endif
+#endif
+
+// Get effective risk percentage (respects Micro-Mode)
+double Risk_GetEffectiveRiskPct()
+{
+   return Equity_IsMicroModeActive() ? MicroRiskPct : RiskPct;
+}
+
 #endif // RPEA_RISK_MQH

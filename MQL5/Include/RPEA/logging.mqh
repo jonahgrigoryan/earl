@@ -81,8 +81,31 @@ void LegacyLog_FlushAll()
 // Improved buffered legacy log helpers (performance optimization)
 // -----------------------------------------------------------------------------
 
-void LogAuditRow(const string event, const string component, const int level,
-                 const string message, const string fields_json)
+// Defensive: ensure no macro collisions with parameter names
+#ifdef event_name
+#undef event_name
+#endif
+#ifdef component_name
+#undef component_name
+#endif
+#ifdef level_value
+#undef level_value
+#endif
+#ifdef message_text
+#undef message_text
+#endif
+#ifdef fields_json_text
+#undef fields_json_text
+#endif
+
+#ifdef RPEA_TEST_RUNNER
+void LogAuditRow(const string, const string, const int, const string, const string)
+{
+   // Test runner: legacy audit rows are not required for assertions.
+}
+#else
+void LogAuditRow(const string event_name, const string component_name, const int level_value,
+                 const string message_text, const string fields_json_text)
 {
    const datetime now = TimeCurrent();
    MqlDateTime tm; TimeToStruct(now, tm);
@@ -91,7 +114,7 @@ void LogAuditRow(const string event, const string component, const int level,
 
    string date = StringFormat("%04d-%02d-%02d", tm.year, tm.mon, tm.day);
    string time = StringFormat("%02d:%02d:%02d", tm.hour, tm.min, tm.sec);
-   string row = date + "," + time + "," + event + "," + component + "," + (string)level + "," + message + "," + fields_json;
+   string row = date + "," + time + "," + event_name + "," + component_name + "," + (string)level_value + "," + message_text + "," + fields_json_text;
 
    if(g_event_log_buffer.filename != path)
    {
@@ -112,6 +135,7 @@ void LogAuditRow(const string event, const string component, const int level,
    if(g_event_log_buffer.count >= LEGACY_LOG_FLUSH_THRESHOLD)
       LegacyLog_FlushBuffer(g_event_log_buffer, "date,time,event,component,level,message,fields_json");
 }
+#endif
 
 void LogDecision(const string component, const string message, const string fields_json)
 {
