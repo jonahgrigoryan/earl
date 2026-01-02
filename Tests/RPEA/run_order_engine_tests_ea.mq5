@@ -25,6 +25,14 @@
 #define NewsBufferS            300
 #define NewsCSVPath            "Files/RPEA/news/calendar_high_impact.csv"
 #define NewsCSVMaxAgeHours     24
+#define StabilizationBars      3
+#define StabilizationTimeoutMin 15
+#define SpreadStabilizationPct 60.0
+#define VolatilityStabilizationPct 70.0
+#define StabilizationLookbackBars 60
+#define NewsCalendarLookbackHours 6
+#define NewsCalendarLookaheadHours 24
+#define NewsAccountMode        0
 
 #include "test_order_engine.mqh"
 #include "test_order_engine_normalization.mqh"

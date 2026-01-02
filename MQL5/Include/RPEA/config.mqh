@@ -109,6 +109,16 @@
 #define DEFAULT_QueueTTLMinutes              5
 #define DEFAULT_EnableQueuePrioritization    true
 
+// M4-Task01: Post-News Stabilization Configuration
+#define DEFAULT_StabilizationBars            3
+#define DEFAULT_StabilizationTimeoutMin      15
+#define DEFAULT_SpreadStabilizationPct       60.0
+#define DEFAULT_VolatilityStabilizationPct   70.0
+#define DEFAULT_StabilizationLookbackBars    60
+#define DEFAULT_NewsCalendarLookbackHours    6
+#define DEFAULT_NewsCalendarLookaheadHours   24
+#define DEFAULT_NewsAccountMode              0
+
 // Liquidity Configuration (Task 22)
 #define DEFAULT_SpreadMultATR                0.005
 

@@ -259,7 +259,7 @@ void Trail_HandleOnTickOrTimer()
           string context = StringFormat("{\"ticket\":%I64d,\"source\":\"trailing\",\"atr\":%.5f,\"trail_mult\":%.3f}",
                                         ticket, atr, trail_mult);
 
-          if(News_IsBlocked(symbol))
+          if(News_IsModifyBlocked(symbol))
           {
              long queued_id = 0;
              if(Trail_QueueDuringNews(symbol, ticket, new_sl, context, queued_id))

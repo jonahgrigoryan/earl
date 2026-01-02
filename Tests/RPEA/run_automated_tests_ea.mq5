@@ -42,6 +42,14 @@ input double RiskGateHeadroom           = 0.90;
 #define BreakerProtectiveExitBypass true
 #define NewsCSVPath            "Files/RPEA/news/calendar_high_impact.csv"
 #define NewsCSVMaxAgeHours     24
+#define StabilizationBars      3
+#define StabilizationTimeoutMin 15
+#define SpreadStabilizationPct 60.0
+#define VolatilityStabilizationPct 70.0
+#define StabilizationLookbackBars 60
+#define NewsCalendarLookbackHours 6
+#define NewsCalendarLookaheadHours 24
+#define NewsAccountMode        0
 #define RPEA_ORDER_ENGINE_SKIP_RISK
 #define RPEA_ORDER_ENGINE_SKIP_EQUITY
 #define RPEA_ORDER_ENGINE_SKIP_SESSIONS
@@ -95,6 +103,8 @@ bool g_test_gate_force_fail = false;
 // M4-Task02: Day tracking and Micro-Mode tests
 #include "test_day_tracking.mqh"
 #include "test_micro_mode.mqh"
+// M4-Task01: News Policy tests
+#include "test_news_policy.mqh"
 
 // Forward declaration to ensure the breakeven suite is visible when compiling.
 bool TestBreakeven_RunAll();
@@ -102,6 +112,7 @@ bool TestOrderEnginePendingExpiry_RunAll();
 // M4-Task02 forward declarations
 bool TestDayTracking_RunAll();
 bool TestMicroMode_RunAll();
+bool TestNewsPolicy_RunAll();
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -412,6 +423,16 @@ void RunAllTests()
    g_test_reporter.RecordTest(suiteM4b, "TestMicroMode_RunAll", taskM4b_result,
                                taskM4b_result ? "Micro-Mode tests passed" : "Micro-Mode tests failed");
    g_test_reporter.EndSuite(suiteM4b);
+
+   // M4-Task01: News Policy Tests
+   Print("=================================================================");
+   Print("M4-Task01: News Policy Tests");
+   Print("=================================================================");
+   int suiteM4c = g_test_reporter.BeginSuite("M4Task01_News_Policy");
+   bool taskM4c_result = TestNewsPolicy_RunAll();
+   g_test_reporter.RecordTest(suiteM4c, "TestNewsPolicy_RunAll", taskM4c_result,
+                               taskM4c_result ? "News Policy tests passed" : "News Policy tests failed");
+   g_test_reporter.EndSuite(suiteM4c);
 
    Print("Test execution complete.");
 }

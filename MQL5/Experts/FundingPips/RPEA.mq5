@@ -80,6 +80,14 @@ input string NewsCSVPath                = DEFAULT_NewsCSVPath;
 input int    NewsCSVMaxAgeHours         = DEFAULT_NewsCSVMaxAgeHours;
 input int    BudgetGateLockMs           = 1000;
 input double RiskGateHeadroom           = 0.90;
+input int    StabilizationBars          = DEFAULT_StabilizationBars;
+input int    StabilizationTimeoutMin    = DEFAULT_StabilizationTimeoutMin;
+input double SpreadStabilizationPct     = DEFAULT_SpreadStabilizationPct;
+input double VolatilityStabilizationPct = DEFAULT_VolatilityStabilizationPct;
+input int    StabilizationLookbackBars  = DEFAULT_StabilizationLookbackBars;
+input int    NewsCalendarLookbackHours  = DEFAULT_NewsCalendarLookbackHours;
+input int    NewsCalendarLookaheadHours = DEFAULT_NewsCalendarLookaheadHours;
+input int    NewsAccountMode            = DEFAULT_NewsAccountMode;
 // Resilience / error handling
 input int    MaxConsecutiveFailures     = DEFAULT_MaxConsecutiveFailures;
 input int    FailureWindowSec           = DEFAULT_FailureWindowSec;
@@ -212,8 +220,15 @@ int OnInit()
    Persistence_EnsureFolders();
    Persistence_EnsurePlaceholderFiles();
    AuditLogger_Init(AuditLogPath, LogBufferSize, EnableDetailedLogging);
-   // Load news CSV fallback if present
-   News_LoadCsvFallback();
+
+   // M4-Task01: Initialize News Stabilization
+   string news_symbols[];
+   int news_count = News_BuildStabilizationSymbols(g_ctx.symbols, g_ctx.symbols_count, news_symbols);
+   News_InitStabilization(news_symbols, news_count);
+   for(int i = 0; i < news_count; i++)
+      News_EnsureSymbolSelected(news_symbols[i]);
+   News_LoadEvents();
+
    LogAuditRow("BOOT", "RPEA", 1, "EA boot", "{}");
 
     // 6) Initialize Order Engine (M3 Task 1)
@@ -346,6 +361,9 @@ void OnTimer()
 
    // Delegate to scheduler (logging-only in M1)
    Scheduler_Tick(g_ctx);
+   
+   // M4-Task01: Update news blocking and stabilization state
+   News_OnTimer();
 }
 
 //+------------------------------------------------------------------+

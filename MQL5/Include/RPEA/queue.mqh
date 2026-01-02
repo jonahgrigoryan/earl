@@ -857,7 +857,7 @@ bool Queue_CheckNewsWindow(const string symbol,
      if(action_type == QA_CLOSE)
         return true;
      bool blocked = g_queue_test_overrides.active ? g_queue_test_overrides.news_blocked
-                                                  : News_IsBlocked(symbol);
+                                                  : News_IsModifyBlocked(symbol);
      if(blocked)
      {
         out_reason_code = "NEWS_WINDOW_BLOCK";

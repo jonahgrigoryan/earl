@@ -2808,21 +2808,46 @@ NewsGateState OrderEngine::EvaluateNewsGate(const string signal_symbol,
 
    if(normalized == "XAUEUR")
    {
-      const bool xau_blocked = News_IsBlocked("XAUUSD");
-      const bool eur_blocked = News_IsBlocked("EURUSD");
-      if(xau_blocked || eur_blocked)
-      {
-         string leg = (xau_blocked ? "XAUUSD" : "EURUSD");
-         out_detail = leg + (is_protective_exit ? "_PROTECTIVE" : "_BLOCKED");
-         return (is_protective_exit ? NEWS_GATE_PROTECTIVE_ALLOWED : NEWS_GATE_BLOCKED);
+      bool xau_blocked = false;
+      bool eur_blocked = false;
+      
+      if(is_protective_exit) {
+         // Protective exits are generally allowed, but we report window state
+         if(News_IsBlocked("XAUUSD")) out_detail = "XAUUSD_" + News_GetWindowStateDetailed("XAUUSD", true);
+         else if(News_IsBlocked("EURUSD")) out_detail = "EURUSD_" + News_GetWindowStateDetailed("EURUSD", true);
+         
+         if(News_IsBlocked("XAUUSD") || News_IsBlocked("EURUSD"))
+             return NEWS_GATE_PROTECTIVE_ALLOWED;
+      } else {
+         // Entries blocked by window OR stabilization
+         xau_blocked = News_IsEntryBlocked("XAUUSD");
+         eur_blocked = News_IsEntryBlocked("EURUSD");
+         
+         if(xau_blocked || eur_blocked)
+         {
+            if(xau_blocked) out_detail = "XAUUSD_" + News_GetWindowStateDetailed("XAUUSD", false);
+            else out_detail = "EURUSD_" + News_GetWindowStateDetailed("EURUSD", false);
+            return NEWS_GATE_BLOCKED;
+         }
       }
       return NEWS_GATE_CLEAR;
    }
 
-   if(News_IsBlocked(signal_symbol))
+   if(is_protective_exit)
    {
-      out_detail = normalized + (is_protective_exit ? "_PROTECTIVE" : "_BLOCKED");
-      return (is_protective_exit ? NEWS_GATE_PROTECTIVE_ALLOWED : NEWS_GATE_BLOCKED);
+      if(News_IsBlocked(signal_symbol))
+      {
+         out_detail = News_GetWindowStateDetailed(signal_symbol, true);
+         return NEWS_GATE_PROTECTIVE_ALLOWED;
+      }
+   }
+   else
+   {
+      if(News_IsEntryBlocked(signal_symbol))
+      {
+         out_detail = News_GetWindowStateDetailed(signal_symbol, false);
+         return NEWS_GATE_BLOCKED;
+      }
    }
 
    return NEWS_GATE_CLEAR;
@@ -5481,7 +5506,7 @@ bool OrderEngine_RequestModifySLTP(const string symbol,
    string linked_accept_key = "";
    OrderEngine_GetIntentMetadata((ulong)ticket, linked_intent_id, linked_accept_key);
 
-   if(News_IsBlocked(symbol) && action_type != QA_CLOSE)
+   if(News_IsModifyBlocked(symbol) && action_type != QA_CLOSE)
    {
       long queued_id = 0;
       bool queued = Queue_Add(symbol,

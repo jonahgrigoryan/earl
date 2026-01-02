@@ -273,7 +273,7 @@ bool Breakeven_MaybeApplyForState(const int idx)
                                    Config_GetBreakevenExtraPoints());
 
      bool applied = false;
-     if(News_IsBlocked(symbol))
+     if(News_IsModifyBlocked(symbol))
      {
         long queued_id = 0;
         applied = Breakeven_QueueDuringNews(symbol,
