@@ -241,6 +241,9 @@ int    Queue_LoadFromDiskAndReconcile();
 // Performance: Flush pending writes
 void   Queue_FlushIfDirty();
 
+// M4-Task03: Clear all queued actions (kill-switch)
+void   Queue_ClearAll(const string reason);
+
 //------------------------------------------------------------------------------
 // Internal helpers (exposed for testing)
 //------------------------------------------------------------------------------
@@ -519,6 +522,20 @@ void Queue_FlushIfDirty()
      {
         LogAuditRow("QUEUE_STATE", "Queue", LOG_INFO, "SAVE_OK", "{}");
      }
+  }
+
+// M4-Task03: Clear all queued actions on kill-switch
+void Queue_ClearAll(const string reason)
+  {
+     for(int i = g_queue_count - 1; i >= 0; i--)
+     {
+        long removed_id = g_queue_buffer[i].id;
+        Queue_RemoveAt(i);
+        Queue_DeleteFromDiskById(removed_id);
+        string fields = StringFormat("{\"queue_id\":%I64d,\"reason\":\"%s\"}", removed_id, reason);
+        LogAuditRow("QUEUE", "OrderEngine", LOG_INFO, "KILLSWITCH_QUEUE_CLEAR", fields);
+     }
+     Queue_FlushIfDirty();
   }
 
 void Queue_EnsureInitialized()

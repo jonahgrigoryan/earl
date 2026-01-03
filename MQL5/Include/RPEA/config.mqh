@@ -130,6 +130,11 @@
 // Optional additive buffer (points) on top of live spread when moving SL to breakeven.
 #define DEFAULT_BreakevenExtraPoints         0
 
+// M4-Task03: Kill-Switch + Margin Protection Configuration
+#define DEFAULT_MarginLevelCritical          50.0
+#define DEFAULT_EnableMarginProtection       true
+#define DEFAULT_TradingEnabledDefault        true
+
 #ifdef __MQL5__
 //==============================================================================
 // M4-Task02: Micro-Mode + Hard-Stop Configuration (moved above for visibility)

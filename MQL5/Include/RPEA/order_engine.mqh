@@ -1210,15 +1210,42 @@ public:
       {
          LogOE(StringFormat("OnTradeTxn: DEAL_ADD deal=%llu order=%llu", trans.deal, trans.order));
          // Dedupe repeated DEAL_ADD
-         if(!OCO_IsDealHandled(trans.deal))
+      if(!OCO_IsDealHandled(trans.deal))
+      {
+         OCO_MarkDealHandled(trans.deal);
+         double vol = 0.0;
+         bool deal_selected = false;
+         if(trans.deal > 0)
          {
-            OCO_MarkDealHandled(trans.deal);
-            double vol = 0.0;
-            if(trans.deal > 0 && HistoryDealSelect(trans.deal))
+            deal_selected = HistoryDealSelect(trans.deal);
+            if(deal_selected)
                vol = HistoryDealGetDouble(trans.deal, DEAL_VOLUME);
-            // Process OCO sibling handling for fills/partials with real deal volume when available
-            ProcessOCOFill(trans.order, vol, trans.deal);
          }
+         // Process OCO sibling handling for fills/partials with real deal volume when available
+         ProcessOCOFill(trans.order, vol, trans.deal);
+         
+         if(deal_selected)
+         {
+            ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
+            if(entry == DEAL_ENTRY_OUT)
+            {
+               ENUM_DEAL_REASON reason = (ENUM_DEAL_REASON)HistoryDealGetInteger(trans.deal, DEAL_REASON);
+               if(reason == DEAL_REASON_SL || reason == DEAL_REASON_TP)
+               {
+                  string symbol = HistoryDealGetString(trans.deal, DEAL_SYMBOL);
+                  if(News_IsBlocked(symbol))
+                  {
+                     long position_id = (long)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
+                     string note = StringFormat("{\"ticket\":%I64d,\"symbol\":\"%s\",\"reason\":\"%s\"}",
+                                                position_id,
+                                                symbol,
+                                                (reason == DEAL_REASON_SL ? "SL" : "TP"));
+                     LogDecision("OrderEngine", "NEWS_FORCED_EXIT", note);
+                  }
+               }
+            }
+         }
+      }
       }
       else if(trans.type == TRADE_TRANSACTION_ORDER_ADD)
       {
@@ -5567,6 +5594,65 @@ bool OrderEngine_RequestProtectiveClose(const string symbol,
    return applied;
 }
 
+//==============================================================================
+// M4-Task03: Bulk Protective Close/Cancel Helpers for Kill-Switch
+//==============================================================================
+
+// Check if magic number belongs to this EA
+bool OrderEngine_IsOurMagic(const long magic)
+{
+   return (magic >= MagicBase && magic < MagicBase + 1000);
+}
+
+// Close all positions (for kill-switch)
+int OrderEngine_CloseAllPositionsProtective(const string reason)
+{
+   int closed = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      if(OrderEngine_RequestProtectiveClose(symbol, (long)ticket, reason))
+      {
+         string note = StringFormat("{\"ticket\":%I64u,\"symbol\":\"%s\",\"reason\":\"%s\"}", ticket, symbol, reason);
+         LogDecision("OrderEngine", "PROTECTIVE_EXIT", note);
+         closed++;
+      }
+      else
+      {
+         string note = StringFormat("{\"ticket\":%I64u,\"symbol\":\"%s\",\"reason\":\"%s\"}", ticket, symbol, reason);
+         LogDecision("OrderEngine", "PROTECTIVE_EXIT_FAILED", note);
+      }
+   }
+   return closed;
+}
+
+// Cancel all pending orders (for kill-switch)
+int OrderEngine_CancelAllPendingsProtective(const string reason)
+{
+   int cancelled = 0;
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0)
+         continue;
+      int type = (int)OrderGetInteger(ORDER_TYPE);
+      if(!Equity_IsPendingOrderType(type))
+         continue;
+      
+      // Use OE_RequestCancel for the actual cancellation
+      if(OE_RequestCancel(ticket, reason))
+      {
+         string note = StringFormat("{\"ticket\":%I64u,\"reason\":\"%s\"}", ticket, reason);
+         LogDecision("OrderEngine", "KILLSWITCH_PENDING_CANCEL", note);
+         cancelled++;
+      }
+   }
+   return cancelled;
+}
+
 void OrderEngine_ProcessQueueAndTrailing()
 {
    if(!OrderEngine_EnterCritical("queue_process"))
@@ -5652,6 +5738,7 @@ void OrderEngine_OnTradeTxn(const MqlTradeTransaction& trans,
 #define OE_ERR_HARD_STOPPED         10001
 #define OE_ERR_GIVEBACK_PROTECTION  10002
 #define OE_ERR_MICRO_DAY_LIMIT      10003
+#define OE_ERR_DAILY_DISABLED       10004
 
 struct M4GateResult
 {
@@ -5672,11 +5759,31 @@ M4GateResult OE_CheckM4EntryGates(const bool is_entry)
       return result;
    }
    if(!is_entry) return result;
+   
+   // M4-Task03: Check if daily kill-switch has disabled trading
+   if(Equity_IsDailyKillswitchActive()) {
+      result.allowed = false;
+      result.error_code = OE_ERR_DAILY_DISABLED;
+      result.error_message = "Trading disabled for the current server day (daily floor breach)";
+      LogDecision("OrderEngine", "DAILY_DISABLED_BLOCK", "{\"reason\":\"killswitch_daily\"}");
+      return result;
+   }
+   
    if(Equity_IsGivebackProtectionActive()) {
       result.allowed = false;
       result.error_code = OE_ERR_GIVEBACK_PROTECTION;
       result.error_message = "New entries blocked (giveback protection)";
       LogAuditRow("GIVEBACK_REJECTED", "OrderEngine", 0, result.error_message, "{}");
+      return result;
+   }
+   
+   // Also check trading_enabled flag (covers manual or non-giveback daily disables)
+   ChallengeState st = State_Get();
+   if(!st.trading_enabled && !st.disabled_permanent) {
+      result.allowed = false;
+      result.error_code = OE_ERR_DAILY_DISABLED;
+      result.error_message = "Trading disabled for the current server day";
+      LogDecision("OrderEngine", "DAILY_DISABLED_BLOCK", "{\"reason\":\"trading_disabled\"}");
       return result;
    }
    if(Equity_IsMicroModeActive() && !State_MicroEntryAllowed(TimeCurrent())) {

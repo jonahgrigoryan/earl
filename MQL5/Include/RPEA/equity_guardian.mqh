@@ -94,8 +94,65 @@ struct BudgetGateSnapshot
 static bool  g_budget_gate_locked = false;
 static ulong g_budget_gate_lock_time_ms = 0;
 
+//==============================================================================
+// M4-Task03: Test Overrides for Kill-Switch Testing
+//==============================================================================
+
+#ifdef RPEA_TEST_RUNNER
+bool   g_equity_override_active = false;
+double g_equity_override_value  = 0.0;
+bool   g_margin_override_active = false;
+double g_margin_override_level  = 0.0;
+
+void Equity_Test_SetEquityOverride(const double equity)
+{
+   g_equity_override_active = true;
+   g_equity_override_value = equity;
+}
+
+void Equity_Test_ClearEquityOverride()
+{
+   g_equity_override_active = false;
+   g_equity_override_value = 0.0;
+}
+
+void Equity_Test_SetMarginLevel(const double margin_level)
+{
+   g_margin_override_active = true;
+   g_margin_override_level = margin_level;
+}
+
+void Equity_Test_ClearMarginLevel()
+{
+   g_margin_override_active = false;
+   g_margin_override_level = 0.0;
+}
+#endif // RPEA_TEST_RUNNER
+
+//==============================================================================
+// M4-Task03: Floor Getters
+//==============================================================================
+
+double Equity_GetDailyFloor()
+{
+   return g_equity_daily_floor;
+}
+
+double Equity_GetOverallFloor()
+{
+   return g_equity_overall_floor;
+}
+
+//==============================================================================
+// Core Functions
+//==============================================================================
+
 double Equity_FetchAccountEquity()
 {
+#ifdef RPEA_TEST_RUNNER
+   if(g_equity_override_active)
+      return g_equity_override_value;
+#endif
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    if(!MathIsValidNumber(equity) || equity <= 0.0)
       equity = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -1228,12 +1285,176 @@ bool Equity_IsGivebackProtectionActive()
 void Equity_OnServerDayRollover()
 {
    ChallengeState st = State_Get();
+   
+   // M4-Task03: Reset daily kill-switch flags
+   st.daily_floor_breached = false;
+   st.daily_floor_breach_time = (datetime)0;
+   
    st.day_peak_equity = AccountInfoDouble(ACCOUNT_EQUITY);
    if(!st.disabled_permanent)
-      st.trading_enabled = true;
+      st.trading_enabled = TradingEnabledDefault;
    State_Set(st);
    
-   LogAuditRow("DAY_ROLLOVER_SERVER", "EQUITY", 1, "Daily peak reset", "{}");
+   string note = StringFormat("{\"trading_enabled\":%s,\"daily_floor_breached\":false}",
+                              st.trading_enabled ? "true" : "false");
+   LogDecision("Equity", "DAILY_FLAGS_RESET", note);
+}
+
+//==============================================================================
+// M4-Task03: Kill-Switch Floor Detection and Execution
+//==============================================================================
+
+// Forward declaration for margin protection input
+#ifdef RPEA_TEST_RUNNER
+#ifndef MarginLevelCritical
+#define MarginLevelCritical DEFAULT_MarginLevelCritical
+#endif
+#ifndef EnableMarginProtection
+#define EnableMarginProtection DEFAULT_EnableMarginProtection
+#endif
+#ifndef TradingEnabledDefault
+#define TradingEnabledDefault DEFAULT_TradingEnabledDefault
+#endif
+#endif
+
+// Log floor updates when they change significantly
+void Equity_LogFloorUpdate(const double prev_daily, const double prev_overall)
+{
+   if(MathAbs(g_equity_daily_floor - prev_daily) <= 0.01 &&
+      MathAbs(g_equity_overall_floor - prev_overall) <= 0.01)
+      return;
+
+   string note = StringFormat(
+      "{\"daily_floor\":%.2f,\"overall_floor\":%.2f,\"baseline_today\":%.2f,\"initial_baseline\":%.2f}",
+      g_equity_daily_floor,
+      g_equity_overall_floor,
+      g_equity_baseline_today,
+      g_equity_initial_baseline
+   );
+   LogDecision("Equity", "FLOOR_UPDATE", note);
+}
+
+// Forward declarations for protective exits (implemented in order_engine.mqh)
+int OrderEngine_CloseAllPositionsProtective(const string reason);
+int OrderEngine_CancelAllPendingsProtective(const string reason);
+void Queue_ClearAll(const string reason);
+
+// Execute protective exits on kill-switch
+void Equity_ExecuteProtectiveExits(const string reason)
+{
+   OrderEngine_CloseAllPositionsProtective(reason);
+   OrderEngine_CancelAllPendingsProtective(reason);
+   Queue_ClearAll(reason);
+}
+
+// Check and execute kill-switch on floor breach
+void Equity_CheckAndExecuteKillswitch(const AppContext &ctx)
+{
+   ChallengeState st = State_Get();
+   if(st.disabled_permanent)
+      return;
+
+   double prev_daily = g_equity_daily_floor;
+   double prev_overall = g_equity_overall_floor;
+
+   Equity_ComputeRooms(ctx);
+   Equity_LogFloorUpdate(prev_daily, prev_overall);
+
+   EquitySessionState session = Equity_BuildSessionState(g_equity_last_rooms);
+   Equity_LogSessionStateTransitions(session);
+
+   // Overall floor takes precedence
+   if(session.overall_floor_breached && !st.disabled_permanent)
+   {
+      double breach_margin = g_equity_current_equity - g_equity_overall_floor;
+      st.disabled_permanent = true;
+      st.trading_enabled = false;
+      st.hard_stop_reason = "overall_floor_breach";
+      st.hard_stop_time = TimeCurrent();
+      st.hard_stop_equity = g_equity_current_equity;
+      State_Set(st);
+
+      string note = StringFormat(
+         "{\"floor_type\":\"overall\",\"floor_value\":%.2f,\"equity_at_breach\":%.2f,\"breach_margin\":%.2f,\"initial_baseline\":%.2f}",
+         g_equity_overall_floor,
+         g_equity_current_equity,
+         breach_margin,
+         g_equity_initial_baseline
+      );
+      LogDecision("Equity", "KILLSWITCH_OVERALL", note);
+
+      Equity_ExecuteProtectiveExits("killswitch_overall");
+      Persistence_Flush();
+      return;
+   }
+
+   // Daily floor breach (once per server day)
+   if(session.daily_floor_breached && !st.daily_floor_breached)
+   {
+      double breach_margin = g_equity_current_equity - g_equity_daily_floor;
+      st.daily_floor_breached = true;
+      st.daily_floor_breach_time = TimeCurrent();
+      st.trading_enabled = false;
+      State_Set(st);
+
+      string note = StringFormat(
+         "{\"floor_type\":\"daily\",\"floor_value\":%.2f,\"equity_at_breach\":%.2f,\"breach_margin\":%.2f,\"baseline_today\":%.2f}",
+         g_equity_daily_floor,
+         g_equity_current_equity,
+         breach_margin,
+         g_equity_baseline_today
+      );
+      LogDecision("Equity", "KILLSWITCH_DAILY", note);
+
+      Equity_ExecuteProtectiveExits("killswitch_daily");
+      Persistence_Flush();
+   }
+}
+
+// Check margin level and trigger protection if needed
+bool Equity_CheckMarginProtection()
+{
+   if(!EnableMarginProtection)
+      return false;
+   
+   double margin_level = AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
+#ifdef RPEA_TEST_RUNNER
+   if(g_margin_override_active)
+      margin_level = g_margin_override_level;
+#endif
+   
+   // Margin level of 0 means no positions (nothing to protect)
+   if(margin_level == 0.0)
+      return false;
+   
+   if(margin_level < MarginLevelCritical)
+   {
+      double equity = Equity_FetchAccountEquity();
+      double margin = AccountInfoDouble(ACCOUNT_MARGIN);
+      
+      string note = StringFormat(
+         "{\"margin_level\":%.2f,\"threshold\":%.2f,\"equity\":%.2f,\"margin\":%.2f}",
+         margin_level,
+         MarginLevelCritical,
+         equity,
+         margin
+      );
+      LogDecision("Equity", "MARGIN_PROTECTION", note);
+      
+      // Close positions to free margin
+      Equity_ExecuteProtectiveExits("margin_protection");
+      
+      return true;
+   }
+   
+   return false;
+}
+
+// Check if daily kill-switch has been triggered
+bool Equity_IsDailyKillswitchActive()
+{
+   ChallengeState st = State_Get();
+   return st.daily_floor_breached && !st.disabled_permanent;
 }
 
 #endif // EQUITY_GUARDIAN_MQH

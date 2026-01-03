@@ -1836,6 +1836,9 @@ void Persistence_LoadChallengeState()
          else if(k=="server_midnight_ts") { s.server_midnight_ts = (datetime)StringToInteger(v); parsed_any=true; }
          else if(k=="baseline_today_e0") { s.baseline_today_e0 = StringToDouble(v); parsed_any=true; }
          else if(k=="baseline_today_b0") { s.baseline_today_b0 = StringToDouble(v); parsed_any=true; }
+         // M4-Task03: Daily floor breach fields
+         else if(k=="daily_floor_breached") { s.daily_floor_breached = (StringToInteger(v)!=0); parsed_any=true; }
+         else if(k=="daily_floor_breach_time") { s.daily_floor_breach_time = (datetime)StringToInteger(v); parsed_any=true; }
       }
    }
    FileClose(h);
@@ -1889,6 +1892,9 @@ void Persistence_Flush()
       FileWrite(h, "server_midnight_ts="+(string)s.server_midnight_ts);
       FileWrite(h, "baseline_today_e0="+DoubleToString(s.baseline_today_e0,2));
       FileWrite(h, "baseline_today_b0="+DoubleToString(s.baseline_today_b0,2));
+      // M4-Task03: Daily floor breach fields
+      FileWrite(h, "daily_floor_breached="+(s.daily_floor_breached?"1":"0"));
+      FileWrite(h, "daily_floor_breach_time="+(string)s.daily_floor_breach_time);
       FileClose(h);
    }
    // TODO[M4/M6]: idempotent recovery and TTL for queued actions

@@ -50,6 +50,10 @@ input double RiskGateHeadroom           = 0.90;
 #define NewsCalendarLookbackHours 6
 #define NewsCalendarLookaheadHours 24
 #define NewsAccountMode        0
+#define MagicBase              990200
+#define MarginLevelCritical    50.0
+#define EnableMarginProtection true
+#define TradingEnabledDefault  true
 #define RPEA_ORDER_ENGINE_SKIP_RISK
 #define RPEA_ORDER_ENGINE_SKIP_EQUITY
 #define RPEA_ORDER_ENGINE_SKIP_SESSIONS
@@ -105,6 +109,9 @@ bool g_test_gate_force_fail = false;
 #include "test_micro_mode.mqh"
 // M4-Task01: News Policy tests
 #include "test_news_policy.mqh"
+// M4-Task03: Kill-Switch and Protective Exit tests
+#include "test_killswitch.mqh"
+#include "test_protective_exits.mqh"
 
 // Forward declaration to ensure the breakeven suite is visible when compiling.
 bool TestBreakeven_RunAll();
@@ -113,6 +120,9 @@ bool TestOrderEnginePendingExpiry_RunAll();
 bool TestDayTracking_RunAll();
 bool TestMicroMode_RunAll();
 bool TestNewsPolicy_RunAll();
+// M4-Task03 forward declarations
+bool TestKillswitch_RunAll();
+bool TestProtectiveExits_RunAll();
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -433,6 +443,26 @@ void RunAllTests()
    g_test_reporter.RecordTest(suiteM4c, "TestNewsPolicy_RunAll", taskM4c_result,
                                taskM4c_result ? "News Policy tests passed" : "News Policy tests failed");
    g_test_reporter.EndSuite(suiteM4c);
+
+   // M4-Task03: Kill-Switch Tests
+   Print("=================================================================");
+   Print("M4-Task03: Kill-Switch Tests");
+   Print("=================================================================");
+   int suiteM4d = g_test_reporter.BeginSuite("M4Task03_KillSwitch");
+   bool taskM4d_result = TestKillswitch_RunAll();
+   g_test_reporter.RecordTest(suiteM4d, "TestKillswitch_RunAll", taskM4d_result,
+                               taskM4d_result ? "Kill-switch tests passed" : "Kill-switch tests failed");
+   g_test_reporter.EndSuite(suiteM4d);
+
+   // M4-Task03: Protective Exit Tests
+   Print("=================================================================");
+   Print("M4-Task03: Protective Exit Tests");
+   Print("=================================================================");
+   int suiteM4e = g_test_reporter.BeginSuite("M4Task03_Protective_Exits");
+   bool taskM4e_result = TestProtectiveExits_RunAll();
+   g_test_reporter.RecordTest(suiteM4e, "TestProtectiveExits_RunAll", taskM4e_result,
+                               taskM4e_result ? "Protective exit tests passed" : "Protective exit tests failed");
+   g_test_reporter.EndSuite(suiteM4e);
 
    Print("Test execution complete.");
 }

@@ -31,13 +31,18 @@ struct ChallengeState
    
    // M4-Task02: Overall peak tracking
    double   overall_peak_equity;           // Overall high water mark
+   
+   // M4-Task03: Kill-Switch state
+   bool     daily_floor_breached;          // True if daily floor hit this server day
+   datetime daily_floor_breach_time;       // When daily floor was breached
 };
 
 // Global singleton for simplicity in M1
 // Order: initial_baseline, baseline_today, gDaysTraded, last_counted_server_date, trading_enabled,
 //        disabled_permanent, micro_mode, day_peak_equity, server_midnight_ts, baseline_today_e0, baseline_today_b0,
-//        micro_mode_activated_at, last_micro_entry_server_date, hard_stop_reason, hard_stop_time, hard_stop_equity, overall_peak_equity
-static ChallengeState g_state = {0.0,0.0,0,0,true,false,false,0.0,(datetime)0,0.0,0.0,(datetime)0,0,"",0,0.0,0.0};
+//        micro_mode_activated_at, last_micro_entry_server_date, hard_stop_reason, hard_stop_time, hard_stop_equity, 
+//        overall_peak_equity, daily_floor_breached, daily_floor_breach_time
+static ChallengeState g_state = {0.0,0.0,0,0,true,false,false,0.0,(datetime)0,0.0,0.0,(datetime)0,0,"",0,0.0,0.0,false,(datetime)0};
 
 // Accessors
 ChallengeState State_Get() { return g_state; }
@@ -54,7 +59,10 @@ void State_ResetDailyBaseline()
    // Spec: baseline_today = max(equity_midnight, balance_midnight)
    g_state.baseline_today = (eq > bal ? eq : bal);
    if(eq > g_state.day_peak_equity) g_state.day_peak_equity = eq;
-   g_state.trading_enabled = true; // re-enable for the new day unless permanently disabled
+   if(g_state.disabled_permanent)
+      g_state.trading_enabled = false;
+   else
+      g_state.trading_enabled = TradingEnabledDefault; // re-enable for the new day unless permanently disabled
 }
 
 // Overload with explicit state reference (per M1 API surface)
@@ -67,7 +75,10 @@ void State_ResetDailyBaseline(ChallengeState &state)
    // Spec: baseline_today = max(equity_midnight, balance_midnight)
    state.baseline_today = (eq > bal ? eq : bal);
    if(eq > state.day_peak_equity) state.day_peak_equity = eq;
-   state.trading_enabled = true;
+   if(state.disabled_permanent)
+      state.trading_enabled = false;
+   else
+      state.trading_enabled = TradingEnabledDefault;
    g_state = state;
 }
 

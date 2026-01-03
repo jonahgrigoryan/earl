@@ -48,6 +48,8 @@ input double DailyLossCapPct            = 4.0;
 input double OverallLossCapPct          = 6.0;
 input int    MinTradeDaysRequired       = 3;
 input bool   TradingEnabledDefault      = true;
+input double MarginLevelCritical        = 50.0;   // Margin level threshold for protective exits
+input bool   EnableMarginProtection     = true;   // Enable margin level monitoring
 input double MinRiskDollar              = 10.0;
 input double OneAndDoneR                = 1.5;
 input double NYGatePctOfDailyCap        = 0.50;
@@ -249,6 +251,14 @@ int OnInit()
                                    MaxQueueSize,
                                    EnableQueuePrioritization);
 
+   // M4-Task03: If kill-switch flags are active, retry protective exits on restart
+   ChallengeState resume_state = State_Get();
+   if((resume_state.disabled_permanent || resume_state.daily_floor_breached) &&
+      (PositionsTotal() > 0 || OrdersTotal() > 0))
+   {
+      Equity_ExecuteProtectiveExits("killswitch_resume");
+   }
+
    // 8) Initialize timer (30s)
    EventSetTimer(30);
 
@@ -317,6 +327,10 @@ void OnTimer()
    }
    g_ctx.timer_last_check = g_ctx.current_server_time;
    
+   // M4-Task03: Kill-switch floors and margin protection
+   Equity_CheckAndExecuteKillswitch(g_ctx);
+   Equity_CheckMarginProtection();
+   
    // M4-Task02: Update peak tracking
    Equity_UpdatePeakTracking();
    
@@ -370,6 +384,16 @@ void OnTimer()
 // OnTick: lightweight price monitoring and validation
 void OnTick()
 {
+   g_ctx.current_server_time = TimeCurrent();
+   // M4-Task03: Fast kill-switch response on live ticks (avoid heavy logging unless breached)
+   double current_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double daily_floor = Equity_GetDailyFloor();
+   double overall_floor = Equity_GetOverallFloor();
+   if((daily_floor > 0.0 && current_equity <= daily_floor) ||
+      (overall_floor > 0.0 && current_equity <= overall_floor))
+   {
+      Equity_CheckAndExecuteKillswitch(g_ctx);
+   }
    g_order_engine.OnTick();
 }
 
