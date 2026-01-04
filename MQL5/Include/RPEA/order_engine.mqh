@@ -2561,6 +2561,17 @@ public:
                          intents_marked_closed,
                          intents_marked_cancelled,
                          recovered.summary.corrupt_entries));
+      
+      // M4-Task04: Log structured recovery summary for audit
+      LogAuditRow("INTENT_RECOVERY_SUMMARY", "OrderEngine", LOG_INFO, "reconcile",
+                  StringFormat("{\"intents_total\":%d,\"intents_loaded\":%d,\"intents_dropped\":%d,\"actions_total\":%d,\"actions_loaded\":%d,\"actions_dropped\":%d,\"corrupt\":%d}",
+                               recovered.summary.intents_total,
+                               recovered.summary.intents_loaded,
+                               recovered.summary.intents_dropped,
+                               recovered.summary.actions_total,
+                               recovered.summary.actions_loaded,
+                               recovered.summary.actions_dropped,
+                               recovered.summary.corrupt_entries));
 
       Persistence_FreeRecoveredState(recovered);
       return true;

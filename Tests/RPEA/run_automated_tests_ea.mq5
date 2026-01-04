@@ -112,6 +112,9 @@ bool g_test_gate_force_fail = false;
 // M4-Task03: Kill-Switch and Protective Exit tests
 #include "test_killswitch.mqh"
 #include "test_protective_exits.mqh"
+// M4-Task04: Persistence Hardening tests
+#include "test_persistence_state.mqh"
+#include "test_persistence_recovery.mqh"
 
 // Forward declaration to ensure the breakeven suite is visible when compiling.
 bool TestBreakeven_RunAll();
@@ -123,6 +126,9 @@ bool TestNewsPolicy_RunAll();
 // M4-Task03 forward declarations
 bool TestKillswitch_RunAll();
 bool TestProtectiveExits_RunAll();
+// M4-Task04 forward declarations
+bool TestPersistenceState_RunAll();
+bool TestPersistenceRecovery_RunAll();
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -463,6 +469,26 @@ void RunAllTests()
    g_test_reporter.RecordTest(suiteM4e, "TestProtectiveExits_RunAll", taskM4e_result,
                                taskM4e_result ? "Protective exit tests passed" : "Protective exit tests failed");
    g_test_reporter.EndSuite(suiteM4e);
+
+   // M4-Task04: Persistence State Tests
+   Print("=================================================================");
+   Print("M4-Task04: Persistence State Tests");
+   Print("=================================================================");
+   int suiteM4f = g_test_reporter.BeginSuite("M4Task04_Persistence_State");
+   bool taskM4f_result = TestPersistenceState_RunAll();
+   g_test_reporter.RecordTest(suiteM4f, "TestPersistenceState_RunAll", taskM4f_result,
+                               taskM4f_result ? "Persistence state tests passed" : "Persistence state tests failed");
+   g_test_reporter.EndSuite(suiteM4f);
+
+   // M4-Task04: Persistence Recovery Tests
+   Print("=================================================================");
+   Print("M4-Task04: Persistence Recovery Tests");
+   Print("=================================================================");
+   int suiteM4g = g_test_reporter.BeginSuite("M4Task04_Persistence_Recovery");
+   bool taskM4g_result = TestPersistenceRecovery_RunAll();
+   g_test_reporter.RecordTest(suiteM4g, "TestPersistenceRecovery_RunAll", taskM4g_result,
+                               taskM4g_result ? "Persistence recovery tests passed" : "Persistence recovery tests failed");
+   g_test_reporter.EndSuite(suiteM4g);
 
    Print("Test execution complete.");
 }

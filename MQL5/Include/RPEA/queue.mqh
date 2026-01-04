@@ -1361,6 +1361,12 @@ int Queue_LoadFromDiskAndReconcile()
      }
 
      Queue_SaveAll(); // Final save after reconciliation
+     
+     // M4-Task04: Log structured recovery summary for audit
+     int dropped_count = loaded_count - g_queue_count;
+     LogAuditRow("QUEUE_RECOVERY_SUMMARY", "Queue", LOG_INFO, "reconcile",
+                 StringFormat("{\"queue_loaded\":%d,\"queue_dropped\":%d}", g_queue_count, dropped_count));
+     
      return g_queue_count;
   }
 

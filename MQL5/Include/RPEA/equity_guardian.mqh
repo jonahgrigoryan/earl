@@ -1052,12 +1052,14 @@ void Equity_CheckMicroMode(const AppContext &ctx)
    st.micro_mode = true;
    st.micro_mode_activated_at = TimeCurrent();
    State_Set(st);
+   State_MarkDirty(); // M4-Task04: Critical transition
    
    LogAuditRow("MICRO_MODE_ACTIVATED", "EQUITY", 1,
                StringFormat("Equity %.2f hit target %.2f, days %d/%d", 
                            current_equity, target_equity, st.gDaysTraded, MinTradeDaysRequired),
                StringFormat("{\"equity\":%.2f,\"target\":%.2f,\"days_traded\":%d,\"micro_risk_pct\":%.2f}",
                            current_equity, target_equity, st.gDaysTraded, MicroRiskPct));
+   Persistence_Flush();
 }
 
 // Check if Micro-Mode time stop has been exceeded for a position
@@ -1259,6 +1261,7 @@ bool Equity_CheckGivebackProtection()
       {
          st.trading_enabled = false;
          State_Set(st);
+         State_MarkDirty(); // M4-Task04: Critical transition
          
          LogAuditRow("GIVEBACK_PROTECTION", "EQUITY", 0,
                      StringFormat("DD %.2f%% from peak %.2f", drawdown_from_peak * 100, st.day_peak_equity),
@@ -1267,6 +1270,7 @@ bool Equity_CheckGivebackProtection()
          
          Equity_CloseAllPositions("GIVEBACK_PROTECTION");
          Equity_CancelAllPendingOrders("GIVEBACK_PROTECTION");
+         Persistence_Flush();
       }
       return true;
    }

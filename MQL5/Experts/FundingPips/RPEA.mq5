@@ -202,9 +202,13 @@ int OnInit()
       Print("[RPEA] XAUEUR signal mapping enabled (XAUEUR -> XAUUSD proxy)");
    }
 
-   // 2) Load persisted challenge state
+   // 2) Load persisted challenge state (M4-Task04: validates, migrates, recovers)
    Persistence_LoadChallengeState();
    ChallengeState s = State_Get();
+   
+   // M4-Task04 FR-06: If disabled_permanent is true, set g_ctx.permanently_disabled
+   if(s.disabled_permanent)
+      g_ctx.permanently_disabled = true;
 
    // 3) Populate context from persisted state
    g_ctx.initial_baseline = (s.initial_baseline>0.0? s.initial_baseline : AccountInfoDouble(ACCOUNT_EQUITY));
