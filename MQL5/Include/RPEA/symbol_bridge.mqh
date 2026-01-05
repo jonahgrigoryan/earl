@@ -5,6 +5,16 @@
 
 #include <RPEA/logging.mqh>
 
+// Performance: EURUSD rate cache with 500ms TTL
+struct SymbolRateCache
+{
+   double rate;
+   ulong timestamp_ms;
+};
+static SymbolRateCache g_eurusd_cache = {0.0, 0};
+const ulong CACHE_TTL_MS = 500;
+
+// Normalize: Uppercase/trim for robust symbol comparisons
 string SymbolBridge_Normalize(const string symbol)
   {
    string value = symbol;
@@ -22,6 +32,7 @@ string SymbolBridge_GetExecutionSymbol(const string signal_symbol)
    return signal_symbol;
   }
 
+// MapDistance: Returns false (and sets out_distance_exec < 0) if EURUSD quote is unavailable
 bool SymbolBridge_MapDistance(const string signal_symbol,
                               const string exec_symbol,
                               const double distance_signal,
@@ -39,19 +50,34 @@ bool SymbolBridge_MapDistance(const string signal_symbol,
       return true;
 
    double bid = 0.0;
-   if(!SymbolInfoDouble("EURUSD", SYMBOL_BID, bid) ||
-      !MathIsValidNumber(bid) ||
-      bid <= 0.0)
-     {
-      out_distance_exec = -1.0;
-      out_eurusd_rate = 0.0;
-      LogDecision("SymbolBridge",
-                  "XAUEUR_MAP_FAIL",
-                  StringFormat("{\"signal\":\"%s\",\"exec\":\"%s\",\"reason\":\"eurusd_quote\"}",
-                               signal_symbol,
-                               exec_symbol));
-      return false;
-     }
+   
+   // Performance: Use cached EURUSD rate with TTL
+   ulong now = GetTickCount64();
+   if(now - g_eurusd_cache.timestamp_ms < CACHE_TTL_MS && g_eurusd_cache.rate > 0.0)
+   {
+      bid = g_eurusd_cache.rate; // Use cached rate
+   }
+   else
+   {
+      // Fetch fresh rate and cache it
+      if(!SymbolInfoDouble("EURUSD", SYMBOL_BID, bid) ||
+         !MathIsValidNumber(bid) ||
+         bid <= 0.0)
+      {
+         out_distance_exec = -1.0;
+         out_eurusd_rate = 0.0;
+         LogDecision("SymbolBridge",
+                     "XAUEUR_MAP_FAIL",
+                     StringFormat("{\"signal\":\"%s\",\"exec\":\"%s\",\"reason\":\"eurusd_quote\"}",
+                                  signal_symbol,
+                                  exec_symbol));
+         return false;
+      }
+      
+      // Update cache
+      g_eurusd_cache.rate = bid;
+      g_eurusd_cache.timestamp_ms = now;
+   }
 
    out_eurusd_rate = bid;
    out_distance_exec = distance_signal * bid;

@@ -11,6 +11,26 @@
 #endif
 
 //==============================================================================
+// M4-Task04: Dirty State Tracking
+//==============================================================================
+bool g_persistence_dirty = false;
+
+void Persistence_MarkDirty()
+{
+   g_persistence_dirty = true;
+}
+
+bool Persistence_IsDirty()
+{
+   return g_persistence_dirty;
+}
+
+void Persistence_ClearDirty()
+{
+   g_persistence_dirty = false;
+}
+
+//==============================================================================
 // Intent Journal Data Structures
 //==============================================================================
 
@@ -1736,6 +1756,172 @@ bool IntentJournal_RemoveActionById(IntentJournal &journal, const string action_
    return true;
 }
 
+//==============================================================================
+// M4-Task04: Challenge State Validation
+//==============================================================================
+
+// Validate and repair challenge state, returning true if valid or repaired
+bool Persistence_ValidateChallengeState(ChallengeState &s, string &out_reason)
+{
+   out_reason = "";
+   bool repaired = false;
+   
+   // Validate initial_baseline
+   if(!MathIsValidNumber(s.initial_baseline) || s.initial_baseline <= 0.0)
+   {
+      out_reason = "invalid_initial_baseline";
+      s.initial_baseline = AccountInfoDouble(ACCOUNT_EQUITY);
+      repaired = true;
+   }
+   
+   // Validate baseline_today
+   if(!MathIsValidNumber(s.baseline_today) || s.baseline_today <= 0.0)
+   {
+      if(out_reason == "") out_reason = "invalid_baseline_today";
+      s.baseline_today = s.initial_baseline;
+      repaired = true;
+   }
+   
+   // Validate gDaysTraded
+   if(s.gDaysTraded < 0)
+   {
+      if(out_reason == "") out_reason = "negative_days_traded";
+      s.gDaysTraded = 0;
+      repaired = true;
+   }
+   
+   // Validate last_counted_server_date
+   if(s.last_counted_server_date < 0)
+   {
+      if(out_reason == "") out_reason = "negative_server_date";
+      s.last_counted_server_date = 0;
+      repaired = true;
+   }
+   
+   // Validate last_counted_deal_time (future dates are invalid)
+   if(s.last_counted_deal_time > TimeCurrent())
+   {
+      if(out_reason == "") out_reason = "future_deal_time";
+      s.last_counted_deal_time = (datetime)0;
+      repaired = true;
+   }
+   
+   // Validate last_micro_entry_server_date
+   if(s.last_micro_entry_server_date < 0)
+   {
+      if(out_reason == "") out_reason = "negative_micro_date";
+      s.last_micro_entry_server_date = 0;
+      repaired = true;
+   }
+   
+   // Validate day_peak_equity
+   if(!MathIsValidNumber(s.day_peak_equity) || s.day_peak_equity < 0.0)
+   {
+      if(out_reason == "") out_reason = "invalid_day_peak";
+      s.day_peak_equity = s.baseline_today;
+      repaired = true;
+   }
+   
+   // Validate overall_peak_equity
+   if(!MathIsValidNumber(s.overall_peak_equity) || s.overall_peak_equity < 0.0)
+   {
+      if(out_reason == "") out_reason = "invalid_overall_peak";
+      s.overall_peak_equity = s.day_peak_equity;
+      repaired = true;
+   }
+   
+   // Enforce disabled_permanent -> trading_enabled=false
+   if(s.disabled_permanent)
+      s.trading_enabled = false;
+   
+   // Set state_version if missing
+   if(s.state_version <= 0)
+      s.state_version = STATE_VERSION_CURRENT;
+   
+   return repaired;
+}
+
+// Build key=value payload string for challenge state
+string Persistence_BuildChallengeStatePayload(const ChallengeState &s)
+{
+   string payload = "";
+   payload += "state_version=" + (string)STATE_VERSION_CURRENT + "\n";
+   payload += "last_state_write_time=" + (string)TimeCurrent() + "\n";
+   payload += "initial_baseline=" + DoubleToString(s.initial_baseline, 2) + "\n";
+   payload += "baseline_today=" + DoubleToString(s.baseline_today, 2) + "\n";
+   payload += "gDaysTraded=" + (string)s.gDaysTraded + "\n";
+   payload += "last_counted_server_date=" + (string)s.last_counted_server_date + "\n";
+   payload += "last_counted_deal_time=" + (string)s.last_counted_deal_time + "\n";
+   payload += "trading_enabled=" + (s.trading_enabled ? "1" : "0") + "\n";
+   payload += "disabled_permanent=" + (s.disabled_permanent ? "1" : "0") + "\n";
+   payload += "micro_mode=" + (s.micro_mode ? "1" : "0") + "\n";
+   payload += "micro_mode_activated_at=" + (string)s.micro_mode_activated_at + "\n";
+   payload += "last_micro_entry_server_date=" + (string)s.last_micro_entry_server_date + "\n";
+   payload += "day_peak_equity=" + DoubleToString(s.day_peak_equity, 2) + "\n";
+   payload += "overall_peak_equity=" + DoubleToString(s.overall_peak_equity, 2) + "\n";
+   payload += "server_midnight_ts=" + (string)s.server_midnight_ts + "\n";
+   payload += "baseline_today_e0=" + DoubleToString(s.baseline_today_e0, 2) + "\n";
+   payload += "baseline_today_b0=" + DoubleToString(s.baseline_today_b0, 2) + "\n";
+   payload += "daily_floor_breached=" + (s.daily_floor_breached ? "1" : "0") + "\n";
+   payload += "daily_floor_breach_time=" + (string)s.daily_floor_breach_time + "\n";
+   payload += "hard_stop_reason=" + s.hard_stop_reason + "\n";
+   payload += "hard_stop_time=" + (string)s.hard_stop_time + "\n";
+   payload += "hard_stop_equity=" + DoubleToString(s.hard_stop_equity, 2) + "\n";
+   return payload;
+}
+
+// Atomic write: write to temp file then move into place
+bool Persistence_WriteChallengeStateAtomic(const string &payload)
+{
+   const string tmp_path = FILE_CHALLENGE_STATE + ".tmp";
+   const string bak_path = FILE_CHALLENGE_STATE + ".bak";
+   
+   // Write to temp file
+   if(!Persistence_WriteWholeFile(tmp_path, payload))
+   {
+      LogAuditRow("STATE_WRITE_FAIL", "Persistence", LOG_ERROR, "tmp_write_failed", "{}");
+      return false;
+   }
+   
+   // Backup existing file (best-effort)
+   if(FileIsExist(FILE_CHALLENGE_STATE))
+   {
+      FileDelete(bak_path);
+      FileMove(FILE_CHALLENGE_STATE, 0, bak_path, 0);
+   }
+   
+   // Move temp to final location
+   if(!FileMove(tmp_path, 0, FILE_CHALLENGE_STATE, 0))
+   {
+      // Try to restore backup
+      if(FileIsExist(bak_path))
+         FileMove(bak_path, 0, FILE_CHALLENGE_STATE, 0);
+      LogAuditRow("STATE_WRITE_FAIL", "Persistence", LOG_ERROR, "move_failed", "{}");
+      return false;
+   }
+   
+   return true;
+}
+
+// Rename corrupt state file to .corrupt.TIMESTAMP
+bool Persistence_RenameCorruptStateFile(const string reason)
+{
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   string timestamp = StringFormat("%04d%02d%02d_%02d%02d%02d",
+                                   dt.year, dt.mon, dt.day,
+                                   dt.hour, dt.min, dt.sec);
+   string corrupt_path = FILE_CHALLENGE_STATE + ".corrupt." + timestamp;
+   
+   if(FileMove(FILE_CHALLENGE_STATE, 0, corrupt_path, 0))
+   {
+      LogAuditRow("STATE_CORRUPT_RENAMED", "Persistence", LOG_WARN, reason,
+                  StringFormat("{\"backup\":\"%s\"}", corrupt_path));
+      return true;
+   }
+   return false;
+}
+
 void IntentJournal_TouchSequences(const IntentJournal &journal, int &out_intent_seq, int &out_action_seq)
 {
    out_intent_seq = 0;
@@ -1778,119 +1964,175 @@ void IntentJournal_TouchSequences(const IntentJournal &journal, int &out_intent_
    }
 }
 
-// Load challenge state (tolerate missing)
+// M4-Task04: Load challenge state with validation, versioning, and recovery
 void Persistence_LoadChallengeState()
 {
    Persistence_EnsureFolders();
-   int h = FileOpen(FILE_CHALLENGE_STATE, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+   
+   // Initialize with defaults
+   ChallengeState s;
+   ZeroMemory(s);
+   s.initial_baseline = AccountInfoDouble(ACCOUNT_EQUITY);
+   s.baseline_today = s.initial_baseline;
+   s.trading_enabled = TradingEnabledDefault;
+   s.micro_mode = false;
+   s.day_peak_equity = s.baseline_today;
+   s.overall_peak_equity = s.day_peak_equity;
+   s.server_midnight_ts = (datetime)0;
+   s.baseline_today_e0 = s.baseline_today;
+   s.baseline_today_b0 = AccountInfoDouble(ACCOUNT_BALANCE);
+   s.state_version = STATE_VERSION_CURRENT;
+   
+   int h = FileOpen(FILE_CHALLENGE_STATE, FILE_READ|FILE_TXT|FILE_ANSI);
    if(h == INVALID_HANDLE)
    {
-      // initialize defaults and create file
-      ChallengeState s = State_Get();
-      s.initial_baseline = AccountInfoDouble(ACCOUNT_EQUITY);
-      s.baseline_today = s.initial_baseline;
-      s.trading_enabled = true;
-      s.micro_mode = false;
-      s.day_peak_equity = s.baseline_today;
-      s.server_midnight_ts = (datetime)0;
-      s.baseline_today_e0 = s.baseline_today;
-      s.baseline_today_b0 = AccountInfoDouble(ACCOUNT_BALANCE);
+      // File missing - initialize with defaults and write
       State_Set(s);
-      int hw = FileOpen(FILE_CHALLENGE_STATE, FILE_WRITE|FILE_TXT|FILE_ANSI);
-      if(hw!=INVALID_HANDLE)
-      {
-         FileWrite(hw, "initial_baseline="+DoubleToString(s.initial_baseline,2));
-         FileWrite(hw, "baseline_today="+DoubleToString(s.baseline_today,2));
-         FileWrite(hw, "gDaysTraded=0");
-         FileWrite(hw, "last_counted_server_date=0");
-         FileWrite(hw, "trading_enabled=1");
-         FileWrite(hw, "disabled_permanent=0");
-         FileWrite(hw, "micro_mode=0");
-         FileWrite(hw, "day_peak_equity="+DoubleToString(s.day_peak_equity,2));
-         FileWrite(hw, "server_midnight_ts=0");
-         FileWrite(hw, "baseline_today_e0="+DoubleToString(s.baseline_today_e0,2));
-         FileWrite(hw, "baseline_today_b0="+DoubleToString(s.baseline_today_b0,2));
-         FileClose(hw);
-      }
+      string payload = Persistence_BuildChallengeStatePayload(s);
+      Persistence_WriteChallengeStateAtomic(payload);
+      LogAuditRow("STATE_LOAD_OK", "Persistence", LOG_INFO, "new_file",
+                  StringFormat("{\"state_version\":%d,\"source\":\"defaults\"}", STATE_VERSION_CURRENT));
       return;
    }
-   // simple key=value parse; tolerate placeholder JSON "{}"
-   ChallengeState s = State_Get();
-   bool parsed_any=false;
+   
+   // Parse key=value file
+   bool parsed_any = false;
+   int loaded_version = 0;
    while(!FileIsEnding(h))
    {
       string line = FileReadString(h);
       int pos = StringFind(line, "=");
-      if(pos>0)
+      if(pos > 0)
       {
-         string k = StringSubstr(line,0,pos);
-         string v = StringSubstr(line,pos+1);
-         if(k=="initial_baseline") { s.initial_baseline = StringToDouble(v); parsed_any=true; }
-         else if(k=="baseline_today") { s.baseline_today = StringToDouble(v); parsed_any=true; }
-         else if(k=="gDaysTraded") { s.gDaysTraded = (int)StringToInteger(v); parsed_any=true; }
-         else if(k=="last_counted_server_date") { s.last_counted_server_date = (int)StringToInteger(v); parsed_any=true; }
-         else if(k=="trading_enabled") { s.trading_enabled = (StringToInteger(v)!=0); parsed_any=true; }
-         else if(k=="disabled_permanent") { s.disabled_permanent = (StringToInteger(v)!=0); parsed_any=true; }
-         else if(k=="micro_mode") { s.micro_mode = (StringToInteger(v)!=0); parsed_any=true; }
-         else if(k=="day_peak_equity") { s.day_peak_equity = StringToDouble(v); parsed_any=true; }
-         else if(k=="server_midnight_ts") { s.server_midnight_ts = (datetime)StringToInteger(v); parsed_any=true; }
-         else if(k=="baseline_today_e0") { s.baseline_today_e0 = StringToDouble(v); parsed_any=true; }
-         else if(k=="baseline_today_b0") { s.baseline_today_b0 = StringToDouble(v); parsed_any=true; }
+         string k = StringSubstr(line, 0, pos);
+         string v = StringSubstr(line, pos + 1);
+         
+         // Core fields
+         if(k == "state_version") { loaded_version = (int)StringToInteger(v); parsed_any = true; }
+         else if(k == "last_state_write_time") { s.last_state_write_time = (datetime)StringToInteger(v); parsed_any = true; }
+         else if(k == "initial_baseline") { s.initial_baseline = StringToDouble(v); parsed_any = true; }
+         else if(k == "baseline_today") { s.baseline_today = StringToDouble(v); parsed_any = true; }
+         else if(k == "gDaysTraded") { s.gDaysTraded = (int)StringToInteger(v); parsed_any = true; }
+         else if(k == "last_counted_server_date") { s.last_counted_server_date = (int)StringToInteger(v); parsed_any = true; }
+         else if(k == "last_counted_deal_time") { s.last_counted_deal_time = (datetime)StringToInteger(v); parsed_any = true; }
+         else if(k == "trading_enabled") { s.trading_enabled = (StringToInteger(v) != 0); parsed_any = true; }
+         else if(k == "disabled_permanent") { s.disabled_permanent = (StringToInteger(v) != 0); parsed_any = true; }
+         else if(k == "micro_mode") { s.micro_mode = (StringToInteger(v) != 0); parsed_any = true; }
+         else if(k == "micro_mode_activated_at") { s.micro_mode_activated_at = (datetime)StringToInteger(v); parsed_any = true; }
+         else if(k == "last_micro_entry_server_date") { s.last_micro_entry_server_date = (int)StringToInteger(v); parsed_any = true; }
+         else if(k == "day_peak_equity") { s.day_peak_equity = StringToDouble(v); parsed_any = true; }
+         else if(k == "overall_peak_equity") { s.overall_peak_equity = StringToDouble(v); parsed_any = true; }
+         else if(k == "server_midnight_ts") { s.server_midnight_ts = (datetime)StringToInteger(v); parsed_any = true; }
+         else if(k == "baseline_today_e0") { s.baseline_today_e0 = StringToDouble(v); parsed_any = true; }
+         else if(k == "baseline_today_b0") { s.baseline_today_b0 = StringToDouble(v); parsed_any = true; }
+         else if(k == "daily_floor_breached") { s.daily_floor_breached = (StringToInteger(v) != 0); parsed_any = true; }
+         else if(k == "daily_floor_breach_time") { s.daily_floor_breach_time = (datetime)StringToInteger(v); parsed_any = true; }
+         else if(k == "hard_stop_reason") { s.hard_stop_reason = v; parsed_any = true; }
+         else if(k == "hard_stop_time") { s.hard_stop_time = (datetime)StringToInteger(v); parsed_any = true; }
+         else if(k == "hard_stop_equity") { s.hard_stop_equity = StringToDouble(v); parsed_any = true; }
+         // Unknown keys are ignored (forward compatibility)
       }
    }
    FileClose(h);
+   
+   // Handle corrupt/empty file
    if(!parsed_any)
    {
-      // Rewrite defaults over placeholder contents
+      Persistence_RenameCorruptStateFile("no_valid_keys");
       s.initial_baseline = AccountInfoDouble(ACCOUNT_EQUITY);
       s.baseline_today = s.initial_baseline;
       s.trading_enabled = true;
-      s.disabled_permanent = false;
-      s.micro_mode = false;
-      s.day_peak_equity = s.baseline_today;
-      s.server_midnight_ts = (datetime)0;
-      s.baseline_today_e0 = s.baseline_today;
-      s.baseline_today_b0 = AccountInfoDouble(ACCOUNT_BALANCE);
-      int hw = FileOpen(FILE_CHALLENGE_STATE, FILE_WRITE|FILE_TXT|FILE_ANSI);
-      if(hw!=INVALID_HANDLE)
-      {
-         FileWrite(hw, "initial_baseline="+DoubleToString(s.initial_baseline,2));
-         FileWrite(hw, "baseline_today="+DoubleToString(s.baseline_today,2));
-         FileWrite(hw, "gDaysTraded="+(string)s.gDaysTraded);
-         FileWrite(hw, "last_counted_server_date="+(string)s.last_counted_server_date);
-         FileWrite(hw, "trading_enabled="+(s.trading_enabled?"1":"0"));
-         FileWrite(hw, "disabled_permanent=0");
-         FileWrite(hw, "micro_mode=0");
-         FileWrite(hw, "day_peak_equity="+DoubleToString(s.day_peak_equity,2));
-         FileWrite(hw, "server_midnight_ts=0");
-         FileWrite(hw, "baseline_today_e0="+DoubleToString(s.baseline_today_e0,2));
-         FileWrite(hw, "baseline_today_b0="+DoubleToString(s.baseline_today_b0,2));
-         FileClose(hw);
-      }
+      s.state_version = STATE_VERSION_CURRENT;
+      State_Set(s);
+      string payload = Persistence_BuildChallengeStatePayload(s);
+      Persistence_WriteChallengeStateAtomic(payload);
+      LogAuditRow("STATE_RECOVERY", "Persistence", LOG_WARN, "corrupt_file_recovered",
+                  StringFormat("{\"state_version\":%d}", STATE_VERSION_CURRENT));
+      return;
    }
+   
+   // Handle version migration
+   if(loaded_version == 0 || loaded_version > STATE_VERSION_CURRENT)
+   {
+      // Version missing or higher than expected - apply defaults for new fields
+      s.state_version = STATE_VERSION_CURRENT;
+      if(s.overall_peak_equity <= 0.0)
+         s.overall_peak_equity = s.day_peak_equity;
+      LogAuditRow("STATE_RECOVERY", "Persistence", LOG_INFO, "version_migrated",
+                  StringFormat("{\"from_version\":%d,\"to_version\":%d}", loaded_version, STATE_VERSION_CURRENT));
+   }
+   else
+   {
+      s.state_version = loaded_version;
+   }
+   
+   // Validate and repair
+   string validation_reason;
+   if(Persistence_ValidateChallengeState(s, validation_reason))
+   {
+      LogAuditRow("STATE_RECOVERY", "Persistence", LOG_WARN, "validation_repair",
+                  StringFormat("{\"reason\":\"%s\"}", validation_reason));
+   }
+   
+   // FR-06: Enforce disabled_permanent -> trading_enabled=false
+   if(s.disabled_permanent)
+      s.trading_enabled = false;
+   
    State_Set(s);
+   LogAuditRow("STATE_LOAD_OK", "Persistence", LOG_INFO, "loaded",
+               StringFormat("{\"state_version\":%d,\"days_traded\":%d,\"disabled_permanent\":%s}",
+                           s.state_version, s.gDaysTraded, s.disabled_permanent ? "true" : "false"));
 }
 
-// Flush state to disk
+// M4-Task04: Flush state to disk with atomic write
 void Persistence_Flush()
 {
    ChallengeState s = State_Get();
-   int h = FileOpen(FILE_CHALLENGE_STATE, FILE_WRITE|FILE_TXT|FILE_ANSI);
-   if(h!=INVALID_HANDLE)
+   string payload = Persistence_BuildChallengeStatePayload(s);
+   
+   if(Persistence_WriteChallengeStateAtomic(payload))
    {
-      FileWrite(h, "initial_baseline="+DoubleToString(s.initial_baseline,2));
-      FileWrite(h, "baseline_today="+DoubleToString(s.baseline_today,2));
-      FileWrite(h, "gDaysTraded="+(string)s.gDaysTraded);
-      FileWrite(h, "last_counted_server_date="+(string)s.last_counted_server_date);
-      FileWrite(h, "trading_enabled="+(s.trading_enabled?"1":"0"));
-      FileWrite(h, "disabled_permanent="+(s.disabled_permanent?"1":"0"));
-      FileWrite(h, "micro_mode="+(s.micro_mode?"1":"0"));
-      FileWrite(h, "day_peak_equity="+DoubleToString(s.day_peak_equity,2));
-      FileWrite(h, "server_midnight_ts="+(string)s.server_midnight_ts);
-      FileWrite(h, "baseline_today_e0="+DoubleToString(s.baseline_today_e0,2));
-      FileWrite(h, "baseline_today_b0="+DoubleToString(s.baseline_today_b0,2));
-      FileClose(h);
+      LogAuditRow("STATE_WRITE_OK", "Persistence", LOG_INFO, "flush",
+                  StringFormat("{\"state_version\":%d,\"days_traded\":%d}", s.state_version, s.gDaysTraded));
+      Persistence_ClearDirty();
    }
-   // TODO[M4/M6]: idempotent recovery and TTL for queued actions
 }
+
+// M4-Task04: Flush only if dirty (for coalesced writes)
+void Persistence_FlushIfDirty()
+{
+   if(Persistence_IsDirty())
+      Persistence_Flush();
+}
+
+//==============================================================================
+// M4-Task04: Test Overrides (guarded by RPEA_TEST_RUNNER)
+//==============================================================================
+#ifdef RPEA_TEST_RUNNER
+string g_test_state_path = "";
+
+void Persistence_Test_SetStatePath(const string path)
+{
+   g_test_state_path = path;
+}
+
+void Persistence_Test_ResetStatePath()
+{
+   g_test_state_path = "";
+}
+
+bool Persistence_Test_WriteStateFile(const string &lines[], const int count)
+{
+   string path = (g_test_state_path != "") ? g_test_state_path : FILE_CHALLENGE_STATE;
+   int handle = FileOpen(path, FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(handle == INVALID_HANDLE)
+      return false;
+   for(int i = 0; i < count; i++)
+      FileWrite(handle, lines[i]);
+   FileClose(handle);
+   return true;
+}
+
+#endif // RPEA_TEST_RUNNER
+
 #endif // RPEA_PERSISTENCE_MQH

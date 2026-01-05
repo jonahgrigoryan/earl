@@ -42,12 +42,14 @@
 #endif
 
 //+------------------------------------------------------------------+
-// Inputs (consolidated) – names and defaults per finalspec.md
+// Inputs (consolidated) - names and defaults per finalspec.md
 // Risk & governance
 input double DailyLossCapPct            = 4.0;
 input double OverallLossCapPct          = 6.0;
 input int    MinTradeDaysRequired       = 3;
 input bool   TradingEnabledDefault      = true;
+input double MarginLevelCritical        = 50.0;   // Margin level threshold for protective exits
+input bool   EnableMarginProtection     = true;   // Enable margin level monitoring
 input double MinRiskDollar              = 10.0;
 input double OneAndDoneR                = 1.5;
 input double NYGatePctOfDailyCap        = 0.50;
@@ -59,9 +61,10 @@ input int    StartHourNY                = 12;
 input int    ORMinutes                  = 60;   // {30,45,60,75}
 input int    CutoffHour                 = 16;   // server hour
 input double RiskPct                    = 1.5;
-input double MicroRiskPct               = 0.10; // 0.05–0.20
-input int    MicroTimeStopMin           = 45;   // 30–60
-input double GivebackCapDayPct          = 0.50; // 0.25–0.50
+input double MicroRiskPct               = 0.10; // 0.05-0.20
+input int    MicroTimeStopMin           = 45;   // 30-60
+input double GivebackCapDayPct          = 0.50; // 0.25-0.50
+input double TargetProfitPct            = 10.0; // Challenge profit target percentage
 
 // Compliance
 input int    NewsBufferS                = 300;
@@ -79,6 +82,14 @@ input string NewsCSVPath                = DEFAULT_NewsCSVPath;
 input int    NewsCSVMaxAgeHours         = DEFAULT_NewsCSVMaxAgeHours;
 input int    BudgetGateLockMs           = 1000;
 input double RiskGateHeadroom           = 0.90;
+input int    StabilizationBars          = DEFAULT_StabilizationBars;
+input int    StabilizationTimeoutMin    = DEFAULT_StabilizationTimeoutMin;
+input double SpreadStabilizationPct     = DEFAULT_SpreadStabilizationPct;
+input double VolatilityStabilizationPct = DEFAULT_VolatilityStabilizationPct;
+input int    StabilizationLookbackBars  = DEFAULT_StabilizationLookbackBars;
+input int    NewsCalendarLookbackHours  = DEFAULT_NewsCalendarLookbackHours;
+input int    NewsCalendarLookaheadHours = DEFAULT_NewsCalendarLookaheadHours;
+input int    NewsAccountMode            = DEFAULT_NewsAccountMode;
 // Resilience / error handling
 input int    MaxConsecutiveFailures     = DEFAULT_MaxConsecutiveFailures;
 input int    FailureWindowSec           = DEFAULT_FailureWindowSec;
@@ -95,10 +106,10 @@ input int    ServerToCEST_OffsetMinutes = 0;
 // Symbols & leverage
 input string InpSymbols                 = "EURUSD;XAUUSD";
 input bool   UseXAUEURProxy             = true;
-input int    LeverageOverrideFX         = 50;   // 0 → use account
+input int    LeverageOverrideFX         = 50;   // 0 = use account
 input int    LeverageOverrideMetals     = 20;
 
-// Synthetic manager (Task 11 acceptance §Synthetic Manager Interface)
+// Synthetic manager (Task 11 acceptance Synthetic Manager Interface)
 input int    SyntheticBarCacheSize      = DEFAULT_SyntheticBarCacheSize;
 input bool   ForwardFillGaps            = DEFAULT_ForwardFillGaps;
 input int    MaxGapBars                 = DEFAULT_MaxGapBars;
@@ -191,9 +202,13 @@ int OnInit()
       Print("[RPEA] XAUEUR signal mapping enabled (XAUEUR -> XAUUSD proxy)");
    }
 
-   // 2) Load persisted challenge state
+   // 2) Load persisted challenge state (M4-Task04: validates, migrates, recovers)
    Persistence_LoadChallengeState();
    ChallengeState s = State_Get();
+   
+   // M4-Task04 FR-06: If disabled_permanent is true, set g_ctx.permanently_disabled
+   if(s.disabled_permanent)
+      g_ctx.permanently_disabled = true;
 
    // 3) Populate context from persisted state
    g_ctx.initial_baseline = (s.initial_baseline>0.0? s.initial_baseline : AccountInfoDouble(ACCOUNT_EQUITY));
@@ -211,8 +226,15 @@ int OnInit()
    Persistence_EnsureFolders();
    Persistence_EnsurePlaceholderFiles();
    AuditLogger_Init(AuditLogPath, LogBufferSize, EnableDetailedLogging);
-   // Load news CSV fallback if present
-   News_LoadCsvFallback();
+
+   // M4-Task01: Initialize News Stabilization
+   string news_symbols[];
+   int news_count = News_BuildStabilizationSymbols(g_ctx.symbols, g_ctx.symbols_count, news_symbols);
+   News_InitStabilization(news_symbols, news_count);
+   for(int i = 0; i < news_count; i++)
+      News_EnsureSymbolSelected(news_symbols[i]);
+   News_LoadEvents();
+
    LogAuditRow("BOOT", "RPEA", 1, "EA boot", "{}");
 
     // 6) Initialize Order Engine (M3 Task 1)
@@ -233,8 +255,32 @@ int OnInit()
                                    MaxQueueSize,
                                    EnableQueuePrioritization);
 
+   // M4-Task03: If kill-switch flags are active, retry protective exits on restart
+   ChallengeState resume_state = State_Get();
+   if((resume_state.disabled_permanent || resume_state.daily_floor_breached) &&
+      (PositionsTotal() > 0 || OrdersTotal() > 0))
+   {
+      Equity_ExecuteProtectiveExits("killswitch_resume");
+   }
+
    // 8) Initialize timer (30s)
    EventSetTimer(30);
+
+   // 9) M4-Task02: Initialize peak tracking and check hard-stop state
+   ChallengeState init_st = State_Get();
+   if(init_st.day_peak_equity <= 0.0)
+   {
+      init_st.day_peak_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+      init_st.overall_peak_equity = init_st.day_peak_equity;
+      State_Set(init_st);
+   }
+   
+   // Check if already hard-stopped from previous session
+   if(Equity_IsHardStopped())
+   {
+      g_ctx.permanently_disabled = true;
+      PrintFormat("[RPEA] EA is hard-stopped: %s", State_Get().hard_stop_reason);
+   }
 
    return(INIT_SUCCEEDED);
 }
@@ -279,8 +325,27 @@ void OnTimer()
       LogAuditRow("ROLLOVER", "Scheduler", 1, "New server day baseline anchored", "{}");
 
       // Day-count handled in OnTradeTransaction on first DEAL_ENTRY_IN (per spec)
+      
+      // M4-Task02: Server-day rollover handling
+      Equity_OnServerDayRollover();
    }
    g_ctx.timer_last_check = g_ctx.current_server_time;
+   
+   // M4-Task03: Kill-switch floors and margin protection
+   Equity_CheckAndExecuteKillswitch(g_ctx);
+   Equity_CheckMarginProtection();
+   
+   // M4-Task02: Update peak tracking
+   Equity_UpdatePeakTracking();
+   
+   // M4-Task02: Check Micro-Mode activation (target hit but days remaining)
+   Equity_CheckMicroMode(g_ctx);
+   
+   // M4-Task02: Check giveback protection (Micro-Mode only)
+   Equity_CheckGivebackProtection();
+   
+   // M4-Task02: Check hard-stop conditions (floor breach or challenge complete)
+   Equity_CheckHardStopConditions(g_ctx);
 
     // Refresh indicators per symbol (lightweight in M1)
     int synth_idx = Indicators_FindSlot(SYNTH_SYMBOL_XAUEUR);
@@ -314,12 +379,25 @@ void OnTimer()
 
    // Delegate to scheduler (logging-only in M1)
    Scheduler_Tick(g_ctx);
+   
+   // M4-Task01: Update news blocking and stabilization state
+   News_OnTimer();
 }
 
 //+------------------------------------------------------------------+
 // OnTick: lightweight price monitoring and validation
 void OnTick()
 {
+   g_ctx.current_server_time = TimeCurrent();
+   // M4-Task03: Fast kill-switch response on live ticks (avoid heavy logging unless breached)
+   double current_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double daily_floor = Equity_GetDailyFloor();
+   double overall_floor = Equity_GetOverallFloor();
+   if((daily_floor > 0.0 && current_equity <= daily_floor) ||
+      (overall_floor > 0.0 && current_equity <= overall_floor))
+   {
+      Equity_CheckAndExecuteKillswitch(g_ctx);
+   }
    g_order_engine.OnTick();
 }
 
@@ -338,7 +416,15 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
       ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
       if(entry == DEAL_ENTRY_IN)
       {
-         State_MarkTradeDayOnce();
+         // M4-Task02: Use explicit server timestamp for deterministic tracking
+         datetime deal_time = (datetime)HistoryDealGetInteger(trans.deal, DEAL_TIME);
+         if(deal_time <= 0)
+            deal_time = TimeCurrent();
+         State_MarkTradeDayServer(deal_time);
+         
+         // M4-Task02: Track Micro-Mode entry usage per day
+         if(Equity_IsMicroModeActive())
+            State_MarkMicroEntryServer(deal_time);
       }
    }
 }

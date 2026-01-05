@@ -109,14 +109,52 @@
 #define DEFAULT_QueueTTLMinutes              5
 #define DEFAULT_EnableQueuePrioritization    true
 
+// M4-Task01: Post-News Stabilization Configuration
+#define DEFAULT_StabilizationBars            3
+#define DEFAULT_StabilizationTimeoutMin      15
+#define DEFAULT_SpreadStabilizationPct       60.0
+#define DEFAULT_VolatilityStabilizationPct   70.0
+#define DEFAULT_StabilizationLookbackBars    60
+#define DEFAULT_NewsCalendarLookbackHours    6
+#define DEFAULT_NewsCalendarLookaheadHours   24
+#define DEFAULT_NewsAccountMode              0
+
 // Liquidity Configuration (Task 22)
 #define DEFAULT_SpreadMultATR                0.005
 
 // Breakeven Configuration (Task 23)
+// Performance and maintainability constants
+#define BREAKEVEN_TRIGGER_R_MULTIPLE         0.5
+#define EPS_SL_CHANGE                        1e-6
+#define LEGACY_LOG_FLUSH_THRESHOLD           64
 // Optional additive buffer (points) on top of live spread when moving SL to breakeven.
 #define DEFAULT_BreakevenExtraPoints         0
 
+// M4-Task03: Kill-Switch + Margin Protection Configuration
+#define DEFAULT_MarginLevelCritical          50.0
+#define DEFAULT_EnableMarginProtection       true
+#define DEFAULT_TradingEnabledDefault        true
+
 #ifdef __MQL5__
+//==============================================================================
+// M4-Task02: Micro-Mode + Hard-Stop Configuration (moved above for visibility)
+//==============================================================================
+// These are defined here so they're available before inline functions
+#ifndef DEFAULT_TargetProfitPct
+#define DEFAULT_TargetProfitPct              10.0
+#endif
+#ifndef DEFAULT_MicroRiskPct
+#define DEFAULT_MicroRiskPct                 0.10
+#endif
+#ifndef DEFAULT_MicroTimeStopMin
+#define DEFAULT_MicroTimeStopMin             45
+#endif
+#ifndef DEFAULT_GivebackCapDayPct
+#define DEFAULT_GivebackCapDayPct            0.50
+#endif
+#ifndef DEFAULT_ServerToCEST_OffsetMinutes
+#define DEFAULT_ServerToCEST_OffsetMinutes   0
+#endif
 //------------------------------------------------------------------------------
 // Task 17 Resilience Config Helpers
 //------------------------------------------------------------------------------

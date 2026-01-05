@@ -11,6 +11,7 @@
 //| Check if spread is acceptable relative to ATR (Task 22)          |
 //| Formula: MaxSpread = ATR(D1) * SpreadMultATR                     |
 //| Default SpreadMultATR = 0.005 (0.5% of Daily ATR)                |
+//| Fail open by design on missing ATR/point to avoid false gate     |
 //+------------------------------------------------------------------+
 bool Liquidity_SpreadOK(const string symbol, double &out_spread, double &out_threshold)
 {
@@ -22,6 +23,9 @@ bool Liquidity_SpreadOK(const string symbol, double &out_spread, double &out_thr
 
    // Get current spread in points and convert to price units
    long spread_pts = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+   // Security: Clamp negative spread values from broker
+   if(spread_pts < 0) spread_pts = 0;
+   
    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
 
    if(point <= 0.0)
@@ -45,6 +49,7 @@ bool Liquidity_SpreadOK(const string symbol, double &out_spread, double &out_thr
    }
 
    double atr = snapshot.atr_d1;
+   // Threshold = ATR(D1) * configurable multiplier (default 0.005 ≈ 0.5% ATR)
    out_threshold = atr * spread_mult_atr;
 
    // Check spread against threshold

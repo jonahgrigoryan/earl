@@ -53,3 +53,11 @@ intents.json
 
 .gemini/
 gha-creds-*.json
+
+# Local agent tooling and helper docs (keep on disk, don't commit)
+.agents/
+.codebuff/
+compile_and_test.bat
+verify_compilation.ps1
+knowledge.md
+IMPLEMENTATION_SUMMARY.md

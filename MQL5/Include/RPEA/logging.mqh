@@ -6,29 +6,136 @@
 #include <RPEA/config.mqh>
 
 // -----------------------------------------------------------------------------
-// Legacy JSON log helpers (decision + lightweight event streams)
+// Performance constants and buffered logging state
 // -----------------------------------------------------------------------------
 
-void LogAuditRow(const string event, const string component, const int level,
-                 const string message, const string fields_json)
+#define LEGACY_LOG_FLUSH_THRESHOLD 64
+
+struct LegacyLogBuffer
+{
+   string  filename;
+   string  rows[];
+   int     count;
+};
+
+static LegacyLogBuffer g_decision_log_buffer;
+static LegacyLogBuffer g_event_log_buffer;
+
+// Helper functions for buffered logging
+void LegacyLog_EnsureFileWithHeader(const string path, const string header)
+{
+   FolderCreate(RPEA_LOGS_DIR);
+   int handle = FileOpen(path, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(handle == INVALID_HANDLE)
+   {
+      handle = FileOpen(path, FILE_WRITE|FILE_TXT|FILE_ANSI);
+      if(handle == INVALID_HANDLE)
+         return;
+      FileWrite(handle, header);
+      FileClose(handle);
+      return;
+   }
+   if(FileSize(handle) == 0)
+   {
+      FileWrite(handle, header);
+   }
+   FileClose(handle);
+}
+
+void LegacyLog_FlushBuffer(LegacyLogBuffer &buf, const string header)
+{
+   if(buf.count <= 0 || StringLen(buf.filename) == 0)
+      return;
+
+   LegacyLog_EnsureFileWithHeader(buf.filename, header);
+
+   int handle = FileOpen(buf.filename, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
+   if(handle == INVALID_HANDLE)
+   {
+      // One-time warning for operational visibility
+      static bool s_warned = false;
+      if(!s_warned)
+      {
+         s_warned = true;
+         PrintFormat("[LegacyLog] Failed to open %s; legacy logs may be lost", buf.filename);
+      }
+      return;
+   }
+
+   FileSeek(handle, 0, SEEK_END);
+   for(int i = 0; i < buf.count; i++)
+      FileWrite(handle, buf.rows[i]);
+   FileClose(handle);
+
+   ArrayResize(buf.rows, 0);
+   buf.count = 0;
+}
+
+void LegacyLog_FlushAll()
+{
+   LegacyLog_FlushBuffer(g_decision_log_buffer, "date,time,event,component,level,message,fields_json");
+   LegacyLog_FlushBuffer(g_event_log_buffer, "date,time,event,component,level,message,fields_json");
+}
+
+// -----------------------------------------------------------------------------
+// Improved buffered legacy log helpers (performance optimization)
+// -----------------------------------------------------------------------------
+
+// Defensive: ensure no macro collisions with parameter names
+#ifdef event_name
+#undef event_name
+#endif
+#ifdef component_name
+#undef component_name
+#endif
+#ifdef level_value
+#undef level_value
+#endif
+#ifdef message_text
+#undef message_text
+#endif
+#ifdef fields_json_text
+#undef fields_json_text
+#endif
+
+#ifdef RPEA_TEST_RUNNER
+void LogAuditRow(const string, const string, const int, const string, const string)
+{
+   // Test runner: legacy audit rows are not required for assertions.
+}
+#else
+void LogAuditRow(const string event_name, const string component_name, const int level_value,
+                 const string message_text, const string fields_json_text)
 {
    const datetime now = TimeCurrent();
    MqlDateTime tm; TimeToStruct(now, tm);
    string ymd = StringFormat("%04d%02d%02d", tm.year, tm.mon, tm.day);
    string path = StringFormat("%s/events_%s.csv", RPEA_LOGS_DIR, ymd);
-   FolderCreate(RPEA_LOGS_DIR);
-   int handle = FileOpen(path, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
-   if(handle == INVALID_HANDLE)
-      return;
-   if(FileSize(handle) == 0)
-      FileWrite(handle, "date,time,event,component,level,message,fields_json");
-   FileSeek(handle, 0, SEEK_END);
+
    string date = StringFormat("%04d-%02d-%02d", tm.year, tm.mon, tm.day);
    string time = StringFormat("%02d:%02d:%02d", tm.hour, tm.min, tm.sec);
-   string row = date + "," + time + "," + event + "," + component + "," + (string)level + "," + message + "," + fields_json;
-   FileWrite(handle, row);
-   FileClose(handle);
+   string row = date + "," + time + "," + event_name + "," + component_name + "," + (string)level_value + "," + message_text + "," + fields_json_text;
+
+   if(g_event_log_buffer.filename != path)
+   {
+      // New day or first use: flush old, reset
+      LegacyLog_FlushBuffer(g_event_log_buffer, "date,time,event,component,level,message,fields_json");
+      g_event_log_buffer.filename = path;
+      ArrayResize(g_event_log_buffer.rows, 0);
+      g_event_log_buffer.count = 0;
+   }
+
+   int idx = g_event_log_buffer.count;
+   int capacity = ArraySize(g_event_log_buffer.rows);
+   if(idx >= capacity)
+      ArrayResize(g_event_log_buffer.rows, MathMax(capacity + 32, 64));
+   g_event_log_buffer.rows[idx] = row;
+   g_event_log_buffer.count++;
+
+   if(g_event_log_buffer.count >= LEGACY_LOG_FLUSH_THRESHOLD)
+      LegacyLog_FlushBuffer(g_event_log_buffer, "date,time,event,component,level,message,fields_json");
 }
+#endif
 
 void LogDecision(const string component, const string message, const string fields_json)
 {
@@ -36,22 +143,33 @@ void LogDecision(const string component, const string message, const string fiel
    MqlDateTime tm; TimeToStruct(now, tm);
    string ymd = StringFormat("%04d%02d%02d", tm.year, tm.mon, tm.day);
    string path = StringFormat("%s/decisions_%s.csv", RPEA_LOGS_DIR, ymd);
-   FolderCreate(RPEA_LOGS_DIR);
-   int handle = FileOpen(path, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
-   if(handle == INVALID_HANDLE)
-      return;
-   if(FileSize(handle) == 0)
-      FileWrite(handle, "date,time,event,component,level,message,fields_json");
-   FileSeek(handle, 0, SEEK_END);
+
    string date = StringFormat("%04d-%02d-%02d", tm.year, tm.mon, tm.day);
    string time = StringFormat("%02d:%02d:%02d", tm.hour, tm.min, tm.sec);
    string row = date + "," + time + ",DECISION," + component + ",1," + message + "," + fields_json;
-   FileWrite(handle, row);
-   FileClose(handle);
+
+   if(g_decision_log_buffer.filename != path)
+   {
+      // New day or first use: flush old, reset
+      LegacyLog_FlushBuffer(g_decision_log_buffer, "date,time,event,component,level,message,fields_json");
+      g_decision_log_buffer.filename = path;
+      ArrayResize(g_decision_log_buffer.rows, 0);
+      g_decision_log_buffer.count = 0;
+   }
+
+   int idx = g_decision_log_buffer.count;
+   int capacity = ArraySize(g_decision_log_buffer.rows);
+   if(idx >= capacity)
+      ArrayResize(g_decision_log_buffer.rows, MathMax(capacity + 32, 64));
+   g_decision_log_buffer.rows[idx] = row;
+   g_decision_log_buffer.count++;
+
+   if(g_decision_log_buffer.count >= LEGACY_LOG_FLUSH_THRESHOLD)
+      LegacyLog_FlushBuffer(g_decision_log_buffer, "date,time,event,component,level,message,fields_json");
 }
 
 // -----------------------------------------------------------------------------
-// Task 14 Audit Logger
+// Task 14 Audit Logger (with security hardening)
 // -----------------------------------------------------------------------------
 
 #define AUDIT_LOGGER_HEADER "timestamp,intent_id,action_id,symbol,mode,requested_price,executed_price,requested_vol,filled_vol,remaining_vol,tickets[],retry_count,gate_open_risk,gate_pending_risk,gate_next_risk,room_today,room_overall,gate_pass,decision,confidence,efficiency,rho_est,est_value,hold_time,gating_reason,news_window_state"
@@ -107,7 +225,7 @@ void AuditLogger_Flush(const bool force);
 void AuditLogger_Shutdown();
 
 // -----------------------------------------------------------------------------
-// Internal helpers
+// Internal helpers (with security hardening)
 // -----------------------------------------------------------------------------
 
 string AuditLogger_NormalizePath(const string raw_path)
@@ -115,7 +233,11 @@ string AuditLogger_NormalizePath(const string raw_path)
    string path = raw_path;
    if(StringLen(path) == 0)
       path = RPEA_LOGS_DIR;
-   // Do not strip "Files/" prefix here; callers pass relative paths like "RPEA/...".
+   
+   // Security: Prevent directory traversal sequences
+   StringReplace(path, "..", "");
+   
+   // Do not strip "Files/" prefix here; callers pass relative paths like "RPEA/..."
    while(StringLen(path) > 0 && StringGetCharacter(path, StringLen(path) - 1) == '/')
       path = StringSubstr(path, 0, StringLen(path) - 1);
    if(StringLen(path) == 0)
@@ -155,12 +277,23 @@ void AuditLogger_EnsureCurrentFile()
      if(StringLen(g_audit_logger.current_filename) == 0)
         return;
      AuditLogger_EnsureFolders(g_audit_logger.base_path);
+     
+     // Open if exists, else create and write header
      int handle = FileOpen(g_audit_logger.current_filename, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI);
      if(handle == INVALID_HANDLE)
      {
         handle = FileOpen(g_audit_logger.current_filename, FILE_WRITE|FILE_TXT|FILE_ANSI);
         if(handle == INVALID_HANDLE)
+        {
+           // One-time warning for operational visibility
+           static bool s_audit_warned = false;
+           if(!s_audit_warned)
+           {
+              s_audit_warned = true;
+              PrintFormat("[AuditLogger] Failed to open %s; audit events may be lost", g_audit_logger.current_filename);
+           }
            return;
+        }
         // Write header as first line
         FileWrite(handle, AUDIT_LOGGER_HEADER);
         FileClose(handle);
@@ -246,6 +379,7 @@ void AuditLogger_BufferRow(const string row, const datetime timestamp)
         g_audit_logger.initialized = true;
      }
 
+   // Buffer capacity check and auto-resize
    if(g_audit_logger.buffer_capacity <= 0)
    {
       g_audit_logger.buffer_capacity = MathMax(1, DEFAULT_LogBufferSize);
@@ -325,6 +459,7 @@ void AuditLogger_Flush(const bool force)
 void AuditLogger_Shutdown()
 {
    AuditLogger_Flush(true);
+   LegacyLog_FlushAll(); // Flush legacy logs on shutdown
    g_audit_logger.enabled = false;
 }
 

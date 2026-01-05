@@ -38,9 +38,22 @@ input double RiskGateHeadroom           = 0.90;
 #define SelfHealRetryWindowSec 300
 #define SelfHealMaxAttempts    2
 #define ErrorAlertThrottleSec  60
+#define SpreadMultATR 0.005
 #define BreakerProtectiveExitBypass true
 #define NewsCSVPath            "Files/RPEA/news/calendar_high_impact.csv"
 #define NewsCSVMaxAgeHours     24
+#define StabilizationBars      3
+#define StabilizationTimeoutMin 15
+#define SpreadStabilizationPct 60.0
+#define VolatilityStabilizationPct 70.0
+#define StabilizationLookbackBars 60
+#define NewsCalendarLookbackHours 6
+#define NewsCalendarLookaheadHours 24
+#define NewsAccountMode        0
+#define MagicBase              990200
+#define MarginLevelCritical    50.0
+#define EnableMarginProtection true
+#define TradingEnabledDefault  true
 #define RPEA_ORDER_ENGINE_SKIP_RISK
 #define RPEA_ORDER_ENGINE_SKIP_EQUITY
 #define RPEA_ORDER_ENGINE_SKIP_SESSIONS
@@ -91,10 +104,31 @@ bool g_test_gate_force_fail = false;
 #include "test_order_engine_breakeven.mqh"
 // Pending expiry tests (Task 24)
 #include "test_order_engine_pending_expiry.mqh"
+// M4-Task02: Day tracking and Micro-Mode tests
+#include "test_day_tracking.mqh"
+#include "test_micro_mode.mqh"
+// M4-Task01: News Policy tests
+#include "test_news_policy.mqh"
+// M4-Task03: Kill-Switch and Protective Exit tests
+#include "test_killswitch.mqh"
+#include "test_protective_exits.mqh"
+// M4-Task04: Persistence Hardening tests
+#include "test_persistence_state.mqh"
+#include "test_persistence_recovery.mqh"
 
 // Forward declaration to ensure the breakeven suite is visible when compiling.
 bool TestBreakeven_RunAll();
 bool TestOrderEnginePendingExpiry_RunAll();
+// M4-Task02 forward declarations
+bool TestDayTracking_RunAll();
+bool TestMicroMode_RunAll();
+bool TestNewsPolicy_RunAll();
+// M4-Task03 forward declarations
+bool TestKillswitch_RunAll();
+bool TestProtectiveExits_RunAll();
+// M4-Task04 forward declarations
+bool TestPersistenceState_RunAll();
+bool TestPersistenceRecovery_RunAll();
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -385,6 +419,76 @@ void RunAllTests()
    g_test_reporter.RecordTest(suite24, "TestOrderEnginePendingExpiry_RunAll", task24_result,
                                task24_result ? "Pending expiry tests passed" : "Pending expiry tests failed");
    g_test_reporter.EndSuite(suite24);
+
+   // M4-Task02: Day Tracking Tests
+   Print("=================================================================");
+   Print("M4-Task02: Day Tracking Tests");
+   Print("=================================================================");
+   int suiteM4a = g_test_reporter.BeginSuite("M4Task02_Day_Tracking");
+   bool taskM4a_result = TestDayTracking_RunAll();
+   g_test_reporter.RecordTest(suiteM4a, "TestDayTracking_RunAll", taskM4a_result,
+                               taskM4a_result ? "Day tracking tests passed" : "Day tracking tests failed");
+   g_test_reporter.EndSuite(suiteM4a);
+
+   // M4-Task02: Micro-Mode Tests
+   Print("=================================================================");
+   Print("M4-Task02: Micro-Mode & Hard-Stop Tests");
+   Print("=================================================================");
+   int suiteM4b = g_test_reporter.BeginSuite("M4Task02_MicroMode_HardStop");
+   bool taskM4b_result = TestMicroMode_RunAll();
+   g_test_reporter.RecordTest(suiteM4b, "TestMicroMode_RunAll", taskM4b_result,
+                               taskM4b_result ? "Micro-Mode tests passed" : "Micro-Mode tests failed");
+   g_test_reporter.EndSuite(suiteM4b);
+
+   // M4-Task01: News Policy Tests
+   Print("=================================================================");
+   Print("M4-Task01: News Policy Tests");
+   Print("=================================================================");
+   int suiteM4c = g_test_reporter.BeginSuite("M4Task01_News_Policy");
+   bool taskM4c_result = TestNewsPolicy_RunAll();
+   g_test_reporter.RecordTest(suiteM4c, "TestNewsPolicy_RunAll", taskM4c_result,
+                               taskM4c_result ? "News Policy tests passed" : "News Policy tests failed");
+   g_test_reporter.EndSuite(suiteM4c);
+
+   // M4-Task03: Kill-Switch Tests
+   Print("=================================================================");
+   Print("M4-Task03: Kill-Switch Tests");
+   Print("=================================================================");
+   int suiteM4d = g_test_reporter.BeginSuite("M4Task03_KillSwitch");
+   bool taskM4d_result = TestKillswitch_RunAll();
+   g_test_reporter.RecordTest(suiteM4d, "TestKillswitch_RunAll", taskM4d_result,
+                               taskM4d_result ? "Kill-switch tests passed" : "Kill-switch tests failed");
+   g_test_reporter.EndSuite(suiteM4d);
+
+   // M4-Task03: Protective Exit Tests
+   Print("=================================================================");
+   Print("M4-Task03: Protective Exit Tests");
+   Print("=================================================================");
+   int suiteM4e = g_test_reporter.BeginSuite("M4Task03_Protective_Exits");
+   bool taskM4e_result = TestProtectiveExits_RunAll();
+   g_test_reporter.RecordTest(suiteM4e, "TestProtectiveExits_RunAll", taskM4e_result,
+                               taskM4e_result ? "Protective exit tests passed" : "Protective exit tests failed");
+   g_test_reporter.EndSuite(suiteM4e);
+
+   // M4-Task04: Persistence State Tests
+   Print("=================================================================");
+   Print("M4-Task04: Persistence State Tests");
+   Print("=================================================================");
+   int suiteM4f = g_test_reporter.BeginSuite("M4Task04_Persistence_State");
+   bool taskM4f_result = TestPersistenceState_RunAll();
+   g_test_reporter.RecordTest(suiteM4f, "TestPersistenceState_RunAll", taskM4f_result,
+                               taskM4f_result ? "Persistence state tests passed" : "Persistence state tests failed");
+   g_test_reporter.EndSuite(suiteM4f);
+
+   // M4-Task04: Persistence Recovery Tests
+   Print("=================================================================");
+   Print("M4-Task04: Persistence Recovery Tests");
+   Print("=================================================================");
+   int suiteM4g = g_test_reporter.BeginSuite("M4Task04_Persistence_Recovery");
+   bool taskM4g_result = TestPersistenceRecovery_RunAll();
+   g_test_reporter.RecordTest(suiteM4g, "TestPersistenceRecovery_RunAll", taskM4g_result,
+                               taskM4g_result ? "Persistence recovery tests passed" : "Persistence recovery tests failed");
+   g_test_reporter.EndSuite(suiteM4g);
 
    Print("Test execution complete.");
 }

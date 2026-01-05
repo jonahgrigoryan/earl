@@ -8,6 +8,10 @@
 #include <RPEA/queue.mqh>
 #include <RPEA/news.mqh>
 
+// Performance constants  
+#define BREAKEVEN_TRIGGER_R_MULTIPLE 0.5
+#define EPS_SL_CHANGE 1e-6
+
 // Order engine hooks provided elsewhere
 bool OrderEngine_GetIntentMetadata(const ulong ticket,
                                    string &out_intent_id,
@@ -54,16 +58,28 @@ inline bool Breakeven_ShouldTriggerFromState(const bool is_long,
 
      double gain = (is_long ? (current_price - entry_price)
                             : (entry_price - current_price));
-     return (gain >= 0.5 * baseline_r - 1e-6);
+     return (gain >= BREAKEVEN_TRIGGER_R_MULTIPLE * baseline_r - EPS_SL_CHANGE);
   }
 
 inline double Breakeven_ComputeSpreadPrice(const string symbol)
   {
      long spread_pts = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+     // Security: Clamp negative spread points
+     if(spread_pts < 0) spread_pts = 0;
+     
      double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
      double extra_pts = Config_GetBreakevenExtraPoints();
      if(!MathIsValidNumber(point) || point <= 0.0)
+     {
+        // Optional: Log once if point is invalid for diagnostic purposes
+        static bool s_point_warned = false;
+        if(!s_point_warned)
+        {
+           s_point_warned = true;
+           PrintFormat("[Breakeven] Warning: Point size invalid for %s, using zero spread buffer", symbol);
+        }
         return 0.0;
+     }
      return ((double)spread_pts + extra_pts) * point;
   }
 
@@ -81,6 +97,7 @@ inline double Breakeven_ComputeTargetSLFromState(const bool is_long,
                           : (entry_price - spread_price));
      }
 
+     // Monotonic SL tightening - never widen beyond current
      if(is_long)
         target = MathMax(target, current_sl);
      else
@@ -109,6 +126,14 @@ bool Breakeven_QueueDuringNews(const string symbol,
      string intent_id = "";
      string accept_key = "";
      OrderEngine_GetIntentMetadata((ulong)ticket, intent_id, accept_key);
+     
+     // Optional diagnostic if no intent metadata for improved observability
+     if(StringLen(intent_id) == 0 && StringLen(accept_key) == 0)
+     {
+        LogDecision("Breakeven", "INFO", 
+                   StringFormat("{\"ticket\":%I64d,\"reason\":\"no_intent_metadata\"}", ticket));
+     }
+     
      return Queue_Add(symbol,
                       ticket,
                       QA_SL_MODIFY,
@@ -121,7 +146,7 @@ bool Breakeven_QueueDuringNews(const string symbol,
   }
 
 //------------------------------------------------------------------------------
-// Internal helpers
+// Internal helpers (with performance improvements)
 //------------------------------------------------------------------------------
 
 int Breakeven_FindIndex(const long ticket)
@@ -152,6 +177,137 @@ void Breakeven_RemoveAt(const int index)
      g_be_count = MathMax(0, g_be_count - 1);
   }
 
+// Helper: Initialize state for position (extracted for readability)
+int Breakeven_EnsureStateForTicket(const ulong pos_ticket)
+  {
+     int idx = Breakeven_FindIndex((long)pos_ticket);
+     if(idx >= 0)
+        return idx;
+        
+     // Create new state
+     Breakeven_EnsureCapacity(g_be_count + 1);
+     idx = g_be_count++;
+     g_be_states[idx].ticket = (long)pos_ticket;
+     g_be_states[idx].entry_price = PositionGetDouble(POSITION_PRICE_OPEN);
+     g_be_states[idx].entry_sl = PositionGetDouble(POSITION_SL);
+     g_be_states[idx].baseline_r = MathAbs(g_be_states[idx].entry_price - g_be_states[idx].entry_sl);
+     g_be_states[idx].applied = false;
+     g_be_states[idx].updated_at = TimeCurrent();
+     return idx;
+  }
+
+// Helper: Apply breakeven if triggered (extracted for readability)
+bool Breakeven_MaybeApplyForState(const int idx)
+  {
+     if(idx < 0 || idx >= g_be_count)
+        return false;
+        
+     BreakevenState state = g_be_states[idx];
+     
+     // Skip if already applied - one-shot behavior
+     if(state.applied)
+     {
+        g_be_states[idx] = state;
+        return false;
+     }
+
+     // Recompute baseline if zero - handles case where SL set after entry
+     if(state.baseline_r <= 0.0)
+     {
+        state.baseline_r = MathAbs(state.entry_price - state.entry_sl);
+        if(state.baseline_r <= 0.0)
+        {
+           g_be_states[idx] = state;
+           return false; // Skip until SL appears
+        }
+     }
+
+     // Security: Refresh baseline if SL tightened to avoid artificial delays
+     double live_sl = PositionGetDouble(POSITION_SL);
+     if(state.entry_sl != live_sl)
+     {
+        double new_r = MathAbs(state.entry_price - live_sl);
+        if(new_r > 0.0 && new_r < state.baseline_r)
+        {
+           state.entry_sl = live_sl;
+           state.baseline_r = new_r;
+        }
+     }
+
+     string symbol = PositionGetString(POSITION_SYMBOL);
+     ENUM_POSITION_TYPE pos_type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+     double current_price = PositionGetDouble(POSITION_PRICE_CURRENT);
+     
+     // Check trigger condition - not at +0.5R yet
+     bool trigger = Breakeven_ShouldTriggerFromState(pos_type == POSITION_TYPE_BUY,
+                                                     state.entry_price,
+                                                     current_price,
+                                                     state.baseline_r);
+     if(!trigger)
+     {
+        g_be_states[idx] = state;
+        return false;
+     }
+
+     // Performance: Move expensive symbol queries after trigger check
+     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+     int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+     double spread_price = Breakeven_ComputeSpreadPrice(symbol);
+     double current_sl = PositionGetDouble(POSITION_SL);
+     double target_sl = Breakeven_ComputeTargetSLFromState(pos_type == POSITION_TYPE_BUY,
+                                                           state.entry_price,
+                                                           current_sl,
+                                                           spread_price,
+                                                           point,
+                                                           digits);
+     // No effective change needed
+     if(MathAbs(target_sl - current_sl) < EPS_SL_CHANGE)
+     {
+        g_be_states[idx] = state;
+        return false;
+     }
+
+     string context = StringFormat("{\"ticket\":%I64d,\"source\":\"breakeven\",\"spread\":%.5f,\"extra_pts\":%.2f}",
+                                   (long)state.ticket,
+                                   spread_price,
+                                   Config_GetBreakevenExtraPoints());
+
+     bool applied = false;
+     if(News_IsModifyBlocked(symbol))
+     {
+        long queued_id = 0;
+        applied = Breakeven_QueueDuringNews(symbol,
+                                            (long)state.ticket,
+                                            target_sl,
+                                            context,
+                                            queued_id);
+     }
+     else
+     {
+#ifdef RPEA_TEST_RUNNER
+        applied = Breakeven_Test_Modify(symbol,
+                                        (long)state.ticket,
+                                        target_sl,
+                                        0.0,
+                                        context);
+#else
+        applied = OrderEngine_RequestModifySLTP(symbol,
+                                                (long)state.ticket,
+                                                target_sl,
+                                                0.0,
+                                                context);
+#endif
+     }
+
+     if(applied)
+     {
+        state.applied = true;
+        state.updated_at = TimeCurrent();
+     }
+     g_be_states[idx] = state;
+     return applied;
+  }
+
 //------------------------------------------------------------------------------
 // Public API
 //------------------------------------------------------------------------------
@@ -164,6 +320,7 @@ void Breakeven_Init()
 
 void Breakeven_HandleOnTickOrTimer()
   {
+     // Process queue, then breakeven (+0.5R), then trailing (+1R) - ordering is deliberate
      const int total_positions = PositionsTotal();
      for(int pos_index = 0; pos_index < total_positions; pos_index++)
        {
@@ -171,103 +328,8 @@ void Breakeven_HandleOnTickOrTimer()
           if(pos_ticket == 0 || !PositionSelectByTicket(pos_ticket))
              continue;
 
-          int idx = Breakeven_FindIndex((long)pos_ticket);
-          if(idx < 0)
-          {
-             Breakeven_EnsureCapacity(g_be_count + 1);
-             idx = g_be_count++;
-             g_be_states[idx].ticket = (long)pos_ticket;
-             g_be_states[idx].entry_price = PositionGetDouble(POSITION_PRICE_OPEN);
-             g_be_states[idx].entry_sl = PositionGetDouble(POSITION_SL);
-             g_be_states[idx].baseline_r = MathAbs(g_be_states[idx].entry_price - g_be_states[idx].entry_sl);
-             g_be_states[idx].applied = false;
-             g_be_states[idx].updated_at = TimeCurrent();
-          }
-
-          BreakevenState state = g_be_states[idx];
-          if(state.applied)
-          {
-             g_be_states[idx] = state;
-             continue;
-          }
-
-          if(state.baseline_r <= 0.0)
-          {
-             state.baseline_r = MathAbs(state.entry_price - state.entry_sl);
-             if(state.baseline_r <= 0.0)
-             {
-                g_be_states[idx] = state;
-                continue;
-             }
-          }
-
-          string symbol = PositionGetString(POSITION_SYMBOL);
-          ENUM_POSITION_TYPE pos_type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-          double current_price = PositionGetDouble(POSITION_PRICE_CURRENT);
-          bool trigger = Breakeven_ShouldTriggerFromState(pos_type == POSITION_TYPE_BUY,
-                                                          state.entry_price,
-                                                          current_price,
-                                                          state.baseline_r);
-          if(!trigger)
-          {
-             g_be_states[idx] = state;
-             continue;
-          }
-
-          double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-          int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
-          double spread_price = Breakeven_ComputeSpreadPrice(symbol);
-          double current_sl = PositionGetDouble(POSITION_SL);
-          double target_sl = Breakeven_ComputeTargetSLFromState(pos_type == POSITION_TYPE_BUY,
-                                                                state.entry_price,
-                                                                current_sl,
-                                                                spread_price,
-                                                                point,
-                                                                digits);
-          if(MathAbs(target_sl - current_sl) < 1e-6)
-          {
-             g_be_states[idx] = state;
-             continue;
-          }
-
-          string context = StringFormat("{\"ticket\":%I64d,\"source\":\"breakeven\",\"spread\":%.5f,\"extra_pts\":%.2f}",
-                                        (long)pos_ticket,
-                                        spread_price,
-                                        Config_GetBreakevenExtraPoints());
-
-          bool applied = false;
-          if(News_IsBlocked(symbol))
-          {
-             long queued_id = 0;
-             applied = Breakeven_QueueDuringNews(symbol,
-                                                 (long)pos_ticket,
-                                                 target_sl,
-                                                 context,
-                                                 queued_id);
-          }
-          else
-          {
-#ifdef RPEA_TEST_RUNNER
-             applied = Breakeven_Test_Modify(symbol,
-                                             (long)pos_ticket,
-                                             target_sl,
-                                             0.0,
-                                             context);
-#else
-                applied = OrderEngine_RequestModifySLTP(symbol,
-                                                        (long)pos_ticket,
-                                                        target_sl,
-                                                        0.0,
-                                                        context);
-#endif
-          }
-
-          if(applied)
-          {
-             state.applied = true;
-             state.updated_at = TimeCurrent();
-          }
-          g_be_states[idx] = state;
+          int idx = Breakeven_EnsureStateForTicket(pos_ticket);
+          Breakeven_MaybeApplyForState(idx);
        }
   }
 
@@ -284,4 +346,3 @@ void Breakeven_Test_Reset()
   }
 
 #endif // RPEA_BREAKEVEN_MQH
-
