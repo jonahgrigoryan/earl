@@ -1,0 +1,2 @@
+timestamp_utc,symbol,impact,source,event,prebuffer_min,postbuffer_min
+2024-12-01T12:00:00Z,XAUUSD,HIGH,BLS,NFP (Archived),10,10

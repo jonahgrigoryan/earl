@@ -1,0 +1,4 @@
+timestamp_utc,symbol,impact,source,event,prebuffer_min,postbuffer_min
+2024-01-15T14:30:00Z,XAUUSD,High,ForexFactory,Non-Farm Payrolls,60,60
+2024-01-15T15:00:00Z,EURUSD,Medium,ForexFactory,ECB Press Conference,30,30
+2024-01-16T08:00:00Z,GBPUSD,High,NewsWire,UK CPI Release,45,45

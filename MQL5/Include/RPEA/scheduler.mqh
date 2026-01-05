@@ -34,7 +34,11 @@ void Scheduler_Tick(const AppContext& ctx)
          ind_snap.has_ohlc?"true":"false");
       LogDecision("Indicators", "SNAPSHOT", ind_note);
       bool news_blocked = News_IsBlocked(sym);
-      bool spread_ok = Liquidity_SpreadOK(sym);
+
+      // Task 22: ATR-based spread filtering with detailed output
+      double spread_val = 0.0;
+      double spread_thresh = 0.0;
+      bool spread_ok = Liquidity_SpreadOK(sym, spread_val, spread_thresh);
 
       // Session predicates (London/NY OR) and OR window
       bool in_london = Sessions_InLondon(ctx, sym);
@@ -42,9 +46,11 @@ void Scheduler_Tick(const AppContext& ctx)
       bool in_session = (in_london || in_ny) && !Sessions_CutoffReached(ctx, sym);
       bool in_or = Sessions_InORWindow(ctx, sym);
 
-      string note = StringFormat("{\"news\":%s,\"spread\":%s,\"in_session\":%s,\"in_or\":%s}",
+      string note = StringFormat("{\"news\":%s,\"spread_ok\":%s,\"spread\":%.5f,\"spread_thresh\":%.5f,\"in_session\":%s,\"in_or\":%s}",
                                  news_blocked?"true":"false",
                                  spread_ok?"true":"false",
+                                 spread_val,
+                                 spread_thresh,
                                  in_session?"true":"false",
                                  in_or?"true":"false");
 

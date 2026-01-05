@@ -10,6 +10,7 @@
 
 // Includes (explicit, no wildcards)
 #include <RPEA/config.mqh>
+#include <RPEA/app_context.mqh>
 #include <RPEA/state.mqh>
 #include <RPEA/timeutils.mqh>
 #include <RPEA/indicators.mqh>
@@ -35,8 +36,13 @@
 #include <RPEA/telemetry.mqh>
 // sessions.mqh and scheduler.mqh are included after AppContext is defined
 
+// order_engine.mqh defines a default CutoffHour macro for unit tests; undefine so we can expose an input
+#ifdef CutoffHour
+#undef CutoffHour
+#endif
+
 //+------------------------------------------------------------------+
-// Inputs (consolidated) — names and defaults per finalspec.md
+// Inputs (consolidated) – names and defaults per finalspec.md
 // Risk & governance
 input double DailyLossCapPct            = 4.0;
 input double OverallLossCapPct          = 6.0;
@@ -61,8 +67,26 @@ input double GivebackCapDayPct          = 0.50; // 0.25–0.50
 input int    NewsBufferS                = 300;
 input int    MaxSpreadPoints            = 40;
 input int    MaxSlippagePoints          = 10;
+input double SpreadMultATR              = 0.005; // Max spread as fraction of Daily ATR
 input int    MinHoldSeconds             = 120;
-input int    QueuedActionTTLMin         = 5;
+input int    QueueTTLMinutes           = DEFAULT_QueueTTLMinutes;
+input int    MaxQueueSize               = DEFAULT_MaxQueueSize;
+input bool   EnableQueuePrioritization  = DEFAULT_EnableQueuePrioritization;
+input bool   EnableDetailedLogging      = DEFAULT_EnableDetailedLogging;
+input int    LogBufferSize              = DEFAULT_LogBufferSize;
+input string AuditLogPath               = DEFAULT_AuditLogPath;
+input string NewsCSVPath                = DEFAULT_NewsCSVPath;
+input int    NewsCSVMaxAgeHours         = DEFAULT_NewsCSVMaxAgeHours;
+input int    BudgetGateLockMs           = 1000;
+input double RiskGateHeadroom           = 0.90;
+// Resilience / error handling
+input int    MaxConsecutiveFailures     = DEFAULT_MaxConsecutiveFailures;
+input int    FailureWindowSec           = DEFAULT_FailureWindowSec;
+input int    CircuitBreakerCooldownSec  = DEFAULT_CircuitBreakerCooldownSec;
+input int    SelfHealRetryWindowSec     = DEFAULT_SelfHealRetryWindowSec;
+input int    SelfHealMaxAttempts        = DEFAULT_SelfHealMaxAttempts;
+input int    ErrorAlertThrottleSec      = DEFAULT_ErrorAlertThrottleSec;
+input bool   BreakerProtectiveExitBypass = DEFAULT_BreakerProtectiveExitBypass;
 
 // Timezone
 input bool   UseServerMidnightBaseline  = true;
@@ -73,6 +97,12 @@ input string InpSymbols                 = "EURUSD;XAUUSD";
 input bool   UseXAUEURProxy             = true;
 input int    LeverageOverrideFX         = 50;   // 0 → use account
 input int    LeverageOverrideMetals     = 20;
+
+// Synthetic manager (Task 11 acceptance §Synthetic Manager Interface)
+input int    SyntheticBarCacheSize      = DEFAULT_SyntheticBarCacheSize;
+input bool   ForwardFillGaps            = DEFAULT_ForwardFillGaps;
+input int    MaxGapBars                 = DEFAULT_MaxGapBars;
+input int    QuoteMaxAgeMs              = DEFAULT_QuoteMaxAgeMs;
 
 // Targets & mechanics
 input double RtargetBC                  = 2.2;
@@ -92,7 +122,7 @@ input int    MaxPendingsPerSymbol       = 2;
 input double BWISC_ConfCut              = 0.70;
 input double MR_ConfCut                 = 0.80;
 input int    EMRT_FastThresholdPct      = 40;
-input double CorrelationFallbackRho     = 0.50;
+input double CorrelationFallbackRho     = 0.30;
 input double MR_RiskPct_Default         = 0.90;
 input int    MR_TimeStopMin             = 60;
 input int    MR_TimeStopMax             = 90;
@@ -109,32 +139,9 @@ input double QL_EpsilonTrain            = 0.10;
 input int    QL_TrainingEpisodes        = 10000;
 input int    QL_SimulationPaths         = 1000;
 
-//+------------------------------------------------------------------+
-// AppContext - runtime context for scheduler and modules
-struct AppContext
-{
-   datetime current_server_time;
-   string   symbols[];
-   int      symbols_count;
-   // session flags (updated by scheduler)
-   bool     session_london;
-   bool     session_newyork;
-   // baselines
-   double   initial_baseline;
-   double   baseline_today;
-   double   equity_snapshot;
-   // anchors for the current day
-   double   baseline_today_e0; // equity at midnight
-   double   baseline_today_b0; // balance at midnight
-   // governance flags
-   bool     trading_paused;
-   bool     permanently_disabled;
-   // persistence anchors
-   datetime server_midnight_ts;
-};
-
 // Global context
-static AppContext g_ctx;
+AppContext g_ctx;
+OrderEngine g_order_engine;
 
 // Now that AppContext is defined, include session and scheduler modules
 #include <RPEA/sessions.mqh>
@@ -157,6 +164,32 @@ int OnInit()
    g_ctx.session_newyork = false;
    g_ctx.trading_paused = false;
    g_ctx.permanently_disabled = false;
+   g_ctx.timer_last_check = 0;
+
+   bool has_xaueur = false;
+   for(int i = 0; i < g_ctx.symbols_count; i++)
+   {
+      if(StringCompare(g_ctx.symbols[i], "XAUEUR") == 0)
+      {
+         has_xaueur = true;
+         break;
+      }
+   }
+
+   if(has_xaueur)
+   {
+      if(!UseXAUEURProxy)
+      {
+         Print("[RPEA] ERROR: XAUEUR requires UseXAUEURProxy=true in proxy mode");
+         return(INIT_FAILED);
+      }
+      if(!SymbolSelect("XAUUSD", true) || !SymbolSelect("EURUSD", true))
+      {
+         Print("[RPEA] ERROR: XAUEUR requires XAUUSD and EURUSD symbols to be available");
+         return(INIT_FAILED);
+      }
+      Print("[RPEA] XAUEUR signal mapping enabled (XAUEUR -> XAUUSD proxy)");
+   }
 
    // 2) Load persisted challenge state
    Persistence_LoadChallengeState();
@@ -170,17 +203,37 @@ int OnInit()
    g_ctx.baseline_today_e0 = s.baseline_today_e0;
    g_ctx.baseline_today_b0 = s.baseline_today_b0;
 
-   // 4) Initialize indicators
-   Indicators_Init(g_ctx);
+    // 4) Initialize indicators
+    Indicators_Init(g_ctx);
+    g_synthetic_manager.Clear();
 
    // 5) Ensure folders/logs exist and write boot line
    Persistence_EnsureFolders();
    Persistence_EnsurePlaceholderFiles();
+   AuditLogger_Init(AuditLogPath, LogBufferSize, EnableDetailedLogging);
    // Load news CSV fallback if present
    News_LoadCsvFallback();
    LogAuditRow("BOOT", "RPEA", 1, "EA boot", "{}");
 
-   // 6) Initialize timer (30s)
+    // 6) Initialize Order Engine (M3 Task 1)
+    if(!g_order_engine.Init())
+    {
+       Print("[OrderEngine] Failed to initialize Order Engine");
+       return(INIT_FAILED);
+    }
+    g_order_engine.LoadSLEnforcementState();
+    if(!g_order_engine.ReconcileOnStartup())
+    {
+       Print("[OrderEngine] Failed to reconcile state on startup");
+       return(INIT_FAILED);
+    }
+
+    // 7) Restore queue/trailing state
+   OrderEngine_RestoreStateOnInit(QueueTTLMinutes,
+                                   MaxQueueSize,
+                                   EnableQueuePrioritization);
+
+   // 8) Initialize timer (30s)
    EventSetTimer(30);
 
    return(INIT_SUCCEEDED);
@@ -190,9 +243,14 @@ int OnInit()
 // OnDeinit: flush, stop timer, log shutdown
 void OnDeinit(const int reason)
 {
+    g_order_engine.OnShutdown();
+
+   g_synthetic_manager.Clear();
+
    EventKillTimer();
    Persistence_Flush();
    LogAuditRow("SHUTDOWN", "RPEA", 1, "EA deinit", "{}");
+   AuditLogger_Shutdown();
 }
 
 //+------------------------------------------------------------------+
@@ -202,7 +260,7 @@ void OnTimer()
    g_ctx.current_server_time = TimeCurrent();
 
    // Server-day rollover handling
-   static datetime last_check = 0;
+   datetime last_check = g_ctx.timer_last_check;
    if(TimeUtils_IsNewServerDay(last_check))
    {
       // compute anchors and reset baselines in persisted state
@@ -222,9 +280,22 @@ void OnTimer()
 
       // Day-count handled in OnTradeTransaction on first DEAL_ENTRY_IN (per spec)
    }
-   last_check = g_ctx.current_server_time;
+   g_ctx.timer_last_check = g_ctx.current_server_time;
 
-   // Refresh indicators per symbol (lightweight in M1)
+    // Refresh indicators per symbol (lightweight in M1)
+    int synth_idx = Indicators_FindSlot(SYNTH_SYMBOL_XAUEUR);
+    if(synth_idx >= 0)
+    {
+       SyntheticBar warmup[];
+        const int daily_required = 15;
+        const int hourly_required = 40;
+        if(!g_synthetic_manager.GetCachedBars(SYNTH_SYMBOL_XAUEUR, PERIOD_D1, warmup, daily_required))
+           g_synthetic_manager.BuildSyntheticBars(SYNTH_SYMBOL_XAUEUR, PERIOD_D1, daily_required);
+        ArrayResize(warmup, 0);
+        if(!g_synthetic_manager.GetCachedBars(SYNTH_SYMBOL_XAUEUR, PERIOD_H1, warmup, hourly_required))
+           g_synthetic_manager.BuildSyntheticBars(SYNTH_SYMBOL_XAUEUR, PERIOD_H1, hourly_required);
+    }
+
    for(int i=0;i<g_ctx.symbols_count;i++)
    {
       string sym = g_ctx.symbols[i];
@@ -232,16 +303,35 @@ void OnTimer()
       Indicators_Refresh(g_ctx, sym);
    }
 
+    // M3 Task 1: Order Engine timer tick (AFTER transaction processing)
+    g_order_engine.OnTimerTick(g_ctx.current_server_time);
+
+    // Task 12/13 queue + trailing processing
+    OrderEngine_ProcessQueueAndTrailing();
+
+   // Master SL enforcement tracking
+   g_order_engine.CheckPendingSLEnforcement();
+
    // Delegate to scheduler (logging-only in M1)
    Scheduler_Tick(g_ctx);
 }
 
 //+------------------------------------------------------------------+
-// OnTradeTransaction: forward to OrderEngine hook (no-op now)
+// OnTick: lightweight price monitoring and validation
+void OnTick()
+{
+   g_order_engine.OnTick();
+}
+
+//+------------------------------------------------------------------+
+// OnTradeTransaction: CRITICAL - Process fills immediately before timer
 void OnTradeTransaction(const MqlTradeTransaction& trans,
                         const MqlTradeRequest& request,
                         const MqlTradeResult& result)
 {
+   // M3 Task 1: Process transaction BEFORE any timer housekeeping
+   OrderEngine_OnTradeTxn(trans, request, result);
+
    // Count trading day on first DEAL_ENTRY_IN of the server day
    if(trans.type == TRADE_TRANSACTION_DEAL_ADD && trans.deal > 0)
    {
@@ -251,6 +341,4 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
          State_MarkTradeDayOnce();
       }
    }
-   // Keep existing order engine hook
-   OrderEngine_OnTradeTxn(trans, request, result);
 }
