@@ -307,6 +307,24 @@ Measure-Command { .\compile-and-test.ps1 }
 - no candidates after min_trades filter (reduce min_trades or shorten window)
 - missing .set in profile when copy_sets=false
 
+## 📄 Audit + Backtest Reporting (M5 Task03)
+
+```powershell
+# Analyze a single MT5 report against FundingPips criteria
+.\analyze_backtest.ps1 -ReportPath "C:\Path\to\report.xml"
+
+# Generate combined audit/backtest summary CSV
+.\generate_audit_report.ps1 -ReportPath "C:\Path\to\report.xml"
+
+# Use MT5 profile auto-detect + latest report
+.\generate_audit_report.ps1
+```
+
+### Output
+
+- Template header: `Files/RPEA/reports/audit_report_template.csv`
+- Summary CSV: `Files/RPEA/reports/audit_report.csv`
+
 ## 📞 Support
 
 **Issues?** Check:
