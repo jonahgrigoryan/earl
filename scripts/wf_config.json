@@ -1,0 +1,45 @@
+{
+  "mt5_path": "C:\\Program Files\\MetaTrader 5",
+  "profile_base": "",
+  "run_id": "",
+  "symbols": [
+    "EURUSD",
+    "XAUUSD"
+  ],
+  "symbol_overrides": {
+    "XAUUSD": {
+      "optimize_ini": "Tests\\RPEA\\RPEA_10k_metals.ini",
+      "single_ini": "Tests\\RPEA\\RPEA_10k_single.ini",
+      "leverage": 20
+    }
+  },
+  "period": "M1",
+  "start_date": "2024-07-01",
+  "end_date": "2024-12-31",
+  "in_sample_months": 3,
+  "out_sample_weeks": 2,
+  "optimize_ini": "Tests\\RPEA\\RPEA_10k_tester.ini",
+  "single_ini": "Tests\\RPEA\\RPEA_10k_single.ini",
+  "quick_ini": "Tests\\RPEA\\RPEA_10k_quick.ini",
+  "default_set": "Tests\\RPEA\\RPEA_10k_default.set",
+  "optimize_set": "Tests\\RPEA\\RPEA_10k_optimize.set",
+  "news_csv": "Files\\RPEA\\news\\calendar_high_impact.csv",
+  "output_csv": "Files\\RPEA\\reports\\wf_results.csv",
+  "config_output_dir": "",
+  "allow_profile_write": true,
+  "copy_sets": true,
+  "copy_news": true,
+  "min_trades": 10,
+  "max_candidates": 5,
+  "max_passing_candidates": 1,
+  "stop_when_passes": true,
+  "optimization_metric": "",
+  "optimization_metric_order": "",
+  "target_profit": 1000.0,
+  "min_trade_days": 3,
+  "max_daily_loss_pct": 4.0,
+  "max_overall_loss_pct": 6.0,
+  "starting_balance": 10000,
+  "terminal_timeout_seconds": 14400,
+  "use_quick_model": false
+}
