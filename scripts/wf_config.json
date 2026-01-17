@@ -41,5 +41,5 @@
   "max_overall_loss_pct": 6.0,
   "starting_balance": 10000,
   "terminal_timeout_seconds": 14400,
-  "use_quick_model": false
+  "use_quick_model": true
 }
