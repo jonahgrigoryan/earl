@@ -10,6 +10,7 @@
 - Task execution: each `taskXX.md` (e.g., `task21.md`–`task24.md`) provides atomic steps—implement logic, add/extend tests, wire into `Tests/RPEA/run_automated_tests_ea.mq5`, update docs/fixtures. Use `m3_structure.md` and `.kiro/specs/rpea-m3/{tasks.md, design.md, requirements.md}` for context.
 - Branching: work on per-task branches (`feat/m3-task23`, `feat/m3-task24`, etc.), merge into the phase aggregator, then into `feat/m3-order-engine`. Avoid outdated branch examples.
 - Upcoming milestone: M4 (compliance polish per `finalspec.md` / `prd.md`—calendar integration, CEST day tracking, min trade days, kill-switch floors, disable flags, persistence hardening). Use the M4 naming pattern below when starting new work.
+- Upcoming milestone: M5 (Strategy Tester artifacts per `finalspec.md`—.set presets, optimization ranges, walk-forward scripts, CSV audit/reporting). Use the M5 naming pattern below.
 
 ## Build, Test, and Development Commands
 - `MetaEditor64.exe /compile:MQL5\Experts\FundingPips\RPEA.mq5 /log:MQL5\Experts\FundingPips\compile_rpea.log` — compile the EA and produce a compile log.
@@ -28,8 +29,8 @@
 - Always rerun `powershell -ExecutionPolicy Bypass -File run_tests.ps1` before submitting; include the updated JSON or key log excerpts when relevant. The runner includes Phase 5 suites (breakeven, pending expiry) by default.
 
 ## Commit & Pull Request Guidelines
-- Preferred messages mirror `M3: Task <id> — summary` or concise imperatives aligned with the workstream.
-- Develop on task/phase branches (e.g., `feat/m3-task24` → `feat/m3-phase5-optimization` → `feat/m3-order-engine`). For M4 compliance polish, use `feat/m4-taskXX` → optional `feat/m4-phaseY` → base `feat/m4-compliance-polish` (or the current M4 base branch).
+- Preferred messages mirror `M3: Task <id> — summary`, `M4: Task <id> — summary`, or `M5: Task <id> — summary`, or use concise imperatives aligned with the workstream.
+- Develop on task/phase branches (e.g., `feat/m3-task24` → `feat/m3-phase5-optimization` → `feat/m3-order-engine`). For M4 compliance polish, use `feat/m4-taskXX` → optional `feat/m4-phaseY` → base `feat/m4-compliance-polish` (or the current M4 base branch). For M5 Strategy Tester artifacts, use `feat/m5-taskXX` → base `feat/m5-strategy-tester`.
 - Pull requests should summarize scope, link supporting docs (e.g., `task10.md`), and attach the latest automated test outcome or relevant compile logs.
 
 ## Agent-Specific Notes
