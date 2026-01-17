@@ -1046,6 +1046,11 @@ foreach ($symbol in $symbolList) {
             ExpertParameters = $optSetName
             Report = (Join-Path "Tester\\reports" $optReportName)
         }
+        if ($useQuickModel) {
+            # Speed up optimization runs while keeping OOS tests on Model=4
+            $optUpdates["Optimization"] = 1
+            $optUpdates["Model"] = 1
+        }
         if ($optLeverage) {
             $optUpdates["Leverage"] = $optLeverage
         }
