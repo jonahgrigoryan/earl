@@ -61,6 +61,8 @@ struct NewsStabilizationState
       spread_p60 = 0.0;
       vol_p70 = 0.0;
       last_bar_time = 0;
+      history_count = 0;
+      history_index = 0;
    }
 };
 
@@ -612,6 +614,7 @@ void News_UpdateStabilizationThresholds(const int idx)
 
 void News_RecordM1Metrics(const int idx, const string symbol, const datetime bar_time)
 {
+    if(StabilizationLookbackBars <= 0) return;
     // M1 Spread = SYMBOL_SPREAD (int points) * POINT
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     double spread_raw = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
@@ -629,6 +632,9 @@ void News_RecordM1Metrics(const int idx, const string symbol, const datetime bar
         ArrayResize(g_news_stab_state[idx].vol_history, StabilizationLookbackBars);
     }
 
+    if(g_news_stab_state[idx].history_index < 0 || g_news_stab_state[idx].history_index >= StabilizationLookbackBars) {
+        g_news_stab_state[idx].history_index = 0;
+    }
     g_news_stab_state[idx].spread_history[g_news_stab_state[idx].history_index] = spread;
     g_news_stab_state[idx].vol_history[g_news_stab_state[idx].history_index] = vol;
     g_news_stab_state[idx].history_index = (g_news_stab_state[idx].history_index + 1) % StabilizationLookbackBars;

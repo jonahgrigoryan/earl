@@ -1,0 +1,112 @@
+; ============================================================
+; RPEA_10k_default.set - Default parameters for $10k challenge
+; Source: MQL5/Experts/FundingPips/RPEA.mq5 inputs
+; ============================================================
+
+; Risk & governance
+DailyLossCapPct=4.0
+OverallLossCapPct=6.0
+MinTradeDaysRequired=3
+TradingEnabledDefault=1
+MarginLevelCritical=50.0
+EnableMarginProtection=1
+MinRiskDollar=10.0
+OneAndDoneR=1.5
+NYGatePctOfDailyCap=0.50
+
+; Sessions & micro-mode
+UseLondonOnly=0
+StartHourLO=7
+StartHourNY=12
+ORMinutes=60
+CutoffHour=16
+RiskPct=1.5
+MicroRiskPct=0.10
+MicroTimeStopMin=45
+GivebackCapDayPct=0.50
+TargetProfitPct=10.0
+
+; Compliance
+NewsBufferS=300
+MaxSpreadPoints=40
+MaxSlippagePoints=10
+SpreadMultATR=0.005
+MinHoldSeconds=120
+QueueTTLMinutes=5
+MaxQueueSize=1000
+EnableQueuePrioritization=1
+EnableDetailedLogging=1
+LogBufferSize=1000
+AuditLogPath=RPEA/logs/
+NewsCSVPath=RPEA/news/calendar_high_impact.csv
+NewsCSVMaxAgeHours=24
+BudgetGateLockMs=1000
+RiskGateHeadroom=0.90
+StabilizationBars=3
+StabilizationTimeoutMin=15
+SpreadStabilizationPct=60.0
+VolatilityStabilizationPct=70.0
+StabilizationLookbackBars=60
+NewsCalendarLookbackHours=6
+NewsCalendarLookaheadHours=24
+NewsAccountMode=0
+
+; Resilience / error handling
+MaxConsecutiveFailures=3
+FailureWindowSec=900
+CircuitBreakerCooldownSec=120
+SelfHealRetryWindowSec=300
+SelfHealMaxAttempts=2
+ErrorAlertThrottleSec=60
+BreakerProtectiveExitBypass=1
+
+; Timezone
+UseServerMidnightBaseline=1
+ServerToCEST_OffsetMinutes=0
+
+; Symbols & leverage
+InpSymbols=EURUSD;XAUUSD
+UseXAUEURProxy=1
+LeverageOverrideFX=50
+LeverageOverrideMetals=20
+
+; Synthetic manager
+SyntheticBarCacheSize=1000
+ForwardFillGaps=1
+MaxGapBars=5
+QuoteMaxAgeMs=5000
+
+; Targets & mechanics
+RtargetBC=2.2
+RtargetMSC=2.0
+SLmult=1.0
+TrailMult=0.8
+EntryBufferPoints=3
+MinStopPoints=1
+MagicBase=990200
+
+; Position / order caps
+MaxOpenPositionsTotal=2
+MaxOpenPerSymbol=1
+MaxPendingsPerSymbol=2
+
+; MR/Ensemble inputs
+BWISC_ConfCut=0.70
+MR_ConfCut=0.80
+EMRT_FastThresholdPct=40
+CorrelationFallbackRho=0.30
+MR_RiskPct_Default=0.90
+MR_TimeStopMin=60
+MR_TimeStopMax=90
+MR_LongOnly=0
+EMRT_ExtremeThresholdMult=2.0
+EMRT_VarCapMult=2.5
+EMRT_BetaGridMin=-2.0
+EMRT_BetaGridMax=2.0
+
+; Q-Learning training parameters
+QL_LearningRate=0.10
+QL_DiscountFactor=0.99
+QL_EpsilonTrain=0.10
+QL_TrainingEpisodes=10000
+QL_SimulationPaths=1000
