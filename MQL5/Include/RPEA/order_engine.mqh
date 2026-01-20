@@ -28,6 +28,16 @@
 static bool   g_order_engine_global_lock = false;
 static string g_order_engine_lock_reason = "";
 
+// M6-Task03: Test override for broker recovery state.
+struct OERecoveryBrokerOverrideState
+{
+   bool  active;
+   ulong positions[];
+   ulong pendings[];
+};
+
+static OERecoveryBrokerOverrideState g_oe_recovery_override;
+
 #ifndef CutoffHour
 // Default NY cutoff hour used when running in unit-test harness without input bindings
 #define CutoffHour 17
@@ -2373,19 +2383,22 @@ public:
    
    bool ReconcileOnStartup()
    {
-      LogOE("ReconcileOnStartup: Starting state reconciliation");
+      PrintFormat("[Recovery] Starting state reconciliation");
       if(m_recovery_completed)
       {
-         LogOE("ReconcileOnStartup: Recovery already completed");
+         PrintFormat("[Recovery] SKIP: Recovery already completed at %s - idempotent no-op",
+                     TimeToString(m_recovery_timestamp, TIME_DATE|TIME_SECONDS));
          return true;
       }
 
       PersistenceRecoveredState recovered;
       if(!Persistence_LoadRecoveredState(recovered))
       {
-         LogOE("ReconcileOnStartup: Failed to load recovered state");
+         PrintFormat("[Recovery] FAIL: Unable to load persisted state");
          return false;
       }
+      PrintFormat("[Recovery] Loaded %d intents, %d queued actions from persistence",
+                  recovered.intents_count, recovered.queued_count);
 
       ArrayResize(m_recovered_intents, recovered.intents_count);
       for(int i = 0; i < recovered.intents_count; ++i)
@@ -2417,42 +2430,70 @@ public:
          SetExecutionLock(true);
 
       ulong position_tickets[];
-      int positions_total = PositionsTotal();
-      ArrayResize(position_tickets, positions_total);
       int position_count = 0;
-      for(int i = 0; i < positions_total; ++i)
+#ifdef RPEA_TEST_RUNNER
+      if(g_oe_recovery_override.active)
       {
-         ulong ticket = PositionGetTicket(i);
-         if(ticket > 0)
-            position_tickets[position_count++] = ticket;
+         position_count = ArraySize(g_oe_recovery_override.positions);
+         ArrayResize(position_tickets, position_count);
+         for(int i = 0; i < position_count; ++i)
+            position_tickets[i] = g_oe_recovery_override.positions[i];
       }
-      ArrayResize(position_tickets, position_count);
-      ulong pending_tickets[];
-      int orders_total = OrdersTotal();
-      ArrayResize(pending_tickets, orders_total);
-      int pending_count = 0;
-      for(int i = 0; i < orders_total; ++i)
+      else
+#endif
       {
-         ulong order_ticket = OrderGetTicket(i);
-         if(order_ticket == 0)
-            continue;
-         if(!OrderSelect(order_ticket))
-            continue;
-         ENUM_ORDER_TYPE order_type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
-         if(order_type == ORDER_TYPE_BUY || order_type == ORDER_TYPE_SELL)
-            continue;
-         pending_tickets[pending_count++] = order_ticket;
+         int positions_total = PositionsTotal();
+         ArrayResize(position_tickets, positions_total);
+         for(int i = 0; i < positions_total; ++i)
+         {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket > 0)
+               position_tickets[position_count++] = ticket;
+         }
+         ArrayResize(position_tickets, position_count);
       }
-      ArrayResize(pending_tickets, pending_count);
 
+      ulong pending_tickets[];
+      int pending_count = 0;
+#ifdef RPEA_TEST_RUNNER
+      if(g_oe_recovery_override.active)
+      {
+         pending_count = ArraySize(g_oe_recovery_override.pendings);
+         ArrayResize(pending_tickets, pending_count);
+         for(int i = 0; i < pending_count; ++i)
+            pending_tickets[i] = g_oe_recovery_override.pendings[i];
+      }
+      else
+#endif
+      {
+         int orders_total = OrdersTotal();
+         ArrayResize(pending_tickets, orders_total);
+         for(int i = 0; i < orders_total; ++i)
+         {
+            ulong order_ticket = OrderGetTicket(i);
+            if(order_ticket == 0)
+               continue;
+            if(!OrderSelect(order_ticket))
+               continue;
+            ENUM_ORDER_TYPE order_type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+            if(order_type == ORDER_TYPE_BUY || order_type == ORDER_TYPE_SELL)
+               continue;
+            pending_tickets[pending_count++] = order_ticket;
+         }
+         ArrayResize(pending_tickets, pending_count);
+      }
+
+      // M6-Task03: Reconcile intents with broker state, log detection and decisions
       int intents_marked_closed = 0;
       int intents_marked_cancelled = 0;
+      int intents_already_active = 0;
       for(int i = 0; i < ArraySize(m_intent_journal.intents); ++i)
       {
          OrderIntent intent = m_intent_journal.intents[i];
          if(ArraySize(intent.executed_tickets) > 0)
          {
             bool ticket_active = false;
+            ulong active_ticket = 0;
             for(int j = 0; j < ArraySize(intent.executed_tickets) && !ticket_active; ++j)
             {
                for(int k = 0; k < position_count; ++k)
@@ -2460,12 +2501,28 @@ public:
                   if(position_tickets[k] == intent.executed_tickets[j])
                   {
                      ticket_active = true;
+                     active_ticket = intent.executed_tickets[j];
                      break;
                   }
                }
             }
-            if(!ticket_active && (intent.status == "PENDING" || intent.status == "EXECUTED"))
+            if(ticket_active)
             {
+               // M6-Task03: Intent already has active position on broker - no duplicate order needed
+               PrintFormat("[Recovery] SKIP intent=%s: ticket %llu already active on broker - no resend",
+                           intent.intent_id, active_ticket);
+               intents_already_active++;
+               if(intent.status == "PENDING")
+               {
+                  intent.status = "EXECUTED";
+                  PrintFormat("[Recovery] MARK_EXECUTED intent=%s: active position on broker",
+                              intent.intent_id);
+               }
+            }
+            else if(!ticket_active && (intent.status == "PENDING" || intent.status == "EXECUTED"))
+            {
+               PrintFormat("[Recovery] MARK_CLOSED intent=%s: executed_tickets no longer active",
+                           intent.intent_id);
                intent.status = "CLOSED";
                intents_marked_closed++;
             }
@@ -2486,6 +2543,8 @@ public:
             }
             if(!order_active)
             {
+               PrintFormat("[Recovery] MARK_CANCELLED intent=%s: pending order no longer exists",
+                           intent.intent_id);
                intent.status = "CANCELLED";
                intents_marked_cancelled++;
             }
@@ -2493,6 +2552,7 @@ public:
          m_intent_journal.intents[i] = intent;
       }
 
+      // M6-Task03: Attach orphan broker positions without matching intents
       int orphans_attached = 0;
       int pending_orphans_attached = 0;
       for(int i = 0; i < position_count; ++i)
@@ -2500,7 +2560,11 @@ public:
          ulong ticket = position_tickets[i];
          OrderIntent existing;
          if(MatchIntentByTicket(ticket, existing))
+         {
+            PrintFormat("[Recovery] SKIP orphan check: ticket %llu already matched to intent=%s",
+                        ticket, existing.intent_id);
             continue;
+         }
          if(!PositionSelectByTicket(ticket))
             continue;
          OrderIntent orphan;
@@ -2530,14 +2594,21 @@ public:
          int idx = ArraySize(m_intent_journal.intents);
          ArrayResize(m_intent_journal.intents, idx + 1);
          m_intent_journal.intents[idx] = orphan;
+         PrintFormat("[Recovery] ATTACH orphan position: ticket=%llu symbol=%s intent_id=%s",
+                     ticket, orphan.symbol, orphan.intent_id);
          orphans_attached++;
       }
+      // M6-Task03: Attach orphan pending orders without matching intents
       for(int i = 0; i < pending_count; ++i)
       {
          ulong ticket = pending_tickets[i];
          OrderIntent existing;
          if(MatchIntentByTicket(ticket, existing))
+         {
+            PrintFormat("[Recovery] SKIP pending orphan check: ticket %llu already matched to intent=%s",
+                        ticket, existing.intent_id);
             continue;
+         }
          if(!OrderSelect(ticket))
             continue;
          OrderIntent orphan;
@@ -2565,27 +2636,53 @@ public:
          int idx = ArraySize(m_intent_journal.intents);
          ArrayResize(m_intent_journal.intents, idx + 1);
          m_intent_journal.intents[idx] = orphan;
+         PrintFormat("[Recovery] ATTACH orphan pending: ticket=%llu symbol=%s intent_id=%s",
+                     ticket, orphan.symbol, orphan.intent_id);
          pending_orphans_attached++;
       }
 
+      // M6-Task03: Reconcile queued actions with idempotency checks
       int new_action_count = 0;
+      int actions_dropped_intent = 0;
+      int actions_dropped_expired = 0;
+      int actions_dropped_ticket = 0;
       for(int i = 0; i < ArraySize(m_intent_journal.queued_actions); ++i)
       {
          PersistedQueuedAction action = m_intent_journal.queued_actions[i];
          bool keep = true;
+         string drop_reason = "";
          if(StringLen(action.intent_id) > 0 && FindIntentIndexById(action.intent_id) < 0)
+         {
             keep = false;
+            drop_reason = "intent_missing";
+            actions_dropped_intent++;
+         }
          if(keep && action.expires_time > 0 && action.expires_time < now)
+         {
             keep = false;
+            drop_reason = "expired";
+            actions_dropped_expired++;
+         }
          if(keep && action.ticket > 0)
          {
             if(!PositionSelectByTicket(action.ticket) &&
                !OrderSelect((ulong)action.ticket))
+            {
                keep = false;
+               drop_reason = "ticket_gone";
+               actions_dropped_ticket++;
+            }
          }
          if(keep)
          {
+            PrintFormat("[Recovery] KEEP action=%s ticket=%llu - will replay",
+                        action.action_id, action.ticket);
             m_intent_journal.queued_actions[new_action_count++] = action;
+         }
+         else
+         {
+            PrintFormat("[Recovery] DROP action=%s ticket=%llu reason=%s - skip replay",
+                        action.action_id, action.ticket, drop_reason);
          }
       }
       ArrayResize(m_intent_journal.queued_actions, new_action_count);
@@ -2617,25 +2714,29 @@ public:
       m_recovery_completed = true;
       m_recovery_timestamp = TimeCurrent();
 
-      LogOE(StringFormat("ReconcileOnStartup: intents_total=%d loaded=%d dropped=%d actions_total=%d loaded=%d dropped=%d position_orphans=%d pending_orphans=%d closed=%d cancelled=%d corrupt=%d",
-                         recovered.summary.intents_total,
-                         recovered.summary.intents_loaded,
-                         recovered.summary.intents_dropped,
-                         recovered.summary.actions_total,
-                         recovered.summary.actions_loaded,
-                         recovered.summary.actions_dropped,
-                         orphans_attached,
-                         pending_orphans_attached,
-                         intents_marked_closed,
-                         intents_marked_cancelled,
-                         recovered.summary.corrupt_entries));
+      // M6-Task03: Final recovery summary with [Recovery] prefix
+      PrintFormat("[Recovery] COMPLETE: intents_loaded=%d intents_active=%d intents_closed=%d intents_cancelled=%d",
+                  recovered.summary.intents_loaded,
+                  intents_already_active,
+                  intents_marked_closed,
+                  intents_marked_cancelled);
+      PrintFormat("[Recovery] COMPLETE: actions_kept=%d actions_dropped(intent=%d,expired=%d,ticket=%d)",
+                  new_action_count,
+                  actions_dropped_intent,
+                  actions_dropped_expired,
+                  actions_dropped_ticket);
+      PrintFormat("[Recovery] COMPLETE: orphans_position=%d orphans_pending=%d corrupt=%d",
+                  orphans_attached,
+                  pending_orphans_attached,
+                  recovered.summary.corrupt_entries);
       
       // M4-Task04: Log structured recovery summary for audit
       LogAuditRow("INTENT_RECOVERY_SUMMARY", "OrderEngine", LOG_INFO, "reconcile",
-                  StringFormat("{\"intents_total\":%d,\"intents_loaded\":%d,\"intents_dropped\":%d,\"actions_total\":%d,\"actions_loaded\":%d,\"actions_dropped\":%d,\"corrupt\":%d}",
+                  StringFormat("{\"intents_total\":%d,\"intents_loaded\":%d,\"intents_dropped\":%d,\"intents_active\":%d,\"actions_total\":%d,\"actions_loaded\":%d,\"actions_dropped\":%d,\"corrupt\":%d}",
                                recovered.summary.intents_total,
                                recovered.summary.intents_loaded,
                                recovered.summary.intents_dropped,
+                               intents_already_active,
                                recovered.summary.actions_total,
                                recovered.summary.actions_loaded,
                                recovered.summary.actions_dropped,
@@ -4927,6 +5028,29 @@ void OE_Test_ClearPriceOverride()
    g_oe_norm_overrides.price_stops_level = 0;
 }
 
+// M6-Task03: Recovery broker state override helpers (tests only)
+void OE_Test_SetRecoveryBrokerState(const ulong &positions[],
+                                    const ulong &pendings[])
+{
+   g_oe_recovery_override.active = true;
+   int position_count = ArraySize(positions);
+   ArrayResize(g_oe_recovery_override.positions, position_count);
+   for(int i = 0; i < position_count; ++i)
+      g_oe_recovery_override.positions[i] = positions[i];
+
+   int pending_count = ArraySize(pendings);
+   ArrayResize(g_oe_recovery_override.pendings, pending_count);
+   for(int i = 0; i < pending_count; ++i)
+      g_oe_recovery_override.pendings[i] = pendings[i];
+}
+
+void OE_Test_ClearRecoveryBrokerState()
+{
+   g_oe_recovery_override.active = false;
+   ArrayResize(g_oe_recovery_override.positions, 0);
+   ArrayResize(g_oe_recovery_override.pendings, 0);
+}
+
 void OE_Test_ClearOverrides()
 {
    OE_Test_ClearVolumeOverride();
@@ -4935,6 +5059,7 @@ void OE_Test_ClearOverrides()
    OE_Test_ClearRiskOverride();
    OE_Test_ClearOrderSendOverride();
    OE_Test_ResetRetryDelayCapture();
+   OE_Test_ClearRecoveryBrokerState();
 }
 
 void OE_Test_ResetIntentJournal()
