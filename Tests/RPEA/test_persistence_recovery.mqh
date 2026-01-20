@@ -28,6 +28,109 @@ extern string g_current_test;
    }
 #endif
 
+#ifndef ASSERT_EQUALS
+#define ASSERT_EQUALS(expected, actual, msg) \
+   do { \
+      if((expected) == (actual)) { \
+         g_test_passed++; \
+      } else { \
+         PrintFormat("[FAIL] %s: %s (expected=%d, actual=%d)", g_current_test, msg, (int)(expected), (int)(actual)); \
+         g_test_failed++; \
+      } \
+   } while(false)
+#endif
+
+//------------------------------------------------------------------------------
+// Helpers for recovery journal tests
+//------------------------------------------------------------------------------
+
+void PersistenceRecovery_WriteJournal(const string payload)
+{
+   Persistence_EnsureFolders();
+   Persistence_WriteWholeFile(FILE_INTENTS, payload);
+}
+
+string PersistenceRecovery_IntentJson(const string id)
+{
+   datetime now = TimeCurrent();
+   string now_iso = Persistence_FormatIso8601(now);
+   string expiry_iso = Persistence_FormatIso8601(now + 3600);
+
+   string json = "{";
+   json += "\"intent_id\":\"" + id + "\",";
+   json += "\"accept_once_key\":\"" + id + "\",";
+   json += "\"timestamp\":\"" + now_iso + "\",";
+   json += "\"symbol\":\"XAUUSD\",";
+   json += "\"signal_symbol\":\"XAUUSD\",";
+   json += "\"order_type\":\"ORDER_TYPE_BUY\",";
+   json += "\"volume\":0.10,";
+   json += "\"price\":1900.0,";
+   json += "\"sl\":1895.0,";
+   json += "\"tp\":1905.0,";
+   json += "\"expiry\":\"" + expiry_iso + "\",";
+   json += "\"status\":\"PENDING\",";
+   json += "\"execution_mode\":\"DIRECT\",";
+   json += "\"is_proxy\":false,";
+   json += "\"proxy_rate\":1.0,";
+   json += "\"proxy_context\":\"\",";
+   json += "\"oco_sibling_id\":\"\",";
+   json += "\"retry_count\":0,";
+   json += "\"reasoning\":\"\",";
+   json += "\"error_messages\":[],";
+   json += "\"executed_tickets\":[],";
+   json += "\"partial_fills\":[],";
+   json += "\"gate_pass\":false,";
+   json += "\"tickets_snapshot\":[]";
+   json += "}";
+   return json;
+}
+
+string PersistenceRecovery_ActionJson(const string id,
+                                      const datetime queued_time,
+                                      const datetime expires_time)
+{
+   string queued_iso = Persistence_FormatIso8601(queued_time);
+   string expires_iso = Persistence_FormatIso8601(expires_time);
+
+   string json = "{";
+   json += "\"action_id\":\"" + id + "\",";
+   json += "\"accept_once_key\":\"" + id + "\",";
+   json += "\"ticket\":0,";
+   json += "\"action_type\":\"MODIFY_SL\",";
+   json += "\"new_value\":0.0,";
+   json += "\"validation_threshold\":0.0,";
+   json += "\"queued_time\":\"" + queued_iso + "\",";
+   json += "\"expires_time\":\"" + expires_iso + "\",";
+   json += "\"trigger_condition\":\"\",";
+   json += "\"intent_id\":\"\",";
+   json += "\"intent_key\":\"\",";
+   json += "\"queued_confidence\":0.0,";
+   json += "\"queued_efficiency\":0.0,";
+   json += "\"rho_est\":0.0,";
+   json += "\"est_value\":0.0,";
+   json += "\"gate_open_risk\":0.0,";
+   json += "\"gate_pending_risk\":0.0,";
+   json += "\"gate_next_risk\":0.0,";
+   json += "\"room_today\":0.0,";
+   json += "\"room_overall\":0.0,";
+   json += "\"gate_pass\":false,";
+   json += "\"gating_reason\":\"\",";
+   json += "\"news_window_state\":\"\"";
+   json += "}";
+   return json;
+}
+
+string PersistenceRecovery_BuildJournal(const string intents_array,
+                                        const string actions_array)
+{
+   string payload = "{";
+   payload += "\"schema_version\":4,";
+   payload += "\"intents\":[" + intents_array + "],";
+   payload += "\"queued_actions\":[" + actions_array + "]";
+   payload += "}";
+   return payload;
+}
+
 //+------------------------------------------------------------------+
 // Test: State_MarkDirty updates last_state_write_time
 //+------------------------------------------------------------------+
@@ -221,12 +324,93 @@ bool Test_PersistenceRecovery_ValidationHandlesNaN()
 }
 
 //+------------------------------------------------------------------+
+// M6-Task03: Recovery Idempotency Tests
+//+------------------------------------------------------------------+
+bool Test_PersistenceRecovery_RecoverySummaryTracksDrops()
+{
+   g_current_test = "Test_PersistenceRecovery_RecoverySummaryTracksDrops";
+   Print("Running: ", g_current_test);
+
+   datetime now = TimeCurrent();
+   string dup_intent = PersistenceRecovery_IntentJson("dup_intent");
+   string dup_action = PersistenceRecovery_ActionJson("dup_action", now, now + 3600);
+   string payload = PersistenceRecovery_BuildJournal(dup_intent + "," + dup_intent,
+                                                     dup_action + "," + dup_action);
+   PersistenceRecovery_WriteJournal(payload);
+
+   PersistenceRecoveredState state;
+   ASSERT_TRUE(Persistence_LoadRecoveredState(state), "Load succeeded");
+   ASSERT_EQUALS(2, state.summary.intents_total, "Intent total recorded");
+   ASSERT_EQUALS(1, state.intents_count, "Duplicate intents dropped");
+   ASSERT_TRUE(state.summary.intents_dropped >= 1, "Intent drops counted");
+   ASSERT_EQUALS(2, state.summary.actions_total, "Action total recorded");
+   ASSERT_EQUALS(1, state.queued_count, "Duplicate actions dropped");
+   ASSERT_TRUE(state.summary.actions_dropped >= 1, "Action drops counted");
+
+   int intents_total = state.summary.intents_total;
+   int intents_count = state.intents_count;
+   int intents_dropped = state.summary.intents_dropped;
+   int actions_total = state.summary.actions_total;
+   int actions_count = state.queued_count;
+   int actions_dropped = state.summary.actions_dropped;
+   Persistence_FreeRecoveredState(state);
+
+   PersistenceRecoveredState state2;
+   ASSERT_TRUE(Persistence_LoadRecoveredState(state2), "Second load succeeded");
+   ASSERT_EQUALS(intents_total, state2.summary.intents_total, "Intent total stable");
+   ASSERT_EQUALS(intents_count, state2.intents_count, "Intent count stable");
+   ASSERT_EQUALS(intents_dropped, state2.summary.intents_dropped, "Intent drops stable");
+   ASSERT_EQUALS(actions_total, state2.summary.actions_total, "Action total stable");
+   ASSERT_EQUALS(actions_count, state2.queued_count, "Action count stable");
+   ASSERT_EQUALS(actions_dropped, state2.summary.actions_dropped, "Action drops stable");
+   Persistence_FreeRecoveredState(state2);
+   return (g_test_failed == 0);
+}
+
+bool Test_PersistenceRecovery_IntentIdUniqueness()
+{
+   g_current_test = "Test_PersistenceRecovery_IntentIdUniqueness";
+   Print("Running: ", g_current_test);
+
+   string dup_intent = PersistenceRecovery_IntentJson("dup_intent");
+   string payload = PersistenceRecovery_BuildJournal(dup_intent + "," + dup_intent, "");
+   PersistenceRecovery_WriteJournal(payload);
+
+   PersistenceRecoveredState state;
+   ASSERT_TRUE(Persistence_LoadRecoveredState(state), "Load succeeded");
+   ASSERT_EQUALS(2, state.summary.intents_total, "Intent total recorded");
+   ASSERT_EQUALS(1, state.intents_count, "Duplicate intent dropped");
+   ASSERT_TRUE(state.summary.intents_dropped >= 1, "Intent drop recorded");
+   Persistence_FreeRecoveredState(state);
+   return (g_test_failed == 0);
+}
+
+bool Test_PersistenceRecovery_ActionIdForIdempotency()
+{
+   g_current_test = "Test_PersistenceRecovery_ActionIdForIdempotency";
+   Print("Running: ", g_current_test);
+
+   datetime now = TimeCurrent();
+   string dup_action = PersistenceRecovery_ActionJson("dup_action", now, now + 3600);
+   string payload = PersistenceRecovery_BuildJournal("", dup_action + "," + dup_action);
+   PersistenceRecovery_WriteJournal(payload);
+
+   PersistenceRecoveredState state;
+   ASSERT_TRUE(Persistence_LoadRecoveredState(state), "Load succeeded");
+   ASSERT_EQUALS(2, state.summary.actions_total, "Action total recorded");
+   ASSERT_EQUALS(1, state.queued_count, "Duplicate action dropped");
+   ASSERT_TRUE(state.summary.actions_dropped >= 1, "Action drop recorded");
+   Persistence_FreeRecoveredState(state);
+   return (g_test_failed == 0);
+}
+
+//+------------------------------------------------------------------+
 // Run all persistence recovery tests
 //+------------------------------------------------------------------+
 bool TestPersistenceRecovery_RunAll()
 {
    Print("==============================================================");
-   Print("M4 Task04 Persistence Recovery Tests");
+   Print("M4 Task04 + M6 Task03 Persistence Recovery Tests");
    Print("==============================================================");
 
    int local_passed = 0;
@@ -244,6 +428,10 @@ bool TestPersistenceRecovery_RunAll()
    ok &= Test_PersistenceRecovery_SummaryStructInitialized();
    ok &= Test_PersistenceRecovery_StateVersionDefined();
    ok &= Test_PersistenceRecovery_ValidationHandlesNaN();
+   // M6-Task03: Idempotency tests
+   ok &= Test_PersistenceRecovery_RecoverySummaryTracksDrops();
+   ok &= Test_PersistenceRecovery_IntentIdUniqueness();
+   ok &= Test_PersistenceRecovery_ActionIdForIdempotency();
 
    local_passed = g_test_passed - start_passed;
    local_failed = g_test_failed - start_failed;
