@@ -261,6 +261,7 @@ OrderErrorClass OE_ClassifyRetcode(const int retcode);
 bool OE_ShouldFailFast(const OrderErrorClass cls);
 bool OE_ShouldRetryClass(const OrderErrorClass cls);
 string OE_ErrorClassName(const OrderErrorClass cls);
+string OE_GatingReasonForRetcode(const int retcode);
 
 class RetryManager
 {
@@ -305,18 +306,25 @@ public:
    {
       switch(retcode)
       {
+         // M6-Task02: Fail-fast retcodes (no retry, no fallback)
          case TRADE_RETCODE_TRADE_DISABLED:
+         case TRADE_RETCODE_MARKET_CLOSED:
          case TRADE_RETCODE_NO_MONEY:
          case TRADE_RETCODE_INVALID_PRICE:
+         case TRADE_RETCODE_INVALID_STOPS:
          case TRADE_RETCODE_INVALID_VOLUME:
+         case TRADE_RETCODE_INVALID_EXPIRATION:
          case TRADE_RETCODE_POSITION_CLOSED:
+         case TRADE_RETCODE_REJECT:
             return RETRY_POLICY_FAIL_FAST;
 
+         // M6-Task02: Transient retcodes (bounded retry with exponential backoff)
          case TRADE_RETCODE_CONNECTION:
          case TRADE_RETCODE_TIMEOUT:
+         case TRADE_RETCODE_TOO_MANY_REQUESTS:
             return RETRY_POLICY_EXPONENTIAL;
 
-         case TRADE_RETCODE_MARKET_CLOSED:
+         // M6-Task02: Recoverable retcodes (bounded retry, linear backoff)
          case TRADE_RETCODE_REQUOTE:
          case TRADE_RETCODE_PRICE_CHANGED:
          case TRADE_RETCODE_PRICE_OFF:
@@ -375,19 +383,28 @@ OrderErrorClass OE_ClassifyRetcode(const int retcode)
 {
    switch(retcode)
    {
+      // M6-Task02: Fail-fast retcodes (no retry, no fallback)
       case TRADE_RETCODE_TRADE_DISABLED:
       case TRADE_RETCODE_MARKET_CLOSED:
       case TRADE_RETCODE_NO_MONEY:
+      case TRADE_RETCODE_INVALID_PRICE:
+      case TRADE_RETCODE_INVALID_STOPS:
+      case TRADE_RETCODE_INVALID_VOLUME:
+      case TRADE_RETCODE_INVALID_EXPIRATION:
+      case TRADE_RETCODE_POSITION_CLOSED:
+      case TRADE_RETCODE_REJECT:
          return ERRORCLASS_FAILFAST;
 
+      // M6-Task02: Transient retcodes (bounded retry with backoff)
       case TRADE_RETCODE_CONNECTION:
       case TRADE_RETCODE_TIMEOUT:
+      case TRADE_RETCODE_TOO_MANY_REQUESTS:
          return ERRORCLASS_TRANSIENT;
 
+      // M6-Task02: Recoverable retcodes (bounded retry, linear backoff)
       case TRADE_RETCODE_REQUOTE:
       case TRADE_RETCODE_PRICE_CHANGED:
       case TRADE_RETCODE_PRICE_OFF:
-      case TRADE_RETCODE_INVALID_PRICE:
          return ERRORCLASS_RECOVERABLE;
    }
    return ERRORCLASS_UNKNOWN;
@@ -396,6 +413,47 @@ OrderErrorClass OE_ClassifyRetcode(const int retcode)
 bool OE_ShouldFailFast(const OrderErrorClass cls)
 {
    return (cls == ERRORCLASS_FAILFAST);
+}
+
+//+------------------------------------------------------------------+
+//| M6-Task02: Map retcode to canonical gating_reason string         |
+//+------------------------------------------------------------------+
+string OE_GatingReasonForRetcode(const int retcode)
+{
+   switch(retcode)
+   {
+      case TRADE_RETCODE_MARKET_CLOSED:
+         return "market_closed";
+      case TRADE_RETCODE_TRADE_DISABLED:
+         return "trade_disabled";
+      case TRADE_RETCODE_INVALID_PRICE:
+         return "invalid_price";
+      case TRADE_RETCODE_INVALID_STOPS:
+         return "invalid_stops";
+      case TRADE_RETCODE_INVALID_VOLUME:
+         return "invalid_volume";
+      case TRADE_RETCODE_INVALID_EXPIRATION:
+         return "invalid_expiration";
+      case TRADE_RETCODE_PRICE_OFF:
+         return "off_quotes";
+      case TRADE_RETCODE_REQUOTE:
+         return "requote";
+      case TRADE_RETCODE_REJECT:
+         return "request_rejected";
+      case TRADE_RETCODE_NO_MONEY:
+         return "no_money";
+      case TRADE_RETCODE_CONNECTION:
+         return "connection_error";
+      case TRADE_RETCODE_TIMEOUT:
+         return "timeout";
+      case TRADE_RETCODE_TOO_MANY_REQUESTS:
+         return "too_many_requests";
+      case TRADE_RETCODE_POSITION_CLOSED:
+         return "position_closed";
+      case TRADE_RETCODE_PRICE_CHANGED:
+         return "price_changed";
+   }
+   return "unknown_error";
 }
 
 bool OE_ShouldRetryClass(const OrderErrorClass cls)
@@ -1141,6 +1199,12 @@ public:
       m_action_sequence = 0;
       m_intent_journal_dirty = true;
       PersistIntentJournal();
+   }
+
+   // M6-Task02: Test accessor for ShouldFallbackToMarket
+   bool TestShouldFallbackToMarket(const int retcode) const
+   {
+      return ShouldFallbackToMarket(retcode);
    }
 
    bool TestIsRecoveryComplete() const
@@ -2625,12 +2689,24 @@ ENUM_ORDER_TYPE OrderEngine::MarketTypeFromPending(const ENUM_ORDER_TYPE type) c
 
 bool OrderEngine::ShouldFallbackToMarket(const int retcode) const
 {
+   // M6-Task02: Never fallback to market on market-closed or trade-disabled
    switch(retcode)
    {
-      case TRADE_RETCODE_PRICE_OFF:
+      case TRADE_RETCODE_MARKET_CLOSED:
+      case TRADE_RETCODE_TRADE_DISABLED:
+      case TRADE_RETCODE_NO_MONEY:
       case TRADE_RETCODE_INVALID_PRICE:
-         return true;
+      case TRADE_RETCODE_INVALID_STOPS:
+      case TRADE_RETCODE_INVALID_VOLUME:
+      case TRADE_RETCODE_INVALID_EXPIRATION:
+      case TRADE_RETCODE_REJECT:
+      case TRADE_RETCODE_POSITION_CLOSED:
+         return false; // Fail-fast, no fallback
    }
+   // Only allow fallback for transient price movement (PRICE_OFF)
+   // where market is open but pending price is no longer valid
+   if(retcode == TRADE_RETCODE_PRICE_OFF)
+      return true;
    return false;
 }
 
@@ -4031,16 +4107,18 @@ OrderErrorDecision OrderEngine::OrderEngine_HandleError(const OrderError &err)
    OrderErrorDecision decision;
    datetime now = TimeCurrent();
    const bool bypass = OrderEngine_ShouldBypassBreaker(err);
+   // M6-Task02: Pre-populate canonical gating_reason for logging consistency.
+   decision.gating_reason = OE_GatingReasonForRetcode(err.retcode);
    if(OrderEngine_IsCircuitBreakerActive() && !bypass)
    {
       decision.type = ERROR_DECISION_FAIL_FAST;
       decision.gating_reason = "circuit_breaker_active";
-   // Surface unknown retcodes for improved observability
-   if(err.cls == ERRORCLASS_UNKNOWN)
-   {
-      LogDecision("OrderEngine", "UNKNOWN_RETCODE",
-                  StringFormat("{\"retcode\":%d,\"context\":\"%s\"}", err.retcode, err.context));
-   }
+      // Surface unknown retcodes for improved observability
+      if(err.cls == ERRORCLASS_UNKNOWN)
+      {
+         LogDecision("OrderEngine", "UNKNOWN_RETCODE",
+                     StringFormat("{\"retcode\":%d,\"context\":\"%s\"}", err.retcode, err.context));
+      }
       OrderEngine_LogErrorHandling(err, decision);
       return decision;
    }
@@ -4048,16 +4126,15 @@ OrderErrorDecision OrderEngine::OrderEngine_HandleError(const OrderError &err)
    if(OE_ShouldFailFast(err.cls) && !bypass)
    {
       decision.type = ERROR_DECISION_FAIL_FAST;
-      decision.gating_reason = "fail_fast";
       if(!bypass)
          OrderEngine_RecordFailure(now);
-      OrderEngine_TripCircuitBreaker("fail_fast:" + err.context);
-   // Surface unknown retcodes for improved observability
-   if(err.cls == ERRORCLASS_UNKNOWN)
-   {
-      LogDecision("OrderEngine", "UNKNOWN_RETCODE",
-                  StringFormat("{\"retcode\":%d,\"context\":\"%s\"}", err.retcode, err.context));
-   }
+      OrderEngine_TripCircuitBreaker(decision.gating_reason + ":" + err.context);
+      // Surface unknown retcodes for improved observability
+      if(err.cls == ERRORCLASS_UNKNOWN)
+      {
+         LogDecision("OrderEngine", "UNKNOWN_RETCODE",
+                     StringFormat("{\"retcode\":%d,\"context\":\"%s\"}", err.retcode, err.context));
+      }
       OrderEngine_LogErrorHandling(err, decision);
       return decision;
    }
@@ -4075,7 +4152,15 @@ OrderErrorDecision OrderEngine::OrderEngine_HandleError(const OrderError &err)
    else
    {
       decision.type = ERROR_DECISION_DROP;
-      decision.gating_reason = (allow_retry ? "" : "retry_exhausted");
+      if(!allow_retry)
+      {
+         if(StringLen(decision.gating_reason) > 0)
+            decision.gating_reason = decision.gating_reason + "|retry_exhausted";
+         else
+            decision.gating_reason = "retry_exhausted";
+      }
+      else
+         decision.gating_reason = "";
    }
 
    // Surface unknown retcodes for improved observability
