@@ -234,7 +234,7 @@ double Trail_ComputeNewSLFromState(const bool is_long,
 
 void Trail_HandleOnTickOrTimer()
   {
-     const double trail_mult = TrailMult;
+     const double trail_mult = Config_GetTrailMult();
      const int total_positions = PositionsTotal();
      for(int pos_index = 0; pos_index < total_positions; pos_index++)
        {

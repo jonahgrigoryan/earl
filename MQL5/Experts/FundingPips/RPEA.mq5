@@ -168,6 +168,13 @@ int SplitSymbols(const string src, string &dst[])
 // OnInit: initialize state, timer, indicators, logs
 int OnInit()
 {
+   // M6-Task01: Parameter validation (must run first, before any trading logic)
+   if(!Config_ValidateInputs())
+   {
+      Print("[RPEA] ERROR: Input validation failed - see [Config] logs above");
+      return(INIT_FAILED);
+   }
+   
    // 1) Prepare context
    g_ctx.symbols_count = SplitSymbols(InpSymbols, g_ctx.symbols);
    g_ctx.current_server_time = TimeCurrent();
@@ -225,7 +232,7 @@ int OnInit()
    // 5) Ensure folders/logs exist and write boot line
    Persistence_EnsureFolders();
    Persistence_EnsurePlaceholderFiles();
-   AuditLogger_Init(AuditLogPath, LogBufferSize, EnableDetailedLogging);
+   AuditLogger_Init(AuditLogPath, Config_GetLogBufferSize(), EnableDetailedLogging);
 
    // M4-Task01: Initialize News Stabilization
    string news_symbols[];
@@ -251,8 +258,8 @@ int OnInit()
     }
 
     // 7) Restore queue/trailing state
-   OrderEngine_RestoreStateOnInit(QueueTTLMinutes,
-                                   MaxQueueSize,
+   OrderEngine_RestoreStateOnInit(Config_GetQueueTTLMinutes(),
+                                   Config_GetMaxQueueSize(),
                                    EnableQueuePrioritization);
 
    // M4-Task03: If kill-switch flags are active, retry protective exits on restart

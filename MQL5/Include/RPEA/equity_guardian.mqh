@@ -3,6 +3,7 @@
 // equity_guardian.mqh - Equity rooms, caps, and session governance
 // References: finalspec.md (Equity & Risk Caps)
 
+#include <RPEA/config.mqh>
 #include <RPEA/logging.mqh>
 
 struct AppContext;
@@ -397,12 +398,14 @@ EquitySessionState Equity_BuildSessionState(const EquityRooms &rooms)
       if(state.day_loss < 0.0)
          state.day_loss = 0.0;
 
-      double risk_pct = (RiskPct > 0.0 ? RiskPct : 0.0);
-      state.one_and_done_threshold = g_equity_baseline_today * (risk_pct / 100.0) * OneAndDoneR;
+      double risk_pct = Config_GetRiskPct();
+      double one_and_done_r = Config_GetOneAndDoneR();
+      double daily_loss_cap = Config_GetEffectiveDailyLossCapPct();
+      state.one_and_done_threshold = g_equity_baseline_today * (risk_pct / 100.0) * one_and_done_r;
       if(state.one_and_done_threshold > 0.0 && state.day_gain >= state.one_and_done_threshold - 1e-6)
          state.one_and_done_met = true;
 
-      state.ny_gate_threshold = g_equity_baseline_today * (DailyLossCapPct / 100.0) * NYGatePctOfDailyCap;
+      state.ny_gate_threshold = g_equity_baseline_today * (daily_loss_cap / 100.0) * NYGatePctOfDailyCap;
       if(state.ny_gate_threshold > 0.0)
          state.ny_gate_allowed = (state.day_loss <= state.ny_gate_threshold + 1e-6);
       else
@@ -498,7 +501,8 @@ EquityRooms Equity_ComputeRooms(const AppContext& ctx)
    if(!MathIsValidNumber(initial_baseline) || initial_baseline <= 0.0)
       initial_baseline = baseline_today;
 
-   double today_cap = (DailyLossCapPct / 100.0) * baseline_today;
+   double daily_cap_pct = Config_GetEffectiveDailyLossCapPct();
+   double today_cap = (daily_cap_pct / 100.0) * baseline_today;
    if(!MathIsValidNumber(today_cap) || today_cap < 0.0)
       today_cap = 0.0;
 
@@ -901,46 +905,50 @@ bool Equity_CheckPositionCaps(const string symbol,
    bool symbol_ok = true;
    bool pending_ok = true;
 
+   const int max_total = Config_GetMaxOpenPositionsTotal();
+   const int max_symbol = Config_GetMaxOpenPerSymbol();
+   const int max_pending = Config_GetMaxPendingsPerSymbol();
+
    out_total_positions = Equity_CountOpenPositionsTotal(totals_ok);
    out_symbol_positions = Equity_CountOpenPositionsBySymbol(symbol, symbol_ok);
    out_symbol_pending = Equity_CountPendingsBySymbol(symbol, pending_ok);
 
    bool allowed = true;
 
-   if(MaxOpenPositionsTotal > 0 && out_total_positions >= MaxOpenPositionsTotal)
+   if(max_total > 0 && out_total_positions >= max_total)
    {
-      string note = StringFormat("{\"type\":\"total\",\"current\":%d,\"limit\":%d}", out_total_positions, MaxOpenPositionsTotal);
+      string note = StringFormat("{\"type\":\"total\",\"current\":%d,\"limit\":%d}", out_total_positions, max_total);
       LogDecision("Equity", "CAP_VIOLATION", note);
       allowed = false;
    }
-   if(MaxOpenPerSymbol > 0 && out_symbol_positions >= MaxOpenPerSymbol)
+   if(max_symbol > 0 && out_symbol_positions >= max_symbol)
    {
-      string note = StringFormat("{\"type\":\"symbol\",\"current\":%d,\"limit\":%d}", out_symbol_positions, MaxOpenPerSymbol);
+      string note = StringFormat("{\"type\":\"symbol\",\"current\":%d,\"limit\":%d}", out_symbol_positions, max_symbol);
       LogDecision("Equity", "CAP_VIOLATION", note);
       allowed = false;
    }
-   if(MaxPendingsPerSymbol > 0 && out_symbol_pending >= MaxPendingsPerSymbol)
+   if(max_pending > 0 && out_symbol_pending >= max_pending)
    {
-      string note = StringFormat("{\"type\":\"pending\",\"current\":%d,\"limit\":%d}", out_symbol_pending, MaxPendingsPerSymbol);
+      string note = StringFormat("{\"type\":\"pending\",\"current\":%d,\"limit\":%d}", out_symbol_pending, max_pending);
       LogDecision("Equity", "CAP_VIOLATION", note);
       allowed = false;
    }
 
    if(!totals_ok)
    {
-      string note = StringFormat("{\"type\":\"total\",\"current\":-1,\"limit\":%d}", MaxOpenPositionsTotal);
+      string note = StringFormat("{\"type\":\"total\",\"current\":-1,\"limit\":%d}", max_total);
       LogDecision("Equity", "CAP_VIOLATION", note);
       allowed = false;
    }
    if(!symbol_ok)
    {
-      string note = StringFormat("{\"type\":\"symbol\",\"current\":-1,\"limit\":%d}", MaxOpenPerSymbol);
+      string note = StringFormat("{\"type\":\"symbol\",\"current\":-1,\"limit\":%d}", max_symbol);
       LogDecision("Equity", "CAP_VIOLATION", note);
       allowed = false;
    }
    if(!pending_ok)
    {
-      string note = StringFormat("{\"type\":\"pending\",\"current\":-1,\"limit\":%d}", MaxPendingsPerSymbol);
+      string note = StringFormat("{\"type\":\"pending\",\"current\":-1,\"limit\":%d}", max_pending);
       LogDecision("Equity", "CAP_VIOLATION", note);
       allowed = false;
    }
@@ -1040,12 +1048,14 @@ void Equity_CheckMicroMode(const AppContext &ctx)
       return;
    
    double target_equity = baseline * (1.0 + TargetProfitPct / 100.0);
+   int min_trade_days = Config_GetMinTradeDaysRequired();
+   double micro_risk_pct = Config_GetMicroRiskPct();
    
    if(current_equity < target_equity)
       return;
    
    // Condition 2: gDaysTraded still below requirement
-   if(st.gDaysTraded >= MinTradeDaysRequired)
+   if(st.gDaysTraded >= min_trade_days)
       return;
    
    // Activate Micro-Mode
@@ -1056,9 +1066,9 @@ void Equity_CheckMicroMode(const AppContext &ctx)
    
    LogAuditRow("MICRO_MODE_ACTIVATED", "EQUITY", 1,
                StringFormat("Equity %.2f hit target %.2f, days %d/%d", 
-                           current_equity, target_equity, st.gDaysTraded, MinTradeDaysRequired),
+                           current_equity, target_equity, st.gDaysTraded, min_trade_days),
                StringFormat("{\"equity\":%.2f,\"target\":%.2f,\"days_traded\":%d,\"micro_risk_pct\":%.2f}",
-                           current_equity, target_equity, st.gDaysTraded, MicroRiskPct));
+                           current_equity, target_equity, st.gDaysTraded, micro_risk_pct));
    Persistence_Flush();
 }
 
@@ -1069,7 +1079,7 @@ bool Equity_MicroTimeStopExceeded(const datetime entry_time)
       return false;
    
    int elapsed_min = (int)((TimeCurrent() - entry_time) / 60);
-   return elapsed_min >= MicroTimeStopMin;
+   return elapsed_min >= Config_GetMicroTimeStopMin();
 }
 
 //------------------------------------------------------------------------------
@@ -1106,7 +1116,7 @@ void Equity_CloseAllPositions(const string reason)
          request.price = (request.type == ORDER_TYPE_BUY) 
                          ? SymbolInfoDouble(symbol, SYMBOL_ASK)
                          : SymbolInfoDouble(symbol, SYMBOL_BID);
-         request.deviation = MaxSlippagePoints;
+         request.deviation = Config_GetMaxSlippagePoints();
          request.comment = reason;
          
          if(!OrderSend(request, result))
@@ -1195,7 +1205,8 @@ void Equity_CheckHardStopConditions(const AppContext &ctx)
    
    // Check 2: Challenge complete (success hard-stop)
    double target_equity = baseline * (1.0 + TargetProfitPct / 100.0);
-   if(current_equity >= target_equity && st.gDaysTraded >= MinTradeDaysRequired)
+   int min_trade_days = Config_GetMinTradeDaysRequired();
+   if(current_equity >= target_equity && st.gDaysTraded >= min_trade_days)
    {
       LogAuditRow("CHALLENGE_COMPLETE", "EQUITY", 1,
                   StringFormat("Target %.2f achieved with %d days", target_equity, st.gDaysTraded),
@@ -1206,12 +1217,12 @@ void Equity_CheckHardStopConditions(const AppContext &ctx)
    }
    
    // Check 3: Target hit but MinTradeDays not met - log warning
-   if(current_equity >= target_equity && st.gDaysTraded < MinTradeDaysRequired && !st.micro_mode)
+   if(current_equity >= target_equity && st.gDaysTraded < min_trade_days && !st.micro_mode)
    {
       LogAuditRow("TARGET_PENDING_DAYS", "EQUITY", 1,
-                  StringFormat("Target hit, need %d more days", MinTradeDaysRequired - st.gDaysTraded),
+                  StringFormat("Target hit, need %d more days", min_trade_days - st.gDaysTraded),
                   StringFormat("{\"equity\":%.2f,\"days_traded\":%d,\"required\":%d}",
-                              current_equity, st.gDaysTraded, MinTradeDaysRequired));
+                              current_equity, st.gDaysTraded, min_trade_days));
    }
 }
 
@@ -1255,7 +1266,7 @@ bool Equity_CheckGivebackProtection()
    double current_equity = AccountInfoDouble(ACCOUNT_EQUITY);
    double drawdown_from_peak = (st.day_peak_equity - current_equity) / st.day_peak_equity;
    
-   if(drawdown_from_peak >= GivebackCapDayPct / 100.0)
+   if(drawdown_from_peak >= Config_GetGivebackCapDayPct() / 100.0)
    {
       if(st.trading_enabled)
       {

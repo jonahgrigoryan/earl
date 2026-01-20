@@ -3,6 +3,7 @@
 // risk.mqh - Risk sizing helpers (M2 implementation)
 // References: finalspec.md (Sizing by ATR distance)
 
+#include <RPEA/config.mqh>
 #include "logging.mqh"
 
 inline double Risk_FloorToStep(const double value, const double step)
@@ -107,6 +108,7 @@ double Risk_SizingByATRDistanceForSymbol(const string symbol,
    double margin_used_pct = 0.0;
    double final_volume = volume;
 
+#ifndef RPEA_RISK_SKIP_MARGIN_CHECK
    if(final_volume >= vol_min && final_volume > 0.0)
    {
       double free_margin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
@@ -156,6 +158,7 @@ double Risk_SizingByATRDistanceForSymbol(const string symbol,
          }
       }
    }
+#endif
 
    final_volume = NormalizeDouble(final_volume, 8);
    double log_margin = margin_used_pct;
@@ -214,7 +217,7 @@ bool Equity_IsMicroModeActive();
 // Get effective risk percentage (respects Micro-Mode)
 double Risk_GetEffectiveRiskPct()
 {
-   return Equity_IsMicroModeActive() ? MicroRiskPct : RiskPct;
+   return Equity_IsMicroModeActive() ? Config_GetMicroRiskPct() : Config_GetRiskPct();
 }
 
 #endif // RPEA_RISK_MQH

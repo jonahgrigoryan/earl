@@ -152,9 +152,13 @@ public:
 
    bool WriteResults()
    {
-      // Ensure output directory exists
+      // Ensure output directory exists (create parent first)
+      FolderCreate("RPEA");
       string dir = "RPEA/test_results";
-      FolderCreate(dir);
+      if(!FolderCreate(dir))
+      {
+         PrintFormat("[TestReporter] WARNING: Could not create directory %s (may already exist)", dir);
+      }
 
       // Build JSON output
       string json = "{\n";
@@ -223,6 +227,7 @@ public:
       }
 
       FileWrite(handle, json);
+      FileFlush(handle); // Ensure data is written to disk
       FileClose(handle);
 
       PrintFormat("[TestReporter] Test results written to: MQL5/Files/%s", m_output_path);
