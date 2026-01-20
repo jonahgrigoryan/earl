@@ -197,7 +197,7 @@ void News_ComputeBlockWindow(NewsEvent &event)
    if(event.prebuffer_min > 0) prebuffer_seconds = event.prebuffer_min * 60;
    if(event.postbuffer_min > 0) postbuffer_seconds = event.postbuffer_min * 60;
    
-   const int global_seconds = (NewsBufferS > 0 ? NewsBufferS : 0);
+   const int global_seconds = Config_GetNewsBufferS();
    if(global_seconds > prebuffer_seconds) prebuffer_seconds = global_seconds;
    if(global_seconds > postbuffer_seconds) postbuffer_seconds = global_seconds;
    
@@ -535,8 +535,10 @@ bool News_LoadEvents()
       return g_news_data_ok;
 
    const datetime now_utc = News_GetNowUtc();
-   const datetime from_utc = now_utc - (NewsCalendarLookbackHours * 3600);
-   const datetime to_utc = now_utc + (NewsCalendarLookaheadHours * 3600);
+   const int lookback_hours = Config_GetNewsCalendarLookbackHours();
+   const int lookahead_hours = Config_GetNewsCalendarLookaheadHours();
+   const datetime from_utc = now_utc - (lookback_hours * 3600);
+   const datetime to_utc = now_utc + (lookahead_hours * 3600);
    
    // Try Calendar First
    if(News_LoadCalendarEvents(from_utc, to_utc)) {
@@ -614,7 +616,8 @@ void News_UpdateStabilizationThresholds(const int idx)
 
 void News_RecordM1Metrics(const int idx, const string symbol, const datetime bar_time)
 {
-    if(StabilizationLookbackBars <= 0) return;
+    const int lookback_bars = Config_GetStabilizationLookbackBars();
+    if(lookback_bars <= 0) return;
     // M1 Spread = SYMBOL_SPREAD (int points) * POINT
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     double spread_raw = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
@@ -627,19 +630,19 @@ void News_RecordM1Metrics(const int idx, const string symbol, const datetime bar
     
     if(high == 0 || low == 0) return; // Data not ready
     
-    if(ArraySize(g_news_stab_state[idx].spread_history) < StabilizationLookbackBars) {
-        ArrayResize(g_news_stab_state[idx].spread_history, StabilizationLookbackBars);
-        ArrayResize(g_news_stab_state[idx].vol_history, StabilizationLookbackBars);
+    if(ArraySize(g_news_stab_state[idx].spread_history) < lookback_bars) {
+        ArrayResize(g_news_stab_state[idx].spread_history, lookback_bars);
+        ArrayResize(g_news_stab_state[idx].vol_history, lookback_bars);
     }
 
-    if(g_news_stab_state[idx].history_index < 0 || g_news_stab_state[idx].history_index >= StabilizationLookbackBars) {
+    if(g_news_stab_state[idx].history_index < 0 || g_news_stab_state[idx].history_index >= lookback_bars) {
         g_news_stab_state[idx].history_index = 0;
     }
     g_news_stab_state[idx].spread_history[g_news_stab_state[idx].history_index] = spread;
     g_news_stab_state[idx].vol_history[g_news_stab_state[idx].history_index] = vol;
-    g_news_stab_state[idx].history_index = (g_news_stab_state[idx].history_index + 1) % StabilizationLookbackBars;
+    g_news_stab_state[idx].history_index = (g_news_stab_state[idx].history_index + 1) % lookback_bars;
     g_news_stab_state[idx].history_count = MathMin(g_news_stab_state[idx].history_count + 1,
-                                                   StabilizationLookbackBars);
+                                                   lookback_bars);
     
     News_UpdateStabilizationThresholds(idx);
 }
@@ -659,7 +662,8 @@ void News_OnM1Bar(const string symbol, const datetime bar_time)
     // Timeout Check
     datetime now = News_GetNowServer();
     int elapsed_min = (int)((now - g_news_stab_state[idx].stabilization_start)/60);
-    if(elapsed_min >= StabilizationTimeoutMin) {
+    const int stabilization_timeout = Config_GetStabilizationTimeoutMin();
+    if(elapsed_min >= stabilization_timeout) {
         LogAuditRow("NEWS_STABILIZATION_TIMEOUT", symbol, 0, StringFormat("Timeout after %d min", elapsed_min), "{}");
         g_news_stab_state[idx].Reset();
         return;
@@ -673,7 +677,9 @@ void News_OnM1Bar(const string symbol, const datetime bar_time)
     // The just-closed bar metrics were recorded in RecordM1Metrics as prev bar.
     // We can use the latest history values.
     
-    int last_h_idx = (g_news_stab_state[idx].history_index - 1 + StabilizationLookbackBars) % StabilizationLookbackBars;
+    const int lookback_bars = Config_GetStabilizationLookbackBars();
+    if(lookback_bars <= 0) return;
+    int last_h_idx = (g_news_stab_state[idx].history_index - 1 + lookback_bars) % lookback_bars;
     double current_spread = g_news_stab_state[idx].spread_history[last_h_idx];
     double current_vol = g_news_stab_state[idx].vol_history[last_h_idx];
     
@@ -687,12 +693,13 @@ void News_OnM1Bar(const string symbol, const datetime bar_time)
                                   g_news_stab_state[idx].vol_p70,
                                   g_news_stab_state[idx].stable_bar_count);
 
+    const int stabilization_bars = Config_GetStabilizationBars();
     if(spread_ok && vol_ok) {
         g_news_stab_state[idx].stable_bar_count++;
         LogAuditRow("NEWS_STABILIZING", symbol, 1,
-                    StringFormat("Bar %d/%d stable", g_news_stab_state[idx].stable_bar_count, StabilizationBars),
+                    StringFormat("Bar %d/%d stable", g_news_stab_state[idx].stable_bar_count, stabilization_bars),
                     metrics);
-        if(g_news_stab_state[idx].stable_bar_count >= StabilizationBars) {
+        if(g_news_stab_state[idx].stable_bar_count >= stabilization_bars) {
             LogAuditRow("NEWS_STABLE", symbol, 1, "Stabilization complete", metrics);
             g_news_stab_state[idx].Reset();
         }
@@ -784,7 +791,7 @@ void News_UpdateBlockState(const string symbol)
     {
         datetime now = News_GetNowServer();
         int elapsed_min = (int)((now - g_news_stab_state[idx].stabilization_start)/60);
-        if(elapsed_min >= StabilizationTimeoutMin)
+        if(elapsed_min >= Config_GetStabilizationTimeoutMin())
         {
             LogAuditRow("NEWS_STABILIZATION_TIMEOUT", symbol, 0,
                         StringFormat("Timeout after %d min", elapsed_min), "{}");

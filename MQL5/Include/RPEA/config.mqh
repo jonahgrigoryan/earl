@@ -240,19 +240,26 @@ inline bool Config_GetBreakerProtectiveExitBypass()
 // Task 22 Liquidity Config Helper
 //------------------------------------------------------------------------------
 
+inline double Config_ClampSpreadMultATRValue(const double value)
+{
+   if(!MathIsValidNumber(value) || value <= 0.0)
+      return DEFAULT_SpreadMultATR;
+   return value;
+}
+
 inline double Config_GetSpreadMultATR()
 {
 #ifdef RPEA_TEST_RUNNER
    // In test runner, inputs are defined as macros.
    // Guard against missing macro definition.
    #ifdef SpreadMultATR
-      return SpreadMultATR;
+      return Config_ClampSpreadMultATRValue(SpreadMultATR);
    #else
       return DEFAULT_SpreadMultATR;
    #endif
 #else
    // In EA, inputs are global variables visible to included files.
-   return SpreadMultATR;
+   return Config_ClampSpreadMultATRValue(SpreadMultATR);
 #endif
 }
 
@@ -276,6 +283,696 @@ inline double Config_GetBreakevenExtraPoints()
    #endif
 #endif
 }
+
+//==============================================================================
+// M6-Task01: Parameter Validation Helpers
+//==============================================================================
+
+//------------------------------------------------------------------------------
+// Logging helpers for validation
+//------------------------------------------------------------------------------
+
+inline void Config_LogClampDouble(const string key, const double invalid_value, const double fallback)
+{
+   PrintFormat("[Config] %s invalid (%.6f), clamping to %.6f", key, invalid_value, fallback);
+}
+
+inline void Config_LogFatal(const string key, const string reason)
+{
+   PrintFormat("[Config] FATAL: %s %s", key, reason);
+}
+
+inline void Config_LogWarn(const string key, const string msg)
+{
+   PrintFormat("[Config] %s: %s", key, msg);
+}
+
+//------------------------------------------------------------------------------
+// ORMinutes: must be one of {30, 45, 60, 75}
+//------------------------------------------------------------------------------
+
+inline int Config_NearestORMinutes(const int value)
+{
+   // Find nearest allowed value
+   int allowed[] = {30, 45, 60, 75};
+   int nearest = 60; // default
+   int min_dist = 9999;
+   for(int i = 0; i < 4; i++)
+   {
+      int dist = MathAbs(value - allowed[i]);
+      if(dist < min_dist)
+      {
+         min_dist = dist;
+         nearest = allowed[i];
+      }
+   }
+   return nearest;
+}
+
+inline int Config_GetORMinutes()
+{
+#ifdef RPEA_TEST_RUNNER
+   return ORMinutes; // Test runner uses macro, assume valid
+#else
+   int val = ORMinutes;
+   if(val != 30 && val != 45 && val != 60 && val != 75)
+      return Config_NearestORMinutes(val);
+   return val;
+#endif
+}
+
+//------------------------------------------------------------------------------
+// Risk caps: effective daily cap (clamped if overall < daily)
+//------------------------------------------------------------------------------
+
+inline double Config_GetEffectiveDailyLossCapPct()
+{
+#ifdef RPEA_TEST_RUNNER
+   return DailyLossCapPct;
+#else
+   double daily = DailyLossCapPct;
+   double overall = OverallLossCapPct;
+   if(overall > 0 && daily > 0 && overall < daily)
+      return overall; // Clamp daily down to overall
+   return daily;
+#endif
+}
+
+//------------------------------------------------------------------------------
+// Session hours: clamp to [0, 23]
+//------------------------------------------------------------------------------
+
+inline int Config_ClampHour(const int hour)
+{
+   if(hour < 0) return 0;
+   if(hour > 23) return 23;
+   return hour;
+}
+
+inline int Config_GetStartHourLO()
+{
+#ifdef RPEA_TEST_RUNNER
+   return StartHourLO;
+#else
+   return Config_ClampHour(StartHourLO);
+#endif
+}
+
+inline int Config_GetStartHourNY()
+{
+#ifdef RPEA_TEST_RUNNER
+   return StartHourNY;
+#else
+   return Config_ClampHour(StartHourNY);
+#endif
+}
+
+inline int Config_GetCutoffHour()
+{
+#ifdef RPEA_TEST_RUNNER
+   return CutoffHour;
+#else
+   return Config_ClampHour(CutoffHour);
+#endif
+}
+
+//------------------------------------------------------------------------------
+// MinTradeDaysRequired: clamp to >= 1
+//------------------------------------------------------------------------------
+
+inline int Config_GetMinTradeDaysRequired()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef MinTradeDaysRequired
+      return (MinTradeDaysRequired < 1) ? 1 : MinTradeDaysRequired;
+   #else
+      return 3; // Default
+   #endif
+#else
+   int val = MinTradeDaysRequired;
+   return (val < 1) ? 1 : val;
+#endif
+}
+
+//------------------------------------------------------------------------------
+// Risk percentages: clamp to finalspec ranges
+// RiskPct: [0.8, 2.0]
+// MicroRiskPct: [0.05, 0.20]
+//------------------------------------------------------------------------------
+
+inline double Config_GetRiskPct()
+{
+#ifdef RPEA_TEST_RUNNER
+   return RiskPct;
+#else
+   double val = RiskPct;
+   if(val < 0.8) return 0.8;
+   if(val > 2.0) return 2.0;
+   return val;
+#endif
+}
+
+inline double Config_GetMicroRiskPct()
+{
+#ifdef RPEA_TEST_RUNNER
+   return MicroRiskPct;
+#else
+   double val = MicroRiskPct;
+   if(val < 0.05) return 0.05;
+   if(val > 0.20) return 0.20;
+   return val;
+#endif
+}
+
+//------------------------------------------------------------------------------
+// R-targets and multipliers: clamp to finalspec ranges
+// RtargetBC: [1.8, 2.6], RtargetMSC: [1.6, 2.4]
+// SLmult: [0.7, 1.3], TrailMult: [0.6, 1.2]
+// GivebackCapDayPct: [0.25, 0.50], OneAndDoneR: [0.5, 5.0]
+//------------------------------------------------------------------------------
+
+inline double Config_GetRtargetBC()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef RtargetBC
+      return RtargetBC;
+   #else
+      return 2.2;
+   #endif
+#else
+   double val = RtargetBC;
+   if(val < 1.8) return 1.8;
+   if(val > 2.6) return 2.6;
+   return val;
+#endif
+}
+
+inline double Config_GetRtargetMSC()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef RtargetMSC
+      return RtargetMSC;
+   #else
+      return 2.0;
+   #endif
+#else
+   double val = RtargetMSC;
+   if(val < 1.6) return 1.6;
+   if(val > 2.4) return 2.4;
+   return val;
+#endif
+}
+
+inline double Config_GetSLmult()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef SLmult
+      return SLmult;
+   #else
+      return 1.0;
+   #endif
+#else
+   double val = SLmult;
+   if(val < 0.7) return 0.7;
+   if(val > 1.3) return 1.3;
+   return val;
+#endif
+}
+
+inline double Config_GetTrailMult()
+{
+#ifdef RPEA_TEST_RUNNER
+   return TrailMult;
+#else
+   double val = TrailMult;
+   if(val < 0.6) return 0.6;
+   if(val > 1.2) return 1.2;
+   return val;
+#endif
+}
+
+inline double Config_GetGivebackCapDayPct()
+{
+#ifdef RPEA_TEST_RUNNER
+   return GivebackCapDayPct;
+#else
+   double val = GivebackCapDayPct;
+   if(val < 0.25) return 0.25;
+   if(val > 0.50) return 0.50;
+   return val;
+#endif
+}
+
+inline double Config_GetOneAndDoneR()
+{
+#ifdef RPEA_TEST_RUNNER
+   return OneAndDoneR;
+#else
+   double val = OneAndDoneR;
+   if(val < 0.5) return 0.5;
+   if(val > 5.0) return 5.0;
+   return val;
+#endif
+}
+
+//------------------------------------------------------------------------------
+// Time windows: clamp to >= 0
+//------------------------------------------------------------------------------
+
+inline int Config_ClampNonNegativeInt(const int val)
+{
+   return (val < 0) ? 0 : val;
+}
+
+inline int Config_GetMicroTimeStopMin()
+{
+#ifdef RPEA_TEST_RUNNER
+   return MicroTimeStopMin;
+#else
+   int val = MicroTimeStopMin;
+   if(val < 30) return 30;
+   if(val > 60) return 60;
+   return val;
+#endif
+}
+
+inline int Config_GetMinHoldSeconds()
+{
+#ifdef RPEA_TEST_RUNNER
+   return MinHoldSeconds;
+#else
+   return Config_ClampNonNegativeInt(MinHoldSeconds);
+#endif
+}
+
+inline int Config_GetNewsBufferS()
+{
+#ifdef RPEA_TEST_RUNNER
+   return NewsBufferS;
+#else
+   return Config_ClampNonNegativeInt(NewsBufferS);
+#endif
+}
+
+inline int Config_GetQueueTTLMinutes()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef QueueTTLMinutes
+      return QueueTTLMinutes;
+   #else
+      return DEFAULT_QueueTTLMinutes;
+   #endif
+#else
+   return Config_ClampNonNegativeInt(QueueTTLMinutes);
+#endif
+}
+
+inline int Config_GetStabilizationTimeoutMin()
+{
+#ifdef RPEA_TEST_RUNNER
+   return StabilizationTimeoutMin;
+#else
+   return Config_ClampNonNegativeInt(StabilizationTimeoutMin);
+#endif
+}
+
+inline int Config_GetStabilizationBars()
+{
+#ifdef RPEA_TEST_RUNNER
+   return StabilizationBars;
+#else
+   int val = StabilizationBars;
+   return (val < 1) ? 1 : val;
+#endif
+}
+
+inline int Config_GetStabilizationLookbackBars()
+{
+#ifdef RPEA_TEST_RUNNER
+   return StabilizationLookbackBars;
+#else
+   int val = StabilizationLookbackBars;
+   return (val < 1) ? 1 : val;
+#endif
+}
+
+inline int Config_GetNewsCalendarLookbackHours()
+{
+#ifdef RPEA_TEST_RUNNER
+   return NewsCalendarLookbackHours;
+#else
+   return Config_ClampNonNegativeInt(NewsCalendarLookbackHours);
+#endif
+}
+
+inline int Config_GetNewsCalendarLookaheadHours()
+{
+#ifdef RPEA_TEST_RUNNER
+   return NewsCalendarLookaheadHours;
+#else
+   int val = NewsCalendarLookaheadHours;
+   return (val < 1) ? 1 : val;
+#endif
+}
+
+//------------------------------------------------------------------------------
+// Spread/slippage: clamp to >= 0
+//------------------------------------------------------------------------------
+
+inline int Config_GetMaxSlippagePoints()
+{
+#ifdef RPEA_TEST_RUNNER
+   return MaxSlippagePoints;
+#else
+   return Config_ClampNonNegativeInt(MaxSlippagePoints);
+#endif
+}
+
+inline int Config_GetMaxSpreadPoints()
+{
+#ifdef RPEA_TEST_RUNNER
+   return MaxSpreadPoints;
+#else
+   return Config_ClampNonNegativeInt(MaxSpreadPoints);
+#endif
+}
+
+//------------------------------------------------------------------------------
+// Queue/logging sizes: clamp to >= 1
+//------------------------------------------------------------------------------
+
+inline int Config_GetMaxQueueSize()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef MaxQueueSize
+      return MaxQueueSize;
+   #else
+      return DEFAULT_MaxQueueSize;
+   #endif
+#else
+   int val = MaxQueueSize;
+   return (val < 1) ? DEFAULT_MaxQueueSize : val;
+#endif
+}
+
+inline int Config_GetLogBufferSize()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef LogBufferSize
+      return LogBufferSize;
+   #else
+      return DEFAULT_LogBufferSize;
+   #endif
+#else
+   int val = LogBufferSize;
+   return (val < 1) ? DEFAULT_LogBufferSize : val;
+#endif
+}
+
+//------------------------------------------------------------------------------
+// Leverage overrides: 0 = use account, otherwise [1, 1000]
+//------------------------------------------------------------------------------
+
+inline int Config_GetLeverageOverrideFX()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef LeverageOverrideFX
+      return LeverageOverrideFX;
+   #else
+      return 50;
+   #endif
+#else
+   int val = LeverageOverrideFX;
+   if(val == 0) return 0; // Use account leverage
+   if(val < 1) return 1;
+   if(val > 1000) return 1000;
+   return val;
+#endif
+}
+
+inline int Config_GetLeverageOverrideMetals()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef LeverageOverrideMetals
+      return LeverageOverrideMetals;
+   #else
+      return 20;
+   #endif
+#else
+   int val = LeverageOverrideMetals;
+   if(val == 0) return 0; // Use account leverage
+   if(val < 1) return 1;
+   if(val > 1000) return 1000;
+   return val;
+#endif
+}
+
+//------------------------------------------------------------------------------
+// Position/order caps: >= 0 (0 = unlimited)
+//------------------------------------------------------------------------------
+
+inline int Config_GetMaxOpenPositionsTotal()
+{
+#ifdef RPEA_TEST_RUNNER
+   return MaxOpenPositionsTotal;
+#else
+   int val = MaxOpenPositionsTotal;
+   return (val < 0) ? 0 : val;
+#endif
+}
+
+inline int Config_GetMaxOpenPerSymbol()
+{
+#ifdef RPEA_TEST_RUNNER
+   return MaxOpenPerSymbol;
+#else
+   int val = MaxOpenPerSymbol;
+   return (val < 0) ? 0 : val;
+#endif
+}
+
+inline int Config_GetMaxPendingsPerSymbol()
+{
+#ifdef RPEA_TEST_RUNNER
+   return MaxPendingsPerSymbol;
+#else
+   int val = MaxPendingsPerSymbol;
+   return (val < 0) ? 0 : val;
+#endif
+}
+
+//==============================================================================
+// M6-Task01: Main Validation Function
+// Called early in OnInit before any trading logic.
+// Returns false on fatal errors (fail-fast), true otherwise.
+// Logs all clamping actions with [Config] prefix.
+//==============================================================================
+
+#ifndef RPEA_TEST_RUNNER
+inline bool Config_ValidateInputs()
+{
+   bool valid = true;
+   
+   //==========================================================================
+   // FAIL-FAST CHECKS: Return INIT_FAILED if any of these fail
+   //==========================================================================
+   
+   // InpSymbols must not be empty
+   if(StringLen(InpSymbols) == 0)
+   {
+      Config_LogFatal("InpSymbols", "is empty - at least one symbol required");
+      valid = false;
+   }
+   
+   // DailyLossCapPct must be > 0
+   if(DailyLossCapPct <= 0)
+   {
+      Config_LogFatal("DailyLossCapPct", StringFormat("must be > 0 (got %.4f)", DailyLossCapPct));
+      valid = false;
+   }
+   
+   // OverallLossCapPct must be > 0
+   if(OverallLossCapPct <= 0)
+   {
+      Config_LogFatal("OverallLossCapPct", StringFormat("must be > 0 (got %.4f)", OverallLossCapPct));
+      valid = false;
+   }
+   
+   // TargetProfitPct must be > 0
+   if(TargetProfitPct <= 0)
+   {
+      Config_LogFatal("TargetProfitPct", StringFormat("must be > 0 (got %.4f)", TargetProfitPct));
+      valid = false;
+   }
+
+   // NewsAccountMode must be 0 (auto), 1 (master), or 2 (eval)
+   if(NewsAccountMode < 0 || NewsAccountMode > 2)
+   {
+      Config_LogFatal("NewsAccountMode", StringFormat("invalid value %d (expected 0, 1, or 2)", NewsAccountMode));
+      valid = false;
+   }
+   
+   // Early exit if critical failures
+   if(!valid)
+      return false;
+   
+   //==========================================================================
+   // CLAMP WARNINGS: Log all values that will be clamped at runtime
+   //==========================================================================
+   
+   // ORMinutes must be one of {30, 45, 60, 75}
+   if(ORMinutes != 30 && ORMinutes != 45 && ORMinutes != 60 && ORMinutes != 75)
+   {
+      int nearest = Config_NearestORMinutes(ORMinutes);
+      Config_LogWarn("ORMinutes", StringFormat("%d not in {30,45,60,75}, will use %d", ORMinutes, nearest));
+   }
+   
+   // OverallLossCapPct < DailyLossCapPct: clamp daily down
+   if(OverallLossCapPct < DailyLossCapPct)
+   {
+      Config_LogWarn("DailyLossCapPct", StringFormat("%.2f > OverallLossCapPct %.2f, will clamp daily to %.2f",
+                     DailyLossCapPct, OverallLossCapPct, OverallLossCapPct));
+   }
+   
+   // MinTradeDaysRequired >= 1
+   if(MinTradeDaysRequired < 1)
+   {
+      Config_LogClampInt("MinTradeDaysRequired", MinTradeDaysRequired, 1);
+   }
+   
+   // RiskPct range [0.8, 2.0]
+   if(RiskPct < 0.8 || RiskPct > 2.0)
+   {
+      double clamped = (RiskPct < 0.8) ? 0.8 : 2.0;
+      Config_LogClampDouble("RiskPct", RiskPct, clamped);
+   }
+
+   // MicroRiskPct range [0.05, 0.20]
+   if(MicroRiskPct < 0.05 || MicroRiskPct > 0.20)
+   {
+      double clamped = (MicroRiskPct < 0.05) ? 0.05 : 0.20;
+      Config_LogClampDouble("MicroRiskPct", MicroRiskPct, clamped);
+   }
+
+   // RtargetBC range [1.8, 2.6]
+   if(RtargetBC < 1.8 || RtargetBC > 2.6)
+   {
+      double clamped = (RtargetBC < 1.8) ? 1.8 : 2.6;
+      Config_LogClampDouble("RtargetBC", RtargetBC, clamped);
+   }
+
+   // RtargetMSC range [1.6, 2.4]
+   if(RtargetMSC < 1.6 || RtargetMSC > 2.4)
+   {
+      double clamped = (RtargetMSC < 1.6) ? 1.6 : 2.4;
+      Config_LogClampDouble("RtargetMSC", RtargetMSC, clamped);
+   }
+
+   // SLmult range [0.7, 1.3]
+   if(SLmult < 0.7 || SLmult > 1.3)
+   {
+      double clamped = (SLmult < 0.7) ? 0.7 : 1.3;
+      Config_LogClampDouble("SLmult", SLmult, clamped);
+   }
+
+   // TrailMult range [0.6, 1.2]
+   if(TrailMult < 0.6 || TrailMult > 1.2)
+   {
+      double clamped = (TrailMult < 0.6) ? 0.6 : 1.2;
+      Config_LogClampDouble("TrailMult", TrailMult, clamped);
+   }
+
+   // GivebackCapDayPct range [0.25, 0.50]
+   if(GivebackCapDayPct < 0.25 || GivebackCapDayPct > 0.50)
+   {
+      double clamped = (GivebackCapDayPct < 0.25) ? 0.25 : 0.50;
+      Config_LogClampDouble("GivebackCapDayPct", GivebackCapDayPct, clamped);
+   }
+   
+   // OneAndDoneR range [0.5, 5.0]
+   if(OneAndDoneR < 0.5 || OneAndDoneR > 5.0)
+   {
+      double clamped = (OneAndDoneR < 0.5) ? 0.5 : 5.0;
+      Config_LogClampDouble("OneAndDoneR", OneAndDoneR, clamped);
+   }
+   
+   // Session hours [0, 23]
+   if(StartHourLO < 0 || StartHourLO > 23)
+   {
+      Config_LogClampInt("StartHourLO", StartHourLO, Config_ClampHour(StartHourLO));
+   }
+   if(StartHourNY < 0 || StartHourNY > 23)
+   {
+      Config_LogClampInt("StartHourNY", StartHourNY, Config_ClampHour(StartHourNY));
+   }
+   if(CutoffHour < 0 || CutoffHour > 23)
+   {
+      Config_LogClampInt("CutoffHour", CutoffHour, Config_ClampHour(CutoffHour));
+   }
+   
+   // MicroTimeStopMin range [30, 60]
+   if(MicroTimeStopMin < 30 || MicroTimeStopMin > 60)
+   {
+      int clamped = (MicroTimeStopMin < 30) ? 30 : 60;
+      Config_LogClampInt("MicroTimeStopMin", MicroTimeStopMin, clamped);
+   }
+   
+   // Time windows >= 0
+   if(MinHoldSeconds < 0)
+      Config_LogClampInt("MinHoldSeconds", MinHoldSeconds, 0);
+   if(NewsBufferS < 0)
+      Config_LogClampInt("NewsBufferS", NewsBufferS, 0);
+   if(QueueTTLMinutes < 0)
+      Config_LogClampInt("QueueTTLMinutes", QueueTTLMinutes, 0);
+   if(StabilizationTimeoutMin < 0)
+      Config_LogClampInt("StabilizationTimeoutMin", StabilizationTimeoutMin, 0);
+   if(StabilizationBars < 1)
+      Config_LogClampInt("StabilizationBars", StabilizationBars, 1);
+   if(StabilizationLookbackBars < 1)
+      Config_LogClampInt("StabilizationLookbackBars", StabilizationLookbackBars, 1);
+   if(NewsCalendarLookbackHours < 0)
+      Config_LogClampInt("NewsCalendarLookbackHours", NewsCalendarLookbackHours, 0);
+   if(NewsCalendarLookaheadHours < 1)
+      Config_LogClampInt("NewsCalendarLookaheadHours", NewsCalendarLookaheadHours, 1);
+   
+   // Spread/slippage >= 0
+   if(MaxSlippagePoints < 0)
+      Config_LogClampInt("MaxSlippagePoints", MaxSlippagePoints, 0);
+   if(MaxSpreadPoints < 0)
+      Config_LogClampInt("MaxSpreadPoints", MaxSpreadPoints, 0);
+   if(!MathIsValidNumber(SpreadMultATR) || SpreadMultATR <= 0.0)
+      Config_LogClampDouble("SpreadMultATR", SpreadMultATR, DEFAULT_SpreadMultATR);
+   
+   // Queue/logging >= 1
+   if(MaxQueueSize < 1)
+      Config_LogClampInt("MaxQueueSize", MaxQueueSize, DEFAULT_MaxQueueSize);
+   if(LogBufferSize < 1)
+      Config_LogClampInt("LogBufferSize", LogBufferSize, DEFAULT_LogBufferSize);
+   
+   // Leverage overrides: 0 or [1, 1000]
+   if(LeverageOverrideFX != 0 && (LeverageOverrideFX < 1 || LeverageOverrideFX > 1000))
+   {
+      int clamped = (LeverageOverrideFX < 1) ? 1 : 1000;
+      Config_LogClampInt("LeverageOverrideFX", LeverageOverrideFX, clamped);
+   }
+   if(LeverageOverrideMetals != 0 && (LeverageOverrideMetals < 1 || LeverageOverrideMetals > 1000))
+   {
+      int clamped = (LeverageOverrideMetals < 1) ? 1 : 1000;
+      Config_LogClampInt("LeverageOverrideMetals", LeverageOverrideMetals, clamped);
+   }
+   
+   // Position/order caps >= 0
+   if(MaxOpenPositionsTotal < 0)
+      Config_LogClampInt("MaxOpenPositionsTotal", MaxOpenPositionsTotal, 0);
+   if(MaxOpenPerSymbol < 0)
+      Config_LogClampInt("MaxOpenPerSymbol", MaxOpenPerSymbol, 0);
+   if(MaxPendingsPerSymbol < 0)
+      Config_LogClampInt("MaxPendingsPerSymbol", MaxPendingsPerSymbol, 0);
+   
+   return true;
+}
+#endif // !RPEA_TEST_RUNNER
+
 #endif // __MQL5__
 
 //==============================================================================

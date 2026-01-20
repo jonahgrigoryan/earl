@@ -3,6 +3,8 @@
 // state.mqh - Challenge state & helpers (M1 stubs)
 // References: finalspec.md (Trading-day counting & persistence)
 
+#include <RPEA/config.mqh>
+
 // M4-Task04: Schema version for state migration
 #define STATE_VERSION_CURRENT 2
 
@@ -222,7 +224,7 @@ void State_MarkTradeDayServer(const datetime server_time, const datetime deal_ti
    State_MarkDirty(); // M4-Task04: Critical transition
    
    LogAuditRow("TRADE_DAY_MARKED", "STATE", 1,
-               StringFormat("Day %d of %d", st.gDaysTraded, MinTradeDaysRequired),
+               StringFormat("Day %d of %d", st.gDaysTraded, Config_GetMinTradeDaysRequired()),
                StringFormat("{\"server_date\":\"%s\",\"cest_date\":\"%s\",\"days_traded\":%d,\"deal_time\":%I64d}",
                            server_date_str, cest_date, st.gDaysTraded, (long)effective_deal_time));
 }
@@ -237,7 +239,7 @@ int State_GetDaysTraded()
 // Check if MinTradeDays requirement is met
 bool State_MinTradeDaysMet()
 {
-   return State_GetDaysTraded() >= MinTradeDaysRequired;
+   return State_GetDaysTraded() >= Config_GetMinTradeDaysRequired();
 }
 
 // Check if a Micro-Mode entry is allowed for the current server day

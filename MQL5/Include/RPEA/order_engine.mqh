@@ -897,12 +897,14 @@ private:
          return m_cutoff_override;
 #ifndef RPEA_ORDER_ENGINE_SKIP_SESSIONS
       // Align to the configured session cutoff hour using helper
-      datetime cutoff = Sessions_AnchorForHour(now, CutoffHour);
+      const int cutoff_hour = Config_GetCutoffHour();
+      datetime cutoff = Sessions_AnchorForHour(now, cutoff_hour);
 #else
       // Manual alignment at CutoffHour when sessions module is skipped (unit tests)
+      const int cutoff_hour = Config_GetCutoffHour();
       MqlDateTime tm;
       TimeToStruct(now, tm);
-      tm.hour = CutoffHour;
+      tm.hour = cutoff_hour;
       tm.min = 0;
       tm.sec = 0;
       datetime cutoff = StructToTime(tm);
@@ -1095,6 +1097,8 @@ public:
       LogOE("OrderEngine::Init() - Initializing Order Engine");
       ResetState();
       LoadResilienceConfig();
+      m_max_slippage_points = Config_GetMaxSlippagePoints();
+      m_min_hold_seconds = Config_GetMinHoldSeconds();
       // Initialize partial fill tracking (Task 8)
       m_partial_fill_count = 0;
       ArrayResize(m_partial_fill_states, 100);
@@ -1704,9 +1708,9 @@ public:
                                symbol_pending,
                                violation_reason))
       {
-         const int total_limit = MaxOpenPositionsTotal;
-         const int symbol_limit = MaxOpenPerSymbol;
-         const int pending_limit = MaxPendingsPerSymbol;
+         const int total_limit = Config_GetMaxOpenPositionsTotal();
+         const int symbol_limit = Config_GetMaxOpenPerSymbol();
+         const int pending_limit = Config_GetMaxPendingsPerSymbol();
 
          string fields = StringFormat(
             "{\"symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"reason\":\"%s\",\"total\":%d,\"symbol\":%d,\"pending\":%d,\"limit_total\":%d,\"limit_symbol\":%d,\"limit_pending\":%d}",
@@ -1738,13 +1742,13 @@ public:
          mode,
          total_positions,
          projected_total,
-         MaxOpenPositionsTotal,
+         Config_GetMaxOpenPositionsTotal(),
          symbol_positions,
          projected_symbol_positions,
-         MaxOpenPerSymbol,
+         Config_GetMaxOpenPerSymbol(),
          symbol_pending,
          projected_symbol_pending,
-         MaxPendingsPerSymbol);
+         Config_GetMaxPendingsPerSymbol());
 
       LogDecision("OrderEngine", "CAP_PASS", cap_pass_fields);
       LogOE(StringFormat("Position caps OK for %s (%s): total %d->%d (limit=%d), symbol %d->%d (limit=%d), pending %d->%d (limit=%d)",
@@ -1752,13 +1756,13 @@ public:
                          mode,
                          total_positions,
                          projected_total,
-                         MaxOpenPositionsTotal,
+                         Config_GetMaxOpenPositionsTotal(),
                          symbol_positions,
                          projected_symbol_positions,
-                         MaxOpenPerSymbol,
+                         Config_GetMaxOpenPerSymbol(),
                          symbol_pending,
                          projected_symbol_pending,
-                         MaxPendingsPerSymbol));
+                         Config_GetMaxPendingsPerSymbol()));
 
       double entry_price = normalized.price;
       if(is_market)
@@ -2657,9 +2661,9 @@ bool OrderEngine::EvaluatePositionCaps(const OrderRequest &request,
                                          out_symbol_pending);
    }
 
-   const int total_limit = MaxOpenPositionsTotal;
-   const int symbol_limit = MaxOpenPerSymbol;
-   const int pending_limit = MaxPendingsPerSymbol;
+   const int total_limit = Config_GetMaxOpenPositionsTotal();
+   const int symbol_limit = Config_GetMaxOpenPerSymbol();
+   const int pending_limit = Config_GetMaxPendingsPerSymbol();
 
    if(!caps_ok)
    {
@@ -5365,7 +5369,7 @@ bool Queue_OrderEngine_IsRiskReducing(const QueuedAction &qa,
 
 int OrderEngine_MaxDeviationPoints()
 {
-   int deviation = MaxSlippagePoints;
+   int deviation = Config_GetMaxSlippagePoints();
    if(deviation <= 0)
       deviation = (int)MathRound(DEFAULT_MaxSlippagePoints);
    if(deviation < 0)
@@ -5812,7 +5816,7 @@ void OE_MarkMicroModeEntry()
    if(Equity_IsMicroModeActive()) {
       State_MarkMicroEntryServer(TimeCurrent());
       LogAuditRow("MICRO_MODE_TRADE", "OrderEngine", 1, 
-                  StringFormat("Entry at %.2f%% risk", MicroRiskPct), "{}");
+                  StringFormat("Entry at %.2f%% risk", Config_GetMicroRiskPct()), "{}");
    }
 }
 
