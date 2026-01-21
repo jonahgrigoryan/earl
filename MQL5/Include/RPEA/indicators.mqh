@@ -148,6 +148,11 @@ double Indicators_ComputeRSIFromBars(const SyntheticBar &bars[], const int count
    return 100.0 - (100.0 / (1.0 + rs));
 }
 
+// M6-Task04: Throttle synthetic unavailable warnings (max once per minute)
+datetime g_xaueur_warn_d1 = 0;
+datetime g_xaueur_warn_h1 = 0;
+const int SYNTH_WARN_THROTTLE_SEC = 60;
+
 bool Indicators_RefreshSyntheticXAUEURSlot(IndicatorSymbolSlot &slot)
 {
    const int daily_period = 14;
@@ -156,7 +161,12 @@ bool Indicators_RefreshSyntheticXAUEURSlot(IndicatorSymbolSlot &slot)
 
    if(!Indicators_GetSyntheticBars(PERIOD_D1, daily_required, daily_bars))
    {
-      Print("[Synthetic] XAUEUR unavailable (D1 bars)");
+      datetime now = TimeCurrent();
+      if(now - g_xaueur_warn_d1 >= SYNTH_WARN_THROTTLE_SEC)
+      {
+         Print("[Synthetic] XAUEUR unavailable (D1 bars)");
+         g_xaueur_warn_d1 = now;
+      }
       slot.atr_d1 = 0.0;
       slot.has_atr = false;
       slot.open_d1_prev = 0.0;
@@ -196,7 +206,12 @@ bool Indicators_RefreshSyntheticXAUEURSlot(IndicatorSymbolSlot &slot)
 
    if(!Indicators_GetSyntheticBars(PERIOD_H1, hourly_required, hourly_bars))
    {
-      Print("[Synthetic] XAUEUR unavailable (H1 bars)");
+      datetime now = TimeCurrent();
+      if(now - g_xaueur_warn_h1 >= SYNTH_WARN_THROTTLE_SEC)
+      {
+         Print("[Synthetic] XAUEUR unavailable (H1 bars)");
+         g_xaueur_warn_h1 = now;
+      }
       slot.ma20_h1 = 0.0;
       slot.has_ma = false;
       slot.rsi_h1 = 0.0;
@@ -345,8 +360,8 @@ void Indicators_Refresh(const AppContext &ctx, const string symbol)
 
     if(symbol == SYNTH_SYMBOL_XAUEUR)
     {
-       if(!Indicators_RefreshSyntheticXAUEURSlot(g_indicator_slots[idx]))
-          Print("[Synthetic] XAUEUR unavailable for indicator refresh");
+       // M6-Task04: Throttled warning already in RefreshSyntheticXAUEURSlot
+       Indicators_RefreshSyntheticXAUEURSlot(g_indicator_slots[idx]);
        return;
     }
 
