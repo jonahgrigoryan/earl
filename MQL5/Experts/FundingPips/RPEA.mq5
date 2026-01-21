@@ -99,6 +99,9 @@ input int    SelfHealMaxAttempts        = DEFAULT_SelfHealMaxAttempts;
 input int    ErrorAlertThrottleSec      = DEFAULT_ErrorAlertThrottleSec;
 input bool   BreakerProtectiveExitBypass = DEFAULT_BreakerProtectiveExitBypass;
 
+// M6-Task04: Performance profiling (off by default, low overhead when disabled)
+input bool   EnablePerfProfiling        = false;
+
 // Timezone
 input bool   UseServerMidnightBaseline  = true;
 input int    ServerToCEST_OffsetMinutes = 0;
@@ -157,6 +160,42 @@ OrderEngine g_order_engine;
 // Now that AppContext is defined, include session and scheduler modules
 #include <RPEA/sessions.mqh>
 #include <RPEA/scheduler.mqh>
+
+// M6-Task04: OnTimer profiling stats (aggregated, throttled output)
+struct OnTimerPerfStats
+{
+   ulong   tick_count;          // Total OnTimer calls
+   ulong   total_us;            // Cumulative microseconds
+   ulong   max_us;              // Worst-case single tick
+   ulong   equity_checks_us;    // Time in equity checks
+   ulong   indicator_refresh_us;// Time in indicator refresh
+   ulong   order_engine_us;     // Time in order engine tick + queue
+   ulong   scheduler_us;        // Time in scheduler tick
+   datetime last_report_time;   // Throttle: last report timestamp
+   int     report_interval_sec; // Reporting interval (default 30s)
+};
+OnTimerPerfStats g_timer_perf = {0, 0, 0, 0, 0, 0, 0, 0, 30};
+
+void OnTimer_ReportPerfStats()
+{
+   if(!Config_GetEnablePerfProfiling()) return;
+   if(g_timer_perf.tick_count == 0) return;
+   
+   datetime now = TimeCurrent();
+   if(now - g_timer_perf.last_report_time < g_timer_perf.report_interval_sec) return;
+   
+   double avg_us = (double)g_timer_perf.total_us / (double)g_timer_perf.tick_count;
+   double avg_eq = (double)g_timer_perf.equity_checks_us / (double)g_timer_perf.tick_count;
+   double avg_ind = (double)g_timer_perf.indicator_refresh_us / (double)g_timer_perf.tick_count;
+   double avg_oe = (double)g_timer_perf.order_engine_us / (double)g_timer_perf.tick_count;
+   double avg_sch = (double)g_timer_perf.scheduler_us / (double)g_timer_perf.tick_count;
+   
+   PrintFormat("[Perf] OnTimer: ticks=%llu avg=%.0fus max=%lluus | eq=%.0fus ind=%.0fus oe=%.0fus sch=%.0fus",
+               g_timer_perf.tick_count, avg_us, g_timer_perf.max_us,
+               avg_eq, avg_ind, avg_oe, avg_sch);
+   
+   g_timer_perf.last_report_time = now;
+}
 
 // Helper: split symbols
 int SplitSymbols(const string src, string &dst[])
@@ -310,6 +349,13 @@ void OnDeinit(const int reason)
 // OnTimer: orchestration via Scheduler_Tick; server-day rollover
 void OnTimer()
 {
+   // M6-Task04: Profiling start (zero overhead when disabled)
+   bool profiling = Config_GetEnablePerfProfiling();
+   ulong t_start = 0, t_eq_start = 0, t_eq_end = 0;
+   ulong t_ind_start = 0, t_ind_end = 0, t_oe_start = 0, t_oe_end = 0;
+   ulong t_sch_start = 0, t_sch_end = 0;
+   if(profiling) t_start = GetMicrosecondCount();
+
    g_ctx.current_server_time = TimeCurrent();
 
    // Server-day rollover handling
@@ -338,6 +384,9 @@ void OnTimer()
    }
    g_ctx.timer_last_check = g_ctx.current_server_time;
    
+   // --- Equity checks section ---
+   if(profiling) t_eq_start = GetMicrosecondCount();
+   
    // M4-Task03: Kill-switch floors and margin protection
    Equity_CheckAndExecuteKillswitch(g_ctx);
    Equity_CheckMarginProtection();
@@ -353,7 +402,12 @@ void OnTimer()
    
    // M4-Task02: Check hard-stop conditions (floor breach or challenge complete)
    Equity_CheckHardStopConditions(g_ctx);
+   
+   if(profiling) t_eq_end = GetMicrosecondCount();
 
+   // --- Indicator refresh section ---
+   if(profiling) t_ind_start = GetMicrosecondCount();
+   
     // Refresh indicators per symbol (lightweight in M1)
     int synth_idx = Indicators_FindSlot(SYNTH_SYMBOL_XAUEUR);
     if(synth_idx >= 0)
@@ -374,7 +428,12 @@ void OnTimer()
       if(sym=="") continue;
       Indicators_Refresh(g_ctx, sym);
    }
+   
+   if(profiling) t_ind_end = GetMicrosecondCount();
 
+   // --- Order engine section ---
+   if(profiling) t_oe_start = GetMicrosecondCount();
+   
     // M3 Task 1: Order Engine timer tick (AFTER transaction processing)
     g_order_engine.OnTimerTick(g_ctx.current_server_time);
 
@@ -383,12 +442,33 @@ void OnTimer()
 
    // Master SL enforcement tracking
    g_order_engine.CheckPendingSLEnforcement();
+   
+   if(profiling) t_oe_end = GetMicrosecondCount();
 
+   // --- Scheduler section ---
+   if(profiling) t_sch_start = GetMicrosecondCount();
+   
    // Delegate to scheduler (logging-only in M1)
    Scheduler_Tick(g_ctx);
    
    // M4-Task01: Update news blocking and stabilization state
    News_OnTimer();
+   
+   if(profiling) t_sch_end = GetMicrosecondCount();
+   
+   // M6-Task04: Aggregate and report stats (throttled)
+   if(profiling)
+   {
+      ulong elapsed = GetMicrosecondCount() - t_start;
+      g_timer_perf.tick_count++;
+      g_timer_perf.total_us += elapsed;
+      if(elapsed > g_timer_perf.max_us) g_timer_perf.max_us = elapsed;
+      g_timer_perf.equity_checks_us += (t_eq_end - t_eq_start);
+      g_timer_perf.indicator_refresh_us += (t_ind_end - t_ind_start);
+      g_timer_perf.order_engine_us += (t_oe_end - t_oe_start);
+      g_timer_perf.scheduler_us += (t_sch_end - t_sch_start);
+      OnTimer_ReportPerfStats();
+   }
 }
 
 //+------------------------------------------------------------------+

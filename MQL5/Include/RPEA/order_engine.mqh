@@ -746,6 +746,16 @@ private:
    int                m_recovered_action_count;
    bool               m_recovery_completed;
    datetime           m_recovery_timestamp;
+   
+   struct OrderSendPerfStats
+   {
+      ulong    count;
+      ulong    total_us;
+      ulong    max_us;
+      datetime last_report_time;
+      int      report_interval_sec;
+   };
+   OrderSendPerfStats m_order_send_perf;
 
    // Helper methods
    void LogOE(const string message)
@@ -1107,6 +1117,11 @@ public:
      m_recovered_action_count = 0;
      m_recovery_completed = false;
      m_recovery_timestamp = 0;
+     m_order_send_perf.count = 0;
+     m_order_send_perf.total_us = 0;
+     m_order_send_perf.max_us = 0;
+     m_order_send_perf.last_report_time = 0;
+     m_order_send_perf.report_interval_sec = 30;
    }
    
    // Destructor
@@ -1131,6 +1146,31 @@ public:
    void ResilienceRecordSuccess()
    {
       OrderEngine_RecordSuccess();
+   }
+   
+   void Perf_RecordOrderSend(const ulong elapsed_us)
+   {
+      m_order_send_perf.count++;
+      m_order_send_perf.total_us += elapsed_us;
+      if(elapsed_us > m_order_send_perf.max_us)
+         m_order_send_perf.max_us = elapsed_us;
+      
+      datetime now = TimeCurrent();
+      if(m_order_send_perf.last_report_time == 0)
+         m_order_send_perf.last_report_time = now;
+      if(now - m_order_send_perf.last_report_time < m_order_send_perf.report_interval_sec)
+         return;
+      
+      double avg_us = (m_order_send_perf.count > 0)
+                      ? ((double)m_order_send_perf.total_us / (double)m_order_send_perf.count)
+                      : 0.0;
+      PrintFormat("[Perf] OrderSend: calls=%llu avg=%.0fus max=%lluus",
+                  m_order_send_perf.count, avg_us, m_order_send_perf.max_us);
+      
+      m_order_send_perf.count = 0;
+      m_order_send_perf.total_us = 0;
+      m_order_send_perf.max_us = 0;
+      m_order_send_perf.last_report_time = now;
    }
 
    void TestResetResilienceState()
@@ -4630,6 +4670,11 @@ void OrderEngine::ResetState()
    m_recovered_action_count = 0;
    m_recovery_completed = false;
    m_recovery_timestamp = 0;
+   m_order_send_perf.count = 0;
+   m_order_send_perf.total_us = 0;
+   m_order_send_perf.max_us = 0;
+   m_order_send_perf.last_report_time = 0;
+   m_order_send_perf.report_interval_sec = 30;
 }
 
 string OrderEngine::FormatLogLine(const string message)
@@ -4886,6 +4931,12 @@ int OE_Test_GetCapturedDelay(const int index)
 
 bool OE_OrderSend(const MqlTradeRequest &request, MqlTradeResult &result)
 {
+   const bool profiling = Config_GetEnablePerfProfiling();
+   ulong start_us = 0;
+   if(profiling)
+      start_us = GetMicrosecondCount();
+   
+   bool ok = false;
    if(g_oe_order_send_override.active)
    {
       g_oe_order_send_override.call_count++;
@@ -4896,21 +4947,25 @@ bool OE_OrderSend(const MqlTradeRequest &request, MqlTradeResult &result)
       {
          ZeroMemory(result);
          result.retcode = 0;
-         return false;
+         ok = false;
       }
+      else
+      {
+         const OEOrderSendResponse queued = g_oe_order_send_override.responses[idx];
+         g_oe_order_send_override.current_index++;
 
-      const OEOrderSendResponse queued = g_oe_order_send_override.responses[idx];
-      g_oe_order_send_override.current_index++;
-
-      ZeroMemory(result);
-      result.retcode = queued.retcode;
-      result.order = queued.order_ticket;
-      result.deal = queued.deal_ticket;
-      result.price = queued.price;
-      result.volume = queued.volume;
-      result.comment = queued.comment;
-      return queued.result_ok;
+         ZeroMemory(result);
+         result.retcode = queued.retcode;
+         result.order = queued.order_ticket;
+         result.deal = queued.deal_ticket;
+         result.price = queued.price;
+         result.volume = queued.volume;
+         result.comment = queued.comment;
+         ok = queued.result_ok;
+      }
    }
+   else
+   {
 
 #ifdef RPEA_ORDER_ENGINE_SKIP_RISK
 #define RPEA_ORDER_ENGINE_SKIP_ORDERSEND_TMP
@@ -4923,10 +4978,10 @@ bool OE_OrderSend(const MqlTradeRequest &request, MqlTradeResult &result)
    // Skip live OrderSend in test builds when no override is active
    ZeroMemory(result);
    result.retcode = TRADE_RETCODE_PRICE_OFF;
-   return false;
+   ok = false;
 #else
    ResetLastError();
-   bool ok = OrderSend(request, result);
+   ok = OrderSend(request, result);
    if(!ok)
    {
       const int err = GetLastError();
@@ -4936,8 +4991,12 @@ bool OE_OrderSend(const MqlTradeRequest &request, MqlTradeResult &result)
                   result.comment);
       ResetLastError();
    }
-   return ok;
 #endif
+   }
+   
+   if(profiling)
+      g_order_engine.Perf_RecordOrderSend(GetMicrosecondCount() - start_us);
+   return ok;
 
 #ifdef RPEA_ORDER_ENGINE_SKIP_ORDERSEND_TMP
 #undef RPEA_ORDER_ENGINE_SKIP_ORDERSEND_TMP

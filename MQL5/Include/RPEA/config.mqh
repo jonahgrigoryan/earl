@@ -237,6 +237,27 @@ inline bool Config_GetBreakerProtectiveExitBypass()
 }
 
 //------------------------------------------------------------------------------
+// M6-Task04: Performance Profiling Config Helper
+//------------------------------------------------------------------------------
+
+#ifndef DEFAULT_EnablePerfProfiling
+#define DEFAULT_EnablePerfProfiling false
+#endif
+
+inline bool Config_GetEnablePerfProfiling()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef EnablePerfProfiling
+      return EnablePerfProfiling;
+   #else
+      return DEFAULT_EnablePerfProfiling;
+   #endif
+#else
+   return EnablePerfProfiling;
+#endif
+}
+
+//------------------------------------------------------------------------------
 // Task 22 Liquidity Config Helper
 //------------------------------------------------------------------------------
 

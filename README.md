@@ -223,6 +223,18 @@ input int MinHoldSeconds = 120;
 input int QueuedActionTTLMin = 5;          // Queue expiry time
 ```
 
+### Diagnostics & Profiling (M6-Task04)
+```cpp
+input bool EnablePerfProfiling = false;    // Enable performance profiling (default: off)
+input bool EnableDetailedLogging = false;  // Verbose order engine logs (default: off)
+```
+
+**Performance Profiling** (`EnablePerfProfiling`):
+- When enabled, measures and reports timing for OnTimer subsections (equity checks, indicator refresh, order engine, scheduler)
+- Output is throttled to every 30 seconds to avoid log spam
+- Zero overhead when disabled (early bool check skips all `GetMicrosecondCount()` calls)
+- Sample output: `[Perf] OnTimer: ticks=10 avg=1250us max=3500us | eq=200us ind=800us oe=150us sch=100us`
+
 ## 🧠 Machine Learning Components
 
 ### EMRT Formation (`emrt.mqh`)
