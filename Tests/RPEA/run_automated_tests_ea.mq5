@@ -54,9 +54,23 @@ input double RiskGateHeadroom           = 0.90;
 #define MarginLevelCritical    50.0
 #define EnableMarginProtection true
 #define TradingEnabledDefault  true
+// M6-Task01: Additional macros for config validation tests
+#define MinTradeDaysRequired   3
+#define MinHoldSeconds         120
+#define RtargetBC              2.2
+#define RtargetMSC             2.0
+#define SLmult                 1.0
+#define QueueTTLMinutes        5
+#define LeverageOverrideFX     50
+#define LeverageOverrideMetals 20
+#define MaxQueueSize           1000
+#define LogBufferSize          1000
+#define TargetProfitPct        10.0
+#define MicroTimeStopMin       45
 #define RPEA_ORDER_ENGINE_SKIP_RISK
 #define RPEA_ORDER_ENGINE_SKIP_EQUITY
 #define RPEA_ORDER_ENGINE_SKIP_SESSIONS
+#define RPEA_RISK_SKIP_MARGIN_CHECK
 
 // Include test reporter
 #define RPEA_TEST_RUNNER
@@ -115,6 +129,8 @@ bool g_test_gate_force_fail = false;
 // M4-Task04: Persistence Hardening tests
 #include "test_persistence_state.mqh"
 #include "test_persistence_recovery.mqh"
+// M6-Task01: Config Validation tests
+#include "test_config_validation.mqh"
 
 // Forward declaration to ensure the breakeven suite is visible when compiling.
 bool TestBreakeven_RunAll();
@@ -129,6 +145,8 @@ bool TestProtectiveExits_RunAll();
 // M4-Task04 forward declarations
 bool TestPersistenceState_RunAll();
 bool TestPersistenceRecovery_RunAll();
+// M6-Task01 forward declaration
+bool TestConfigValidation_RunAll();
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -215,11 +233,18 @@ int OnInit()
    RunAllTests();
 
    // Write results to file
-   g_test_reporter.WriteResults();
+   bool write_success = g_test_reporter.WriteResults();
+   if(!write_success)
+   {
+      Print("[ERROR] Failed to write test results JSON file!");
+   }
    g_test_reporter.PrintSummary();
 
    // Mark as executed
    g_tests_executed = true;
+
+   // Small delay to ensure file is flushed to disk
+   Sleep(100);
 
    // Exit immediately if all tests passed
    if(g_test_reporter.AllTestsPassed())
@@ -489,6 +514,16 @@ void RunAllTests()
    g_test_reporter.RecordTest(suiteM4g, "TestPersistenceRecovery_RunAll", taskM4g_result,
                                taskM4g_result ? "Persistence recovery tests passed" : "Persistence recovery tests failed");
    g_test_reporter.EndSuite(suiteM4g);
+
+   // M6-Task01: Config Validation Tests
+   Print("=================================================================");
+   Print("M6-Task01: Config Validation Tests");
+   Print("=================================================================");
+   int suiteM6a = g_test_reporter.BeginSuite("M6Task01_Config_Validation");
+   bool taskM6a_result = TestConfigValidation_RunAll();
+   g_test_reporter.RecordTest(suiteM6a, "TestConfigValidation_RunAll", taskM6a_result,
+                               taskM6a_result ? "Config validation tests passed" : "Config validation tests failed");
+   g_test_reporter.EndSuite(suiteM6a);
 
    Print("Test execution complete.");
 }

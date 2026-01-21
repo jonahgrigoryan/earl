@@ -3,6 +3,7 @@
 // sessions.mqh - Session predicates (M1 stubs)
 // References: finalspec.md (Session Governance, Session window predicate)
 
+#include <RPEA/config.mqh>
 #include <RPEA/logging.mqh>
 #include <RPEA/equity_guardian.mqh>
 
@@ -194,9 +195,10 @@ datetime Sessions_AnchorForHour(const datetime now, const int hour)
 
 int Sessions_ORMinutesValue()
 {
-   if(ORMinutes <= 0)
+   int or_minutes = Config_GetORMinutes();
+   if(or_minutes <= 0)
       return 1;
-   return ORMinutes;
+   return or_minutes;
 }
 
 void Sessions_BeginSession(const string symbol, SessionWindowState &win, const SessionKind kind, const datetime start_time)
@@ -356,7 +358,7 @@ void Sessions_UpdateSession(const AppContext &ctx, const string symbol, SessionW
       return;
    }
 
-   datetime cutoff = Sessions_AnchorForHour(now, CutoffHour);
+   datetime cutoff = Sessions_AnchorForHour(now, Config_GetCutoffHour());
    if(cutoff <= session_start)
       cutoff += 24*60*60;
 
@@ -390,8 +392,8 @@ void Sessions_UpdateSymbol(const AppContext &ctx, const string symbol)
    SessionWindowState lo_win = g_session_slots[idx].windows[SESSION_KIND_LONDON];
    SessionWindowState ny_win = g_session_slots[idx].windows[SESSION_KIND_NEWYORK];
 
-   Sessions_UpdateSession(ctx, symbol, lo_win, SESSION_KIND_LONDON, StartHourLO);
-   Sessions_UpdateSession(ctx, symbol, ny_win, SESSION_KIND_NEWYORK, StartHourNY);
+   Sessions_UpdateSession(ctx, symbol, lo_win, SESSION_KIND_LONDON, Config_GetStartHourLO());
+   Sessions_UpdateSession(ctx, symbol, ny_win, SESSION_KIND_NEWYORK, Config_GetStartHourNY());
    
    g_session_slots[idx].windows[SESSION_KIND_LONDON] = lo_win;
    g_session_slots[idx].windows[SESSION_KIND_NEWYORK] = ny_win;
@@ -412,14 +414,18 @@ int Sessions_SessionFromLabel(const string label)
 bool Sessions_InLondon(const AppContext& ctx, const string symbol)
 {
    int hr = Sessions_ServerHour(ctx.current_server_time);
-   return (hr >= StartHourLO && hr < CutoffHour);
+   const int start_hour = Config_GetStartHourLO();
+   const int cutoff_hour = Config_GetCutoffHour();
+   return (hr >= start_hour && hr < cutoff_hour);
 }
 
 bool Sessions_InNewYork(const AppContext& ctx, const string symbol)
 {
    if(UseLondonOnly) return false;
    int hr = Sessions_ServerHour(ctx.current_server_time);
-   return (hr >= StartHourNY && hr < CutoffHour);
+   const int start_hour = Config_GetStartHourNY();
+   const int cutoff_hour = Config_GetCutoffHour();
+   return (hr >= start_hour && hr < cutoff_hour);
 }
 
 bool Sessions_InORWindow(const AppContext& ctx, const string symbol)
@@ -450,8 +456,10 @@ bool Sessions_CutoffReached(const AppContext& ctx, const string symbol)
       // symbol unused guard (no-op)
    }
    datetime now = ctx.current_server_time;
-   datetime cutoff = Sessions_AnchorForHour(now, CutoffHour);
-   if(cutoff <= Sessions_AnchorForHour(now, StartHourLO))
+   const int cutoff_hour = Config_GetCutoffHour();
+   const int start_hour = Config_GetStartHourLO();
+   datetime cutoff = Sessions_AnchorForHour(now, cutoff_hour);
+   if(cutoff <= Sessions_AnchorForHour(now, start_hour))
       cutoff += 24*60*60;
    return (now >= cutoff);
 }

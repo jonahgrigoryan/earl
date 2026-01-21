@@ -3,11 +3,46 @@
 #ifndef SCHEDULER_MQH
 #define SCHEDULER_MQH
 
+#include <RPEA/config.mqh>
+
 struct AppContext;
+
+//------------------------------------------------------------------------------
+// M6-Task04: Performance Profiling State (module-scoped)
+//------------------------------------------------------------------------------
+
+struct SchedulerPerfStats
+{
+   ulong    total_ticks;
+   ulong    total_us;
+   ulong    max_us;
+   datetime last_report_time;
+   int      report_interval_sec;
+};
+
+SchedulerPerfStats g_sched_perf = {0, 0, 0, 0, 30};
+
+void Scheduler_ReportPerfStats()
+{
+   if(g_sched_perf.total_ticks == 0)
+      return;
+   ulong avg_us = g_sched_perf.total_us / g_sched_perf.total_ticks;
+   PrintFormat("[Perf] Scheduler: ticks=%llu avg=%lluus max=%lluus",
+               g_sched_perf.total_ticks, avg_us, g_sched_perf.max_us);
+   g_sched_perf.total_ticks = 0;
+   g_sched_perf.total_us = 0;
+   g_sched_perf.max_us = 0;
+}
 
 // Main tick orchestrator (logging-only in M1)
 void Scheduler_Tick(const AppContext& ctx)
 {
+   // M6-Task04: Start profiling measurement (zero overhead when disabled)
+   const bool profiling = Config_GetEnablePerfProfiling();
+   ulong tick_start_us = 0;
+   if(profiling)
+      tick_start_us = GetMicrosecondCount();
+
    // 1) Equity rooms
    EquityRooms rooms = Equity_ComputeRooms(ctx);
    bool floors_ok = Equity_CheckFloors(ctx);
@@ -18,7 +53,7 @@ void Scheduler_Tick(const AppContext& ctx)
       string sym = ctx.symbols[i];
       if(sym=="") continue;
 
-      Indicators_Refresh(ctx, sym);
+      // M6-Task04: Removed redundant Indicators_Refresh - already called in OnTimer
 
       IndicatorSnapshot ind_snap;
       Indicators_GetSnapshot(sym, ind_snap);
@@ -83,6 +118,26 @@ void Scheduler_Tick(const AppContext& ctx)
 
    // Heartbeat audit
    LogAuditRow("SCHED_TICK", "Scheduler", 1, "heartbeat", "{}");
+
+   // M6-Task04: End profiling measurement and aggregate (throttled reporting)
+   if(profiling)
+   {
+      ulong tick_end_us = GetMicrosecondCount();
+      ulong elapsed_us = tick_end_us - tick_start_us;
+      g_sched_perf.total_ticks++;
+      g_sched_perf.total_us += elapsed_us;
+      if(elapsed_us > g_sched_perf.max_us)
+         g_sched_perf.max_us = elapsed_us;
+      
+      datetime now = TimeCurrent();
+      if(g_sched_perf.last_report_time == 0)
+         g_sched_perf.last_report_time = now;
+      if(now - g_sched_perf.last_report_time >= g_sched_perf.report_interval_sec)
+      {
+         Scheduler_ReportPerfStats();
+         g_sched_perf.last_report_time = now;
+      }
+   }
 }
 
 #endif // SCHEDULER_MQH

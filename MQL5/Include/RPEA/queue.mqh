@@ -1167,6 +1167,7 @@ int Queue_RevalidateAndApply()
 
 int Queue_LoadFromDiskAndReconcile()
   {
+     PrintFormat("[Recovery] Queue: Starting queue reconciliation from disk");
      Queue_EnsureInitialized();
      g_queue_count = 0;
      ArrayResize(g_queue_buffer, 0);
@@ -1219,6 +1220,7 @@ int Queue_LoadFromDiskAndReconcile()
 
            if(qa.expires_at <= now)
            {
+              PrintFormat("[Recovery] Queue DROP id=%I64d ticket=%I64d reason=expired", qa.id, qa.ticket);
               string drop_fields = StringFormat("{\"queue_id\":%I64d,\"reason\":\"RECONCILE_DROP_EXPIRED\"}", qa.id);
               LogAuditRow("QUEUE", "OrderEngine", LOG_INFO, "RECONCILE_DROP_EXPIRED", drop_fields);
               continue;
@@ -1239,6 +1241,7 @@ int Queue_LoadFromDiskAndReconcile()
               bool incoming_newer = (qa.created_at >= loaded[existing].created_at);
               if(incoming_newer)
               {
+                 PrintFormat("[Recovery] Queue DROP id=%I64d ticket=%I64d reason=redundant_older", loaded[existing].id, loaded[existing].ticket);
                  string drop_fields = StringFormat("{\"queue_id\":%I64d,\"ticket\":%I64d,\"reason\":\"RECONCILE_DROP_REDUNDANT\"}",
                                                   loaded[existing].id,
                                                   loaded[existing].ticket);
@@ -1247,6 +1250,7 @@ int Queue_LoadFromDiskAndReconcile()
               }
               else
               {
+                 PrintFormat("[Recovery] Queue DROP id=%I64d ticket=%I64d reason=redundant_newer_exists", qa.id, qa.ticket);
                  string drop_fields = StringFormat("{\"queue_id\":%I64d,\"ticket\":%I64d,\"reason\":\"RECONCILE_DROP_REDUNDANT\"}",
                                                   qa.id,
                                                   qa.ticket);
@@ -1306,6 +1310,7 @@ int Queue_LoadFromDiskAndReconcile()
 
         if(!keep)
         {
+          PrintFormat("[Recovery] Queue DROP id=%I64d ticket=%I64d reason=already_applied", qa.id, qa.ticket);
           string drop_fields = StringFormat("{\"queue_id\":%I64d,\"ticket\":%I64d,\"reason\":\"RECONCILE_DROP_REDUNDANT\"}",
                                            qa.id,
                                            qa.ticket);
@@ -1322,6 +1327,8 @@ int Queue_LoadFromDiskAndReconcile()
               intent_index = IntentJournal_FindIntentByAcceptKey(intent_journal, qa.intent_key);
            if(intent_index < 0)
            {
+              PrintFormat("[Recovery] Queue DROP id=%I64d ticket=%I64d reason=intent_missing intent_id=%s",
+                          qa.id, qa.ticket, qa.intent_id);
               string fields = StringFormat("{\"queue_id\":%I64d,\"ticket\":%I64d,\"reason\":\"RECONCILE_DROP_INTENT_MISSING\"}",
                                            qa.id,
                                            qa.ticket);
@@ -1362,10 +1369,15 @@ int Queue_LoadFromDiskAndReconcile()
 
      Queue_SaveAll(); // Final save after reconciliation
      
-     // M4-Task04: Log structured recovery summary for audit
+     // M6-Task03: Log recovery summary with [Recovery] prefix
      int dropped_count = loaded_count - g_queue_count;
+     PrintFormat("[Recovery] Queue COMPLETE: loaded=%d kept=%d dropped=%d",
+                 loaded_count, g_queue_count, dropped_count);
+     
+     // M4-Task04: Log structured recovery summary for audit
      LogAuditRow("QUEUE_RECOVERY_SUMMARY", "Queue", LOG_INFO, "reconcile",
-                 StringFormat("{\"queue_loaded\":%d,\"queue_dropped\":%d}", g_queue_count, dropped_count));
+                 StringFormat("{\"queue_loaded\":%d,\"queue_kept\":%d,\"queue_dropped\":%d}",
+                              loaded_count, g_queue_count, dropped_count));
      
      return g_queue_count;
   }

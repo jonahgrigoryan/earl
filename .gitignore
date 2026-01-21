@@ -44,7 +44,7 @@ hive-mind-prompt-*.txt
 claude-flow.cmd
 docs/
 mt5_test_config.ini
-run_tests.ps1
+#run_tests.ps1
 scripts/
 test_runner.ps1
 MQL5/Files/RPEA/

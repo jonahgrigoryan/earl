@@ -28,6 +28,16 @@
 static bool   g_order_engine_global_lock = false;
 static string g_order_engine_lock_reason = "";
 
+// M6-Task03: Test override for broker recovery state.
+struct OERecoveryBrokerOverrideState
+{
+   bool  active;
+   ulong positions[];
+   ulong pendings[];
+};
+
+static OERecoveryBrokerOverrideState g_oe_recovery_override;
+
 #ifndef CutoffHour
 // Default NY cutoff hour used when running in unit-test harness without input bindings
 #define CutoffHour 17
@@ -261,6 +271,7 @@ OrderErrorClass OE_ClassifyRetcode(const int retcode);
 bool OE_ShouldFailFast(const OrderErrorClass cls);
 bool OE_ShouldRetryClass(const OrderErrorClass cls);
 string OE_ErrorClassName(const OrderErrorClass cls);
+string OE_GatingReasonForRetcode(const int retcode);
 
 class RetryManager
 {
@@ -305,18 +316,25 @@ public:
    {
       switch(retcode)
       {
+         // M6-Task02: Fail-fast retcodes (no retry, no fallback)
          case TRADE_RETCODE_TRADE_DISABLED:
+         case TRADE_RETCODE_MARKET_CLOSED:
          case TRADE_RETCODE_NO_MONEY:
          case TRADE_RETCODE_INVALID_PRICE:
+         case TRADE_RETCODE_INVALID_STOPS:
          case TRADE_RETCODE_INVALID_VOLUME:
+         case TRADE_RETCODE_INVALID_EXPIRATION:
          case TRADE_RETCODE_POSITION_CLOSED:
+         case TRADE_RETCODE_REJECT:
             return RETRY_POLICY_FAIL_FAST;
 
+         // M6-Task02: Transient retcodes (bounded retry with exponential backoff)
          case TRADE_RETCODE_CONNECTION:
          case TRADE_RETCODE_TIMEOUT:
+         case TRADE_RETCODE_TOO_MANY_REQUESTS:
             return RETRY_POLICY_EXPONENTIAL;
 
-         case TRADE_RETCODE_MARKET_CLOSED:
+         // M6-Task02: Recoverable retcodes (bounded retry, linear backoff)
          case TRADE_RETCODE_REQUOTE:
          case TRADE_RETCODE_PRICE_CHANGED:
          case TRADE_RETCODE_PRICE_OFF:
@@ -375,19 +393,28 @@ OrderErrorClass OE_ClassifyRetcode(const int retcode)
 {
    switch(retcode)
    {
+      // M6-Task02: Fail-fast retcodes (no retry, no fallback)
       case TRADE_RETCODE_TRADE_DISABLED:
       case TRADE_RETCODE_MARKET_CLOSED:
       case TRADE_RETCODE_NO_MONEY:
+      case TRADE_RETCODE_INVALID_PRICE:
+      case TRADE_RETCODE_INVALID_STOPS:
+      case TRADE_RETCODE_INVALID_VOLUME:
+      case TRADE_RETCODE_INVALID_EXPIRATION:
+      case TRADE_RETCODE_POSITION_CLOSED:
+      case TRADE_RETCODE_REJECT:
          return ERRORCLASS_FAILFAST;
 
+      // M6-Task02: Transient retcodes (bounded retry with backoff)
       case TRADE_RETCODE_CONNECTION:
       case TRADE_RETCODE_TIMEOUT:
+      case TRADE_RETCODE_TOO_MANY_REQUESTS:
          return ERRORCLASS_TRANSIENT;
 
+      // M6-Task02: Recoverable retcodes (bounded retry, linear backoff)
       case TRADE_RETCODE_REQUOTE:
       case TRADE_RETCODE_PRICE_CHANGED:
       case TRADE_RETCODE_PRICE_OFF:
-      case TRADE_RETCODE_INVALID_PRICE:
          return ERRORCLASS_RECOVERABLE;
    }
    return ERRORCLASS_UNKNOWN;
@@ -396,6 +423,47 @@ OrderErrorClass OE_ClassifyRetcode(const int retcode)
 bool OE_ShouldFailFast(const OrderErrorClass cls)
 {
    return (cls == ERRORCLASS_FAILFAST);
+}
+
+//+------------------------------------------------------------------+
+//| M6-Task02: Map retcode to canonical gating_reason string         |
+//+------------------------------------------------------------------+
+string OE_GatingReasonForRetcode(const int retcode)
+{
+   switch(retcode)
+   {
+      case TRADE_RETCODE_MARKET_CLOSED:
+         return "market_closed";
+      case TRADE_RETCODE_TRADE_DISABLED:
+         return "trade_disabled";
+      case TRADE_RETCODE_INVALID_PRICE:
+         return "invalid_price";
+      case TRADE_RETCODE_INVALID_STOPS:
+         return "invalid_stops";
+      case TRADE_RETCODE_INVALID_VOLUME:
+         return "invalid_volume";
+      case TRADE_RETCODE_INVALID_EXPIRATION:
+         return "invalid_expiration";
+      case TRADE_RETCODE_PRICE_OFF:
+         return "off_quotes";
+      case TRADE_RETCODE_REQUOTE:
+         return "requote";
+      case TRADE_RETCODE_REJECT:
+         return "request_rejected";
+      case TRADE_RETCODE_NO_MONEY:
+         return "no_money";
+      case TRADE_RETCODE_CONNECTION:
+         return "connection_error";
+      case TRADE_RETCODE_TIMEOUT:
+         return "timeout";
+      case TRADE_RETCODE_TOO_MANY_REQUESTS:
+         return "too_many_requests";
+      case TRADE_RETCODE_POSITION_CLOSED:
+         return "position_closed";
+      case TRADE_RETCODE_PRICE_CHANGED:
+         return "price_changed";
+   }
+   return "unknown_error";
 }
 
 bool OE_ShouldRetryClass(const OrderErrorClass cls)
@@ -678,6 +746,16 @@ private:
    int                m_recovered_action_count;
    bool               m_recovery_completed;
    datetime           m_recovery_timestamp;
+   
+   struct OrderSendPerfStats
+   {
+      ulong    count;
+      ulong    total_us;
+      ulong    max_us;
+      datetime last_report_time;
+      int      report_interval_sec;
+   };
+   OrderSendPerfStats m_order_send_perf;
 
    // Helper methods
    void LogOE(const string message)
@@ -897,12 +975,14 @@ private:
          return m_cutoff_override;
 #ifndef RPEA_ORDER_ENGINE_SKIP_SESSIONS
       // Align to the configured session cutoff hour using helper
-      datetime cutoff = Sessions_AnchorForHour(now, CutoffHour);
+      const int cutoff_hour = Config_GetCutoffHour();
+      datetime cutoff = Sessions_AnchorForHour(now, cutoff_hour);
 #else
       // Manual alignment at CutoffHour when sessions module is skipped (unit tests)
+      const int cutoff_hour = Config_GetCutoffHour();
       MqlDateTime tm;
       TimeToStruct(now, tm);
-      tm.hour = CutoffHour;
+      tm.hour = cutoff_hour;
       tm.min = 0;
       tm.sec = 0;
       datetime cutoff = StructToTime(tm);
@@ -1037,6 +1117,11 @@ public:
      m_recovered_action_count = 0;
      m_recovery_completed = false;
      m_recovery_timestamp = 0;
+     m_order_send_perf.count = 0;
+     m_order_send_perf.total_us = 0;
+     m_order_send_perf.max_us = 0;
+     m_order_send_perf.last_report_time = 0;
+     m_order_send_perf.report_interval_sec = 30;
    }
    
    // Destructor
@@ -1061,6 +1146,31 @@ public:
    void ResilienceRecordSuccess()
    {
       OrderEngine_RecordSuccess();
+   }
+   
+   void Perf_RecordOrderSend(const ulong elapsed_us)
+   {
+      m_order_send_perf.count++;
+      m_order_send_perf.total_us += elapsed_us;
+      if(elapsed_us > m_order_send_perf.max_us)
+         m_order_send_perf.max_us = elapsed_us;
+      
+      datetime now = TimeCurrent();
+      if(m_order_send_perf.last_report_time == 0)
+         m_order_send_perf.last_report_time = now;
+      if(now - m_order_send_perf.last_report_time < m_order_send_perf.report_interval_sec)
+         return;
+      
+      double avg_us = (m_order_send_perf.count > 0)
+                      ? ((double)m_order_send_perf.total_us / (double)m_order_send_perf.count)
+                      : 0.0;
+      PrintFormat("[Perf] OrderSend: calls=%llu avg=%.0fus max=%lluus",
+                  m_order_send_perf.count, avg_us, m_order_send_perf.max_us);
+      
+      m_order_send_perf.count = 0;
+      m_order_send_perf.total_us = 0;
+      m_order_send_perf.max_us = 0;
+      m_order_send_perf.last_report_time = now;
    }
 
    void TestResetResilienceState()
@@ -1095,6 +1205,8 @@ public:
       LogOE("OrderEngine::Init() - Initializing Order Engine");
       ResetState();
       LoadResilienceConfig();
+      m_max_slippage_points = Config_GetMaxSlippagePoints();
+      m_min_hold_seconds = Config_GetMinHoldSeconds();
       // Initialize partial fill tracking (Task 8)
       m_partial_fill_count = 0;
       ArrayResize(m_partial_fill_states, 100);
@@ -1137,6 +1249,12 @@ public:
       m_action_sequence = 0;
       m_intent_journal_dirty = true;
       PersistIntentJournal();
+   }
+
+   // M6-Task02: Test accessor for ShouldFallbackToMarket
+   bool TestShouldFallbackToMarket(const int retcode) const
+   {
+      return ShouldFallbackToMarket(retcode);
    }
 
    bool TestIsRecoveryComplete() const
@@ -1704,9 +1822,9 @@ public:
                                symbol_pending,
                                violation_reason))
       {
-         const int total_limit = MaxOpenPositionsTotal;
-         const int symbol_limit = MaxOpenPerSymbol;
-         const int pending_limit = MaxPendingsPerSymbol;
+         const int total_limit = Config_GetMaxOpenPositionsTotal();
+         const int symbol_limit = Config_GetMaxOpenPerSymbol();
+         const int pending_limit = Config_GetMaxPendingsPerSymbol();
 
          string fields = StringFormat(
             "{\"symbol\":\"%s\",\"type\":\"%s\",\"mode\":\"%s\",\"reason\":\"%s\",\"total\":%d,\"symbol\":%d,\"pending\":%d,\"limit_total\":%d,\"limit_symbol\":%d,\"limit_pending\":%d}",
@@ -1738,13 +1856,13 @@ public:
          mode,
          total_positions,
          projected_total,
-         MaxOpenPositionsTotal,
+         Config_GetMaxOpenPositionsTotal(),
          symbol_positions,
          projected_symbol_positions,
-         MaxOpenPerSymbol,
+         Config_GetMaxOpenPerSymbol(),
          symbol_pending,
          projected_symbol_pending,
-         MaxPendingsPerSymbol);
+         Config_GetMaxPendingsPerSymbol());
 
       LogDecision("OrderEngine", "CAP_PASS", cap_pass_fields);
       LogOE(StringFormat("Position caps OK for %s (%s): total %d->%d (limit=%d), symbol %d->%d (limit=%d), pending %d->%d (limit=%d)",
@@ -1752,13 +1870,13 @@ public:
                          mode,
                          total_positions,
                          projected_total,
-                         MaxOpenPositionsTotal,
+                         Config_GetMaxOpenPositionsTotal(),
                          symbol_positions,
                          projected_symbol_positions,
-                         MaxOpenPerSymbol,
+                         Config_GetMaxOpenPerSymbol(),
                          symbol_pending,
                          projected_symbol_pending,
-                         MaxPendingsPerSymbol));
+                         Config_GetMaxPendingsPerSymbol()));
 
       double entry_price = normalized.price;
       if(is_market)
@@ -2305,19 +2423,22 @@ public:
    
    bool ReconcileOnStartup()
    {
-      LogOE("ReconcileOnStartup: Starting state reconciliation");
+      PrintFormat("[Recovery] Starting state reconciliation");
       if(m_recovery_completed)
       {
-         LogOE("ReconcileOnStartup: Recovery already completed");
+         PrintFormat("[Recovery] SKIP: Recovery already completed at %s - idempotent no-op",
+                     TimeToString(m_recovery_timestamp, TIME_DATE|TIME_SECONDS));
          return true;
       }
 
       PersistenceRecoveredState recovered;
       if(!Persistence_LoadRecoveredState(recovered))
       {
-         LogOE("ReconcileOnStartup: Failed to load recovered state");
+         PrintFormat("[Recovery] FAIL: Unable to load persisted state");
          return false;
       }
+      PrintFormat("[Recovery] Loaded %d intents, %d queued actions from persistence",
+                  recovered.intents_count, recovered.queued_count);
 
       ArrayResize(m_recovered_intents, recovered.intents_count);
       for(int i = 0; i < recovered.intents_count; ++i)
@@ -2349,42 +2470,70 @@ public:
          SetExecutionLock(true);
 
       ulong position_tickets[];
-      int positions_total = PositionsTotal();
-      ArrayResize(position_tickets, positions_total);
       int position_count = 0;
-      for(int i = 0; i < positions_total; ++i)
+#ifdef RPEA_TEST_RUNNER
+      if(g_oe_recovery_override.active)
       {
-         ulong ticket = PositionGetTicket(i);
-         if(ticket > 0)
-            position_tickets[position_count++] = ticket;
+         position_count = ArraySize(g_oe_recovery_override.positions);
+         ArrayResize(position_tickets, position_count);
+         for(int i = 0; i < position_count; ++i)
+            position_tickets[i] = g_oe_recovery_override.positions[i];
       }
-      ArrayResize(position_tickets, position_count);
-      ulong pending_tickets[];
-      int orders_total = OrdersTotal();
-      ArrayResize(pending_tickets, orders_total);
-      int pending_count = 0;
-      for(int i = 0; i < orders_total; ++i)
+      else
+#endif
       {
-         ulong order_ticket = OrderGetTicket(i);
-         if(order_ticket == 0)
-            continue;
-         if(!OrderSelect(order_ticket))
-            continue;
-         ENUM_ORDER_TYPE order_type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
-         if(order_type == ORDER_TYPE_BUY || order_type == ORDER_TYPE_SELL)
-            continue;
-         pending_tickets[pending_count++] = order_ticket;
+         int positions_total = PositionsTotal();
+         ArrayResize(position_tickets, positions_total);
+         for(int i = 0; i < positions_total; ++i)
+         {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket > 0)
+               position_tickets[position_count++] = ticket;
+         }
+         ArrayResize(position_tickets, position_count);
       }
-      ArrayResize(pending_tickets, pending_count);
 
+      ulong pending_tickets[];
+      int pending_count = 0;
+#ifdef RPEA_TEST_RUNNER
+      if(g_oe_recovery_override.active)
+      {
+         pending_count = ArraySize(g_oe_recovery_override.pendings);
+         ArrayResize(pending_tickets, pending_count);
+         for(int i = 0; i < pending_count; ++i)
+            pending_tickets[i] = g_oe_recovery_override.pendings[i];
+      }
+      else
+#endif
+      {
+         int orders_total = OrdersTotal();
+         ArrayResize(pending_tickets, orders_total);
+         for(int i = 0; i < orders_total; ++i)
+         {
+            ulong order_ticket = OrderGetTicket(i);
+            if(order_ticket == 0)
+               continue;
+            if(!OrderSelect(order_ticket))
+               continue;
+            ENUM_ORDER_TYPE order_type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+            if(order_type == ORDER_TYPE_BUY || order_type == ORDER_TYPE_SELL)
+               continue;
+            pending_tickets[pending_count++] = order_ticket;
+         }
+         ArrayResize(pending_tickets, pending_count);
+      }
+
+      // M6-Task03: Reconcile intents with broker state, log detection and decisions
       int intents_marked_closed = 0;
       int intents_marked_cancelled = 0;
+      int intents_already_active = 0;
       for(int i = 0; i < ArraySize(m_intent_journal.intents); ++i)
       {
          OrderIntent intent = m_intent_journal.intents[i];
          if(ArraySize(intent.executed_tickets) > 0)
          {
             bool ticket_active = false;
+            ulong active_ticket = 0;
             for(int j = 0; j < ArraySize(intent.executed_tickets) && !ticket_active; ++j)
             {
                for(int k = 0; k < position_count; ++k)
@@ -2392,12 +2541,28 @@ public:
                   if(position_tickets[k] == intent.executed_tickets[j])
                   {
                      ticket_active = true;
+                     active_ticket = intent.executed_tickets[j];
                      break;
                   }
                }
             }
-            if(!ticket_active && (intent.status == "PENDING" || intent.status == "EXECUTED"))
+            if(ticket_active)
             {
+               // M6-Task03: Intent already has active position on broker - no duplicate order needed
+               PrintFormat("[Recovery] SKIP intent=%s: ticket %llu already active on broker - no resend",
+                           intent.intent_id, active_ticket);
+               intents_already_active++;
+               if(intent.status == "PENDING")
+               {
+                  intent.status = "EXECUTED";
+                  PrintFormat("[Recovery] MARK_EXECUTED intent=%s: active position on broker",
+                              intent.intent_id);
+               }
+            }
+            else if(!ticket_active && (intent.status == "PENDING" || intent.status == "EXECUTED"))
+            {
+               PrintFormat("[Recovery] MARK_CLOSED intent=%s: executed_tickets no longer active",
+                           intent.intent_id);
                intent.status = "CLOSED";
                intents_marked_closed++;
             }
@@ -2418,6 +2583,8 @@ public:
             }
             if(!order_active)
             {
+               PrintFormat("[Recovery] MARK_CANCELLED intent=%s: pending order no longer exists",
+                           intent.intent_id);
                intent.status = "CANCELLED";
                intents_marked_cancelled++;
             }
@@ -2425,6 +2592,7 @@ public:
          m_intent_journal.intents[i] = intent;
       }
 
+      // M6-Task03: Attach orphan broker positions without matching intents
       int orphans_attached = 0;
       int pending_orphans_attached = 0;
       for(int i = 0; i < position_count; ++i)
@@ -2432,7 +2600,11 @@ public:
          ulong ticket = position_tickets[i];
          OrderIntent existing;
          if(MatchIntentByTicket(ticket, existing))
+         {
+            PrintFormat("[Recovery] SKIP orphan check: ticket %llu already matched to intent=%s",
+                        ticket, existing.intent_id);
             continue;
+         }
          if(!PositionSelectByTicket(ticket))
             continue;
          OrderIntent orphan;
@@ -2462,14 +2634,21 @@ public:
          int idx = ArraySize(m_intent_journal.intents);
          ArrayResize(m_intent_journal.intents, idx + 1);
          m_intent_journal.intents[idx] = orphan;
+         PrintFormat("[Recovery] ATTACH orphan position: ticket=%llu symbol=%s intent_id=%s",
+                     ticket, orphan.symbol, orphan.intent_id);
          orphans_attached++;
       }
+      // M6-Task03: Attach orphan pending orders without matching intents
       for(int i = 0; i < pending_count; ++i)
       {
          ulong ticket = pending_tickets[i];
          OrderIntent existing;
          if(MatchIntentByTicket(ticket, existing))
+         {
+            PrintFormat("[Recovery] SKIP pending orphan check: ticket %llu already matched to intent=%s",
+                        ticket, existing.intent_id);
             continue;
+         }
          if(!OrderSelect(ticket))
             continue;
          OrderIntent orphan;
@@ -2497,27 +2676,53 @@ public:
          int idx = ArraySize(m_intent_journal.intents);
          ArrayResize(m_intent_journal.intents, idx + 1);
          m_intent_journal.intents[idx] = orphan;
+         PrintFormat("[Recovery] ATTACH orphan pending: ticket=%llu symbol=%s intent_id=%s",
+                     ticket, orphan.symbol, orphan.intent_id);
          pending_orphans_attached++;
       }
 
+      // M6-Task03: Reconcile queued actions with idempotency checks
       int new_action_count = 0;
+      int actions_dropped_intent = 0;
+      int actions_dropped_expired = 0;
+      int actions_dropped_ticket = 0;
       for(int i = 0; i < ArraySize(m_intent_journal.queued_actions); ++i)
       {
          PersistedQueuedAction action = m_intent_journal.queued_actions[i];
          bool keep = true;
+         string drop_reason = "";
          if(StringLen(action.intent_id) > 0 && FindIntentIndexById(action.intent_id) < 0)
+         {
             keep = false;
+            drop_reason = "intent_missing";
+            actions_dropped_intent++;
+         }
          if(keep && action.expires_time > 0 && action.expires_time < now)
+         {
             keep = false;
+            drop_reason = "expired";
+            actions_dropped_expired++;
+         }
          if(keep && action.ticket > 0)
          {
             if(!PositionSelectByTicket(action.ticket) &&
                !OrderSelect((ulong)action.ticket))
+            {
                keep = false;
+               drop_reason = "ticket_gone";
+               actions_dropped_ticket++;
+            }
          }
          if(keep)
          {
+            PrintFormat("[Recovery] KEEP action=%s ticket=%llu - will replay",
+                        action.action_id, action.ticket);
             m_intent_journal.queued_actions[new_action_count++] = action;
+         }
+         else
+         {
+            PrintFormat("[Recovery] DROP action=%s ticket=%llu reason=%s - skip replay",
+                        action.action_id, action.ticket, drop_reason);
          }
       }
       ArrayResize(m_intent_journal.queued_actions, new_action_count);
@@ -2549,25 +2754,29 @@ public:
       m_recovery_completed = true;
       m_recovery_timestamp = TimeCurrent();
 
-      LogOE(StringFormat("ReconcileOnStartup: intents_total=%d loaded=%d dropped=%d actions_total=%d loaded=%d dropped=%d position_orphans=%d pending_orphans=%d closed=%d cancelled=%d corrupt=%d",
-                         recovered.summary.intents_total,
-                         recovered.summary.intents_loaded,
-                         recovered.summary.intents_dropped,
-                         recovered.summary.actions_total,
-                         recovered.summary.actions_loaded,
-                         recovered.summary.actions_dropped,
-                         orphans_attached,
-                         pending_orphans_attached,
-                         intents_marked_closed,
-                         intents_marked_cancelled,
-                         recovered.summary.corrupt_entries));
+      // M6-Task03: Final recovery summary with [Recovery] prefix
+      PrintFormat("[Recovery] COMPLETE: intents_loaded=%d intents_active=%d intents_closed=%d intents_cancelled=%d",
+                  recovered.summary.intents_loaded,
+                  intents_already_active,
+                  intents_marked_closed,
+                  intents_marked_cancelled);
+      PrintFormat("[Recovery] COMPLETE: actions_kept=%d actions_dropped(intent=%d,expired=%d,ticket=%d)",
+                  new_action_count,
+                  actions_dropped_intent,
+                  actions_dropped_expired,
+                  actions_dropped_ticket);
+      PrintFormat("[Recovery] COMPLETE: orphans_position=%d orphans_pending=%d corrupt=%d",
+                  orphans_attached,
+                  pending_orphans_attached,
+                  recovered.summary.corrupt_entries);
       
       // M4-Task04: Log structured recovery summary for audit
       LogAuditRow("INTENT_RECOVERY_SUMMARY", "OrderEngine", LOG_INFO, "reconcile",
-                  StringFormat("{\"intents_total\":%d,\"intents_loaded\":%d,\"intents_dropped\":%d,\"actions_total\":%d,\"actions_loaded\":%d,\"actions_dropped\":%d,\"corrupt\":%d}",
+                  StringFormat("{\"intents_total\":%d,\"intents_loaded\":%d,\"intents_dropped\":%d,\"intents_active\":%d,\"actions_total\":%d,\"actions_loaded\":%d,\"actions_dropped\":%d,\"corrupt\":%d}",
                                recovered.summary.intents_total,
                                recovered.summary.intents_loaded,
                                recovered.summary.intents_dropped,
+                               intents_already_active,
                                recovered.summary.actions_total,
                                recovered.summary.actions_loaded,
                                recovered.summary.actions_dropped,
@@ -2621,12 +2830,24 @@ ENUM_ORDER_TYPE OrderEngine::MarketTypeFromPending(const ENUM_ORDER_TYPE type) c
 
 bool OrderEngine::ShouldFallbackToMarket(const int retcode) const
 {
+   // M6-Task02: Never fallback to market on market-closed or trade-disabled
    switch(retcode)
    {
-      case TRADE_RETCODE_PRICE_OFF:
+      case TRADE_RETCODE_MARKET_CLOSED:
+      case TRADE_RETCODE_TRADE_DISABLED:
+      case TRADE_RETCODE_NO_MONEY:
       case TRADE_RETCODE_INVALID_PRICE:
-         return true;
+      case TRADE_RETCODE_INVALID_STOPS:
+      case TRADE_RETCODE_INVALID_VOLUME:
+      case TRADE_RETCODE_INVALID_EXPIRATION:
+      case TRADE_RETCODE_REJECT:
+      case TRADE_RETCODE_POSITION_CLOSED:
+         return false; // Fail-fast, no fallback
    }
+   // Only allow fallback for transient price movement (PRICE_OFF)
+   // where market is open but pending price is no longer valid
+   if(retcode == TRADE_RETCODE_PRICE_OFF)
+      return true;
    return false;
 }
 
@@ -2657,9 +2878,9 @@ bool OrderEngine::EvaluatePositionCaps(const OrderRequest &request,
                                          out_symbol_pending);
    }
 
-   const int total_limit = MaxOpenPositionsTotal;
-   const int symbol_limit = MaxOpenPerSymbol;
-   const int pending_limit = MaxPendingsPerSymbol;
+   const int total_limit = Config_GetMaxOpenPositionsTotal();
+   const int symbol_limit = Config_GetMaxOpenPerSymbol();
+   const int pending_limit = Config_GetMaxPendingsPerSymbol();
 
    if(!caps_ok)
    {
@@ -4027,16 +4248,18 @@ OrderErrorDecision OrderEngine::OrderEngine_HandleError(const OrderError &err)
    OrderErrorDecision decision;
    datetime now = TimeCurrent();
    const bool bypass = OrderEngine_ShouldBypassBreaker(err);
+   // M6-Task02: Pre-populate canonical gating_reason for logging consistency.
+   decision.gating_reason = OE_GatingReasonForRetcode(err.retcode);
    if(OrderEngine_IsCircuitBreakerActive() && !bypass)
    {
       decision.type = ERROR_DECISION_FAIL_FAST;
       decision.gating_reason = "circuit_breaker_active";
-   // Surface unknown retcodes for improved observability
-   if(err.cls == ERRORCLASS_UNKNOWN)
-   {
-      LogDecision("OrderEngine", "UNKNOWN_RETCODE",
-                  StringFormat("{\"retcode\":%d,\"context\":\"%s\"}", err.retcode, err.context));
-   }
+      // Surface unknown retcodes for improved observability
+      if(err.cls == ERRORCLASS_UNKNOWN)
+      {
+         LogDecision("OrderEngine", "UNKNOWN_RETCODE",
+                     StringFormat("{\"retcode\":%d,\"context\":\"%s\"}", err.retcode, err.context));
+      }
       OrderEngine_LogErrorHandling(err, decision);
       return decision;
    }
@@ -4044,16 +4267,15 @@ OrderErrorDecision OrderEngine::OrderEngine_HandleError(const OrderError &err)
    if(OE_ShouldFailFast(err.cls) && !bypass)
    {
       decision.type = ERROR_DECISION_FAIL_FAST;
-      decision.gating_reason = "fail_fast";
       if(!bypass)
          OrderEngine_RecordFailure(now);
-      OrderEngine_TripCircuitBreaker("fail_fast:" + err.context);
-   // Surface unknown retcodes for improved observability
-   if(err.cls == ERRORCLASS_UNKNOWN)
-   {
-      LogDecision("OrderEngine", "UNKNOWN_RETCODE",
-                  StringFormat("{\"retcode\":%d,\"context\":\"%s\"}", err.retcode, err.context));
-   }
+      OrderEngine_TripCircuitBreaker(decision.gating_reason + ":" + err.context);
+      // Surface unknown retcodes for improved observability
+      if(err.cls == ERRORCLASS_UNKNOWN)
+      {
+         LogDecision("OrderEngine", "UNKNOWN_RETCODE",
+                     StringFormat("{\"retcode\":%d,\"context\":\"%s\"}", err.retcode, err.context));
+      }
       OrderEngine_LogErrorHandling(err, decision);
       return decision;
    }
@@ -4071,7 +4293,15 @@ OrderErrorDecision OrderEngine::OrderEngine_HandleError(const OrderError &err)
    else
    {
       decision.type = ERROR_DECISION_DROP;
-      decision.gating_reason = (allow_retry ? "" : "retry_exhausted");
+      if(!allow_retry)
+      {
+         if(StringLen(decision.gating_reason) > 0)
+            decision.gating_reason = decision.gating_reason + "|retry_exhausted";
+         else
+            decision.gating_reason = "retry_exhausted";
+      }
+      else
+         decision.gating_reason = "";
    }
 
    // Surface unknown retcodes for improved observability
@@ -4440,6 +4670,11 @@ void OrderEngine::ResetState()
    m_recovered_action_count = 0;
    m_recovery_completed = false;
    m_recovery_timestamp = 0;
+   m_order_send_perf.count = 0;
+   m_order_send_perf.total_us = 0;
+   m_order_send_perf.max_us = 0;
+   m_order_send_perf.last_report_time = 0;
+   m_order_send_perf.report_interval_sec = 30;
 }
 
 string OrderEngine::FormatLogLine(const string message)
@@ -4696,6 +4931,12 @@ int OE_Test_GetCapturedDelay(const int index)
 
 bool OE_OrderSend(const MqlTradeRequest &request, MqlTradeResult &result)
 {
+   const bool profiling = Config_GetEnablePerfProfiling();
+   ulong start_us = 0;
+   if(profiling)
+      start_us = GetMicrosecondCount();
+   
+   bool ok = false;
    if(g_oe_order_send_override.active)
    {
       g_oe_order_send_override.call_count++;
@@ -4706,21 +4947,25 @@ bool OE_OrderSend(const MqlTradeRequest &request, MqlTradeResult &result)
       {
          ZeroMemory(result);
          result.retcode = 0;
-         return false;
+         ok = false;
       }
+      else
+      {
+         const OEOrderSendResponse queued = g_oe_order_send_override.responses[idx];
+         g_oe_order_send_override.current_index++;
 
-      const OEOrderSendResponse queued = g_oe_order_send_override.responses[idx];
-      g_oe_order_send_override.current_index++;
-
-      ZeroMemory(result);
-      result.retcode = queued.retcode;
-      result.order = queued.order_ticket;
-      result.deal = queued.deal_ticket;
-      result.price = queued.price;
-      result.volume = queued.volume;
-      result.comment = queued.comment;
-      return queued.result_ok;
+         ZeroMemory(result);
+         result.retcode = queued.retcode;
+         result.order = queued.order_ticket;
+         result.deal = queued.deal_ticket;
+         result.price = queued.price;
+         result.volume = queued.volume;
+         result.comment = queued.comment;
+         ok = queued.result_ok;
+      }
    }
+   else
+   {
 
 #ifdef RPEA_ORDER_ENGINE_SKIP_RISK
 #define RPEA_ORDER_ENGINE_SKIP_ORDERSEND_TMP
@@ -4733,10 +4978,10 @@ bool OE_OrderSend(const MqlTradeRequest &request, MqlTradeResult &result)
    // Skip live OrderSend in test builds when no override is active
    ZeroMemory(result);
    result.retcode = TRADE_RETCODE_PRICE_OFF;
-   return false;
+   ok = false;
 #else
    ResetLastError();
-   bool ok = OrderSend(request, result);
+   ok = OrderSend(request, result);
    if(!ok)
    {
       const int err = GetLastError();
@@ -4746,8 +4991,12 @@ bool OE_OrderSend(const MqlTradeRequest &request, MqlTradeResult &result)
                   result.comment);
       ResetLastError();
    }
-   return ok;
 #endif
+   }
+   
+   if(profiling)
+      g_order_engine.Perf_RecordOrderSend(GetMicrosecondCount() - start_us);
+   return ok;
 
 #ifdef RPEA_ORDER_ENGINE_SKIP_ORDERSEND_TMP
 #undef RPEA_ORDER_ENGINE_SKIP_ORDERSEND_TMP
@@ -4838,6 +5087,29 @@ void OE_Test_ClearPriceOverride()
    g_oe_norm_overrides.price_stops_level = 0;
 }
 
+// M6-Task03: Recovery broker state override helpers (tests only)
+void OE_Test_SetRecoveryBrokerState(const ulong &positions[],
+                                    const ulong &pendings[])
+{
+   g_oe_recovery_override.active = true;
+   int position_count = ArraySize(positions);
+   ArrayResize(g_oe_recovery_override.positions, position_count);
+   for(int i = 0; i < position_count; ++i)
+      g_oe_recovery_override.positions[i] = positions[i];
+
+   int pending_count = ArraySize(pendings);
+   ArrayResize(g_oe_recovery_override.pendings, pending_count);
+   for(int i = 0; i < pending_count; ++i)
+      g_oe_recovery_override.pendings[i] = pendings[i];
+}
+
+void OE_Test_ClearRecoveryBrokerState()
+{
+   g_oe_recovery_override.active = false;
+   ArrayResize(g_oe_recovery_override.positions, 0);
+   ArrayResize(g_oe_recovery_override.pendings, 0);
+}
+
 void OE_Test_ClearOverrides()
 {
    OE_Test_ClearVolumeOverride();
@@ -4846,6 +5118,7 @@ void OE_Test_ClearOverrides()
    OE_Test_ClearRiskOverride();
    OE_Test_ClearOrderSendOverride();
    OE_Test_ResetRetryDelayCapture();
+   OE_Test_ClearRecoveryBrokerState();
 }
 
 void OE_Test_ResetIntentJournal()
@@ -5365,7 +5638,7 @@ bool Queue_OrderEngine_IsRiskReducing(const QueuedAction &qa,
 
 int OrderEngine_MaxDeviationPoints()
 {
-   int deviation = MaxSlippagePoints;
+   int deviation = Config_GetMaxSlippagePoints();
    if(deviation <= 0)
       deviation = (int)MathRound(DEFAULT_MaxSlippagePoints);
    if(deviation < 0)
@@ -5812,7 +6085,7 @@ void OE_MarkMicroModeEntry()
    if(Equity_IsMicroModeActive()) {
       State_MarkMicroEntryServer(TimeCurrent());
       LogAuditRow("MICRO_MODE_TRADE", "OrderEngine", 1, 
-                  StringFormat("Entry at %.2f%% risk", MicroRiskPct), "{}");
+                  StringFormat("Entry at %.2f%% risk", Config_GetMicroRiskPct()), "{}");
    }
 }
 

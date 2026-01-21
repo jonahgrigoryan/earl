@@ -4,6 +4,7 @@
 // References: finalspec.md (Allocator Integration)
 
 #include <Trade\Trade.mqh>
+#include <RPEA/config.mqh>
 #include <RPEA/logging.mqh>
 #include <RPEA/risk.mqh>
 #include <RPEA/equity_guardian.mqh>
@@ -215,8 +216,8 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
      {
         // Fallback when direction not provided: infer setup type from tp/sl ratio
         double ratio = ((double)slPoints > 0.0 ? ((double)tpPoints) / (double)slPoints : 0.0);
-        double diff_bc = MathAbs(ratio - RtargetBC);
-        double diff_msc = MathAbs(ratio - RtargetMSC);
+        double diff_bc = MathAbs(ratio - Config_GetRtargetBC());
+        double diff_msc = MathAbs(ratio - Config_GetRtargetMSC());
         double tolerance = 0.35;
         string setup_guess = (diff_bc <= diff_msc ? "BC" : "MSC");
         if(MathMin(diff_bc, diff_msc) > tolerance)
@@ -358,7 +359,7 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
    double volume = 0.0;
    if(rejection == "")
    {
-      volume = Risk_SizingByATRDistanceForSymbol(exec_symbol, entry_price, sl_price, equity, RiskPct, -1.0, confidence);
+      volume = Risk_SizingByATRDistanceForSymbol(exec_symbol, entry_price, sl_price, equity, Risk_GetEffectiveRiskPct(), -1.0, confidence);
       if(volume <= 0.0)
          rejection = "volume_zero";
    }

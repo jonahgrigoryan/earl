@@ -3,6 +3,7 @@
 // signals_bwisc.mqh - BWISC signal API (M1)
 // References: finalspec.md (Original Strategy: BWISC)
 
+#include <RPEA/config.mqh>
 #include <RPEA/logging.mqh>
 #include <RPEA/indicators.mqh>
 #include <RPEA/sessions.mqh>
@@ -144,12 +145,12 @@ void SignalsBWISC_Propose(const AppContext& ctx, const string symbol,
    if(abs_bias >= 0.6)
    {
       setupType = "BC";
-      r_target = RtargetBC;
+      r_target = Config_GetRtargetBC();
    }
    else if(abs_bias >= 0.35 && sdr >= 0.35)
    {
       setupType = "MSC";
-      r_target = RtargetMSC;
+      r_target = Config_GetRtargetMSC();
    }
    else
    {
@@ -179,7 +180,7 @@ void SignalsBWISC_Propose(const AppContext& ctx, const string symbol,
       return;
    }
 
-   double sl_atr_distance = atr_d1 * SLmult;
+   double sl_atr_distance = atr_d1 * Config_GetSLmult();
    double tp_atr_distance = sl_atr_distance * r_target;
 
    double sl_points_raw = (sl_atr_distance > 0.0 ? sl_atr_distance / _Point : 0.0);
@@ -219,8 +220,8 @@ void SignalsBWISC_Propose(const AppContext& ctx, const string symbol,
    }
 
    double expected_R = r_target * MathMin(abs_bias, 1.0);
-   double expected_hold = MathMax((double)ORMinutes, 45.0);
-   double worst_case_risk = AccountInfoDouble(ACCOUNT_EQUITY) * (RiskPct / 100.0);
+   double expected_hold = MathMax((double)Config_GetORMinutes(), 45.0);
+   double worst_case_risk = AccountInfoDouble(ACCOUNT_EQUITY) * (Config_GetRiskPct() / 100.0);
 
    g_last_bwisc_context.expected_R = expected_R;
    g_last_bwisc_context.expected_hold = expected_hold;
