@@ -23,6 +23,7 @@
 #include <RPEA/rl_agent.mqh>
 #include <RPEA/bandit.mqh>
 #include <RPEA/meta_policy.mqh>
+#include <RPEA/m7_helpers.mqh>
 #include <RPEA/allocator.mqh>
 #include <RPEA/adaptive.mqh>
 #include <RPEA/risk.mqh>
@@ -133,10 +134,13 @@ input int    MaxOpenPerSymbol           = 1;
 input int    MaxPendingsPerSymbol       = 2;
 
 // MR/Ensemble Inputs
+input bool   EnableMR                   = true;    // Enable MR strategy
+input bool   UseBanditMetaPolicy        = true;    // Enable contextual bandit for strategy selection
+input bool   BanditShadowMode           = true;    // Log bandit decisions without executing
 input double BWISC_ConfCut              = 0.70;
 input double MR_ConfCut                 = 0.80;
 input int    EMRT_FastThresholdPct      = 40;
-input double CorrelationFallbackRho     = 0.30;
+input double CorrelationFallbackRho     = 0.50;    // Assumed correlation if unknown
 input double MR_RiskPct_Default         = 0.90;
 input int    MR_TimeStopMin             = 60;
 input int    MR_TimeStopMax             = 90;
@@ -512,6 +516,26 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
          // M4-Task02: Track Micro-Mode entry usage per day
          if(Equity_IsMicroModeActive())
             State_MarkMicroEntryServer(deal_time);
+
+         // M7-Phase0: Track session entries for meta-policy session cap
+         long deal_magic = (long)HistoryDealGetInteger(trans.deal, DEAL_MAGIC);
+         ulong position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
+         string deal_symbol = HistoryDealGetString(trans.deal, DEAL_SYMBOL);
+         if(deal_symbol == "") deal_symbol = trans.symbol;
+         if(deal_symbol == "") deal_symbol = "XAUUSD";
+
+         if(M7_ShouldCountEntry(position_id, deal_magic))
+         {
+            AppContext ctx = g_ctx;
+            ctx.current_server_time = deal_time;
+
+            M7_GetEntriesThisSession(ctx, deal_symbol);  // Updates session label
+            M7_IncrementEntries();
+
+            LogDecision("M7", "ENTRY_COUNTED",
+               StringFormat("{\"position\":%I64u,\"entries\":%d}",
+                  position_id, M7_GetEntriesThisSession(ctx, deal_symbol)));
+         }
       }
    }
 }
