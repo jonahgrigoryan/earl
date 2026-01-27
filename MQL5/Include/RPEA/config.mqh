@@ -994,6 +994,170 @@ inline bool Config_ValidateInputs()
 }
 #endif // !RPEA_TEST_RUNNER
 
+//------------------------------------------------------------------------------
+// M7-Phase0: MR/Ensemble Config Getters
+//------------------------------------------------------------------------------
+
+inline bool Config_GetEnableMR()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef EnableMR
+      return EnableMR;
+   #else
+      return true; // default enabled
+   #endif
+#else
+   return EnableMR;
+#endif
+}
+
+inline bool Config_GetUseBanditMetaPolicy()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef UseBanditMetaPolicy
+      return UseBanditMetaPolicy;
+   #else
+      return true; // default enabled
+   #endif
+#else
+   return UseBanditMetaPolicy;
+#endif
+}
+
+inline bool Config_GetBanditShadowMode()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef BanditShadowMode
+      return BanditShadowMode;
+   #else
+      return true; // default enabled (shadow mode on per workflow)
+   #endif
+#else
+   return BanditShadowMode;
+#endif
+}
+
+inline double Config_GetBWISCConfCut()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef BWISC_ConfCut
+      return BWISC_ConfCut;
+   #else
+      return 0.70; // default
+   #endif
+#else
+   return BWISC_ConfCut;
+#endif
+}
+
+inline double Config_GetMRConfCut()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef MR_ConfCut
+      return MR_ConfCut;
+   #else
+      return 0.80; // default
+   #endif
+#else
+   return MR_ConfCut;
+#endif
+}
+
+inline int Config_GetEMRTFastThresholdPct()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef EMRT_FastThresholdPct
+      return EMRT_FastThresholdPct;
+   #else
+      return 40; // default
+   #endif
+#else
+   return EMRT_FastThresholdPct;
+#endif
+}
+
+inline double Config_GetCorrelationFallbackRho()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef CorrelationFallbackRho
+      return CorrelationFallbackRho;
+   #else
+      return 0.50; // default per workflow
+   #endif
+#else
+   return CorrelationFallbackRho;
+#endif
+}
+
+inline double Config_GetMRRiskPctDefault()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef MR_RiskPct_Default
+      double val = MR_RiskPct_Default;
+   #else
+      double val = 0.90;
+   #endif
+#else
+   double val = MR_RiskPct_Default;
+#endif
+   // Clamp to [0.8, 1.0] per finalspec
+   if(val < 0.8) return 0.8;
+   if(val > 1.0) return 1.0;
+   return val;
+}
+
+inline int Config_GetMRTimeStopMin()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef MR_TimeStopMin
+      return MR_TimeStopMin;
+   #else
+      return 60; // default
+   #endif
+#else
+   return MR_TimeStopMin;
+#endif
+}
+
+inline int Config_GetMRTimeStopMax()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef MR_TimeStopMax
+      return MR_TimeStopMax;
+   #else
+      return 90; // default
+   #endif
+#else
+   return MR_TimeStopMax;
+#endif
+}
+
+inline bool Config_GetMRLongOnly()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef MR_LongOnly
+      return MR_LongOnly;
+   #else
+      return false; // default
+   #endif
+#else
+   return MR_LongOnly;
+#endif
+}
+
+inline bool Config_GetUseXAUEURProxy()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef UseXAUEURProxy
+      return UseXAUEURProxy;
+   #else
+      return true; // default
+   #endif
+#else
+   return UseXAUEURProxy;
+#endif
+}
+
 #endif // __MQL5__
 
 //==============================================================================

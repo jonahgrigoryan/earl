@@ -103,7 +103,7 @@ void Scheduler_Tick(const AppContext& ctx)
       SignalsMR_Propose(ctx, sym, mr_has, mr_setup, mr_sl, mr_tp, mr_bias, mr_conf);
 
       // 4) Meta-policy
-      string choice = MetaPolicy_Choose(bw_has, bw_conf, mr_has, mr_conf);
+      string choice = MetaPolicy_Choose(ctx, sym, bw_has, bw_conf, mr_has, mr_conf);
 
       // 5) Allocator plan (no-op)
       int slPoints = (choice=="BWISC")?bw_sl:mr_sl;
