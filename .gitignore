@@ -61,3 +61,5 @@ compile_and_test.bat
 verify_compilation.ps1
 knowledge.md
 IMPLEMENTATION_SUMMARY.md
+
+.worktrees
