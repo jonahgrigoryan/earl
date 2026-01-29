@@ -75,10 +75,10 @@ Design an Expert Advisor (EA) to pass the **FundingPips 1-step \$10,000** challe
 * Definition: EMRT(Y) := average Δt from each detected local extreme of the spread **Y_t = P_t^(1) − β·P_t^(2)** to the first subsequent crossing of its rolling mean **Ȳ_t**.
 * Construction: detect "important" extrema on **Y_t** using threshold **C = EMRT_ExtremeThresholdMult · σ_Y**; for each extreme at time **τ_ext**, find the first **τ_cross > τ_ext** where **Y_τ_cross** crosses **Ȳ**; record **Δt = τ_cross − τ_ext**; EMRT = mean(Δt). Enforce variance cap **S²(Y) ≤ EMRT_VarCapMult · Var(Y)** over lookback.
 * Window & cadence: rolling **60–90 trading days** lookback; refresh **weekly**.
-* Universe: applied to a small FX spread universe (limited pairs consistent with this spec; XAUEUR via the synthetic series). For XAUEUR context: compute EMRT on synthetic **P_synth = XAUUSD/EURUSD** using synchronized M1 bars.
-* Weight search: grid **β ∈ [EMRT_BetaGridMin, EMRT_BetaGridMax]** (anchor on **P^(1)**); choose **β\*** minimizing EMRT subject to the variance cap; retain EMRT speed rank and **β\***.
+* Universe: applied to a small FX spread universe (limited pairs consistent with this spec; XAUEUR via the synthetic series). For XAUEUR context: compute EMRT on synthetic **P_synth = log(XAUUSD) − log(EURUSD)** when `MR_UseLogRatio=true`; otherwise use linear spread **Y_t = P^(1) − β·P^(2)** with synchronized M1 bars.
+* Weight search: grid **β ∈ [EMRT_BetaGridMin, EMRT_BetaGridMax]** (anchor on **P^(1)**) unless `MR_UseLogRatio=true` (then **β=1.0** and skip grid search). Choose **β\*** minimizing EMRT subject to the variance cap; retain EMRT speed rank and **β\***.
 
-**RL Policy**: State space captures recent spread trajectory (l=4 periods, 4^4=256 states discretized by percentage change thresholds k=3%). Actions: enter/hold/exit bands. Reward: **r_{t+1} = A_t·(θ − Y_t) − c·|A_t|**, with **θ = 0** (mean) plus barrier penalties tied to the server-day floors and +10% target; includes news penalties per "News Compliance" (Master 10-minute window blocks actions; internal buffer applies penalties).
+**RL Policy**: State space captures recent spread trajectory (l=4 periods, 4^4=256 states discretized by percentage change thresholds k=3% by default). Thresholds may be calibrated during pre-training and loaded from `Files/RPEA/rl/thresholds.json`; if missing or stale (>30 days), fall back to fixed 3%. Actions: enter/hold/exit bands. Reward: **r_{t+1} = A_t·(θ − Y_t) − c·|A_t|**, with **θ = 0** (mean) plus barrier penalties tied to the server-day floors and +10% target; includes news penalties per "News Compliance" (Master 10-minute window blocks actions; internal buffer applies penalties).
 
 **Q-Learning Implementation**: Uses standard Q-learning with Bellman update: `Q^new(S_t, A_t) ← Q(S_t, A_t) + α·[R_{t+1} + γ·max_a Q(S_{t+1}, a) − Q(S_t, A_t)]` where α is learning rate, γ is discount factor. Employs epsilon-greedy action selection: random action with probability ε during training (exploration), highest Q-value action with probability 1−ε; set ε=0 during live trading (pure exploitation).
 
@@ -89,7 +89,7 @@ Design an Expert Advisor (EA) to pass the **FundingPips 1-step \$10,000** challe
 **Outputs to allocator**
 * `proposed_orders`, `expected_R`, `expected_hold`, `confidence`, `worst_case_risk`.
 * `expected_hold := min(EMRT_p50, MR_TimeStopMax)`;
-  `confidence := 0.5·rank_speed(EMRT) + 0.5·Q_advantage` (normalized to [0,1]);
+  `confidence := MR_EMRTWeight·rank_speed(EMRT) + (1 − MR_EMRTWeight)·Q_advantage` (normalized to [0,1]);
   `worst_case_risk := risk_money at SL distance` (given current volume).
 
 ---
@@ -156,7 +156,8 @@ Design an Expert Advisor (EA) to pass the **FundingPips 1-step \$10,000** challe
 
 ## Synthetic Cross Support: **XAUEUR** (from **XAUUSD**, **EURUSD**)
 
-**Goal:** Compute signals on **XAUEUR = XAUUSD / EURUSD** and execute either:
+**Goal:** Compute signals on **XAUEUR = XAUUSD / EURUSD** for execution mapping, while MR calculations may use
+`log(XAUUSD) - log(EURUSD)` when `MR_UseLogRatio=true`.
 
 * **Proxy (default):** Execute only XAUUSD, size using synthetic SL dist mapped via current EURUSD.
 * **Replication (optional):** Two legs to approximate XAUEUR delta.
@@ -492,7 +493,7 @@ Order-->Persistence/Logs: audit rows
 
 ## Compatibility Notes (XAUEUR + MR)
 
-**Proxy Mode Coexistence:** MR signals on XAUEUR synthetic spreads execute via XAUUSD proxy mode (default), maintaining existing risk mapping and volume calculations. EMRT computed on synthetic P_synth = XAUUSD/EURUSD bars with forward-fill for gaps.
+**Proxy Mode Coexistence:** MR signals on XAUEUR synthetic spreads execute via XAUUSD proxy mode (default), maintaining existing risk mapping and volume calculations. EMRT computed on synthetic P_synth = log(XAUUSD) - log(EURUSD) when `MR_UseLogRatio=true`, otherwise on linear spread with beta search.
 
 **Replication Mode Interactions:** When UseXAUEURProxy=false, MR spreads execute as two-leg replication. Budget gates aggregate both legs' worst-case risk; position caps count both legs toward MaxOpenPerSymbol. News blocking applies to both legs within **`NewsBufferS`** (Master default ±300s; internal buffer on Evaluation).
 
@@ -573,6 +574,8 @@ Monte Carlo framework describing propagation gates: One-and-Done, NY gate, serve
 
 * `BWISC_ConfCut` (default **0.70**)
 * `MR_ConfCut` (default **0.80**)
+* `MR_EMRTWeight` (default **0.60**) — weight on EMRT fastness in MR confidence
+* `MR_UseLogRatio` (default **true**) — use log-ratio for XAUEUR synthetic
 * `EMRT_FastThresholdPct` (default **40**; EMRT ≤ p40 considered "fast" H*)
 * `CorrelationFallbackRho` (default **0.50**)
 * `MR_RiskPct_Default` (default **0.90**)
@@ -602,6 +605,21 @@ Monte Carlo framework describing propagation gates: One-and-Done, NY gate, serve
 * **M5 (Week 5)** – Strategy Tester artifacts: `.set` for \$10k; optimization ranges; walk-forward scripts; CSV audit/reporting.
 * **M6 (Week 6)** – Hardening: market closure/req-reject paths; parameter validation; restart/idempotency; perf profiling; code review.
 * **M7 (Ensemble Integration)** – EMRT formation job; SignalMR module; Meta-Policy chooser; allocator updates; telemetry pipeline; RL agent pre-training with simulated spreads; Q-table initialization; forward-demo plan.
+
+---
+
+## M7 Amendments (2026-01-28)
+
+The following amendments are approved for M7 to maximize profitability while remaining auditable:
+
+1. **XAUEUR synthetic series**: default to log-ratio `log(XAUUSD) - log(EURUSD)` when `MR_UseLogRatio=true` (default).  
+   If `MR_UseLogRatio=false`, use linear spread `XAUUSD - beta*EURUSD` with beta grid search.
+2. **Beta behavior**: when `MR_UseLogRatio=true`, set `beta=1.0` and skip grid search.  
+   When false, run grid search in `[EMRT_BetaGridMin, EMRT_BetaGridMax]`.
+3. **MR confidence weighting**: use `MR_EMRTWeight` (default 0.60) for EMRT fastness weight; Q-advantage weight is `1 - MR_EMRTWeight`.
+4. **RL discretization calibration**: pre-training must write `Files/RPEA/rl/thresholds.json` with:
+   `{ "k_thresholds": [-0.02, 0.0, 0.02], "sigma_ref": 0.015, "calibrated_at": "YYYY-MM-DD" }`.  
+   If missing or older than 30 days, fall back to fixed 3% thresholds.
 
 ---
 

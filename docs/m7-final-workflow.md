@@ -56,6 +56,8 @@ input int    MR_TimeStopMax        = 90;       // Max hold time (minutes)
 input bool   MR_LongOnly           = false;    // Restrict MR to longs only
 input double BWISC_ConfCut         = 0.70;     // BWISC confidence threshold
 input double MR_ConfCut            = 0.80;     // MR confidence threshold
+input double MR_EMRTWeight         = 0.60;     // Confidence weight on EMRT fastness
+input bool   MR_UseLogRatio        = true;     // Use log(XAUUSD) - log(EURUSD) for XAUEUR
 
 // EMRT Configuration
 input double EMRT_ExtremeThresholdMult = 2.0;  // Extrema detection (sigma multiples)
@@ -63,6 +65,10 @@ input double EMRT_VarCapMult           = 2.5;  // Variance cap multiplier
 input double EMRT_BetaGridMin          = -2.0; // Min beta for grid search
 input double EMRT_BetaGridMax          = 2.0;  // Max beta for grid search
 input int    EMRT_FastThresholdPct     = 40;   // EMRT percentile for MR preference
+
+// Q-Learning Configuration
+input double QL_LearningRate       = 0.10;     // Alpha
+input double QL_DiscountFactor     = 0.99;     // Gamma
 
 // Meta-Policy Configuration
 input bool   UseBanditMetaPolicy   = true;     // Use Thompson/LinUCB vs deterministic
@@ -224,8 +230,10 @@ double M7_GetSpreadCurrent(const string symbol) {
     if(symbol == "XAUEUR") {
         double xau = SymbolInfoDouble("XAUUSD", SYMBOL_BID);
         double eur = SymbolInfoDouble("EURUSD", SYMBOL_BID);
-        double beta = EMRT_GetBeta("XAUEUR");
         if(xau <= 0.0 || eur <= 0.0) return 0.0;
+        if(MR_UseLogRatio)
+            return MathLog(xau) - MathLog(eur);
+        double beta = EMRT_GetBeta("XAUEUR");
         return xau - beta * eur;
     }
 
@@ -426,7 +434,7 @@ if(trans.type == TRADE_TRANSACTION_DEAL_ADD && trans.deal > 0)
 
 1. **ATR**: Already computed and cached in `indicators.mqh`. Access via `Indicators_GetSnapshot()`.
 2. **ORE**: OR values exist in `sessions.mqh`. Combine with ATR to compute energy metric.
-3. **Spread**: For XAUEUR, use synthetic spread (XAUUSD/EURUSD with EMRT beta); other symbols use `Liquidity_SpreadOK()`. Mean requires new rolling buffer.
+3. **Spread**: For XAUEUR, use log-ratio `log(XAUUSD)-log(EURUSD)` when `MR_UseLogRatio=true`; otherwise use linear spread `XAUUSD - beta*EURUSD`. Other symbols use `Liquidity_SpreadOK()`. Mean requires new rolling buffer.
 4. **News**: Fully implemented. Use `News_IsBlocked()` or `News_IsEntryBlocked()`.
 5. **Session state**: Predicates exist. Age calculation and entry tracking need implementation.
 
@@ -439,6 +447,10 @@ if(trans.type == TRADE_TRANSACTION_DEAL_ADD && trans.deal > 0)
 **File**: `MQL5/Include/RPEA/emrt.mqh`
 
 **Purpose**: Calculate Empirical Mean Reversion Time for synthetic XAUEUR spread.
+
+> **M7 amendment**: When `MR_UseLogRatio=true`, compute XAUEUR as `log(XAUUSD) - log(EURUSD)` and
+> hardcode `beta=1.0` (skip grid search). When false, use linear spread `XAUUSD - beta*EURUSD`
+> with beta search in `[EMRT_BetaGridMin, EMRT_BetaGridMax]`.
 
 #### Step 1.1: Data Structures & File I/O
 
@@ -472,7 +484,16 @@ void EMRT_BuildSyntheticSpread(
     int len = MathMin(ArraySize(xauusd_close), ArraySize(eurusd_close));
     ArrayResize(spread, len);
     for(int i = 0; i < len; i++) {
-        spread[i] = xauusd_close[i] - beta * eurusd_close[i];
+        if(MR_UseLogRatio) {
+            // beta ignored when using log-ratio
+            if(xauusd_close[i] <= 0.0 || eurusd_close[i] <= 0.0) {
+                spread[i] = 0.0;
+                continue;
+            }
+            spread[i] = MathLog(xauusd_close[i]) - MathLog(eurusd_close[i]);
+        } else {
+            spread[i] = xauusd_close[i] - beta * eurusd_close[i];
+        }
     }
 }
 ```
@@ -504,7 +525,8 @@ void EMRT_RefreshWeekly() {
     }
 
     // Get 60-90 day lookback of XAUUSD and EURUSD M1 data
-    // Grid search beta in [EMRT_BetaGridMin, EMRT_BetaGridMax]
+    // If log-ratio is enabled, skip beta grid search (beta = 1.0 implicit)
+    // Otherwise grid search beta in [EMRT_BetaGridMin, EMRT_BetaGridMax]
     // Select beta* minimizing EMRT (subject to variance cap)
     // Compute rank percentile
     // Save to emrt_cache.json
@@ -572,15 +594,34 @@ void RL_InitQTable() {
 
 **Compile checkpoint**: ✅ Array initializes
 
+> **Init note**: Call `RL_LoadThresholds()` during module init (or OnInit) so calibrated thresholds
+> are available before any `RL_StateFromSpread()` calls. If it returns false, fixed 3% thresholds apply.
+
 #### Step 2.3: State Discretization
 
 ```cpp
 // Quantile bin thresholds (calibrated to spread change distribution)
-double g_quantile_thresholds[3] = {-0.5, 0.0, 0.5};  // sigma-normalized
+// Default fallback: fixed 3% thresholds (spec baseline)
+double g_quantile_thresholds[3] = {-0.03, 0.0, 0.03};
+double g_sigma_ref = 0.0;
+datetime g_thresholds_calibrated_at = 0;
+bool g_thresholds_loaded = false;
+
+// Load thresholds generated during pre-training
+// File: Files/RPEA/rl/thresholds.json
+// Format: { "k_thresholds": [-0.02, 0.0, 0.02], "sigma_ref": 0.015, "calibrated_at": "2026-01-28" }
+// Fallback: if missing or stale (>30 days), keep fixed 3% thresholds
+bool RL_LoadThresholds() {
+    // TODO[M7-Phase1]: Load JSON, parse k_thresholds/sigma_ref/calibrated_at
+    // If file missing or parse fails, return false (use defaults)
+    // If calibrated_at older than 30 days, return false (use defaults)
+    g_thresholds_loaded = false;
+    return false;
+}
 
 int RL_QuantileBin(double value) {
     // Map continuous value to quantile bin [0, 3]
-    // Uses sigma-normalized thresholds
+    // Uses calibrated thresholds when available (else fixed 3%)
     if(value < g_quantile_thresholds[0]) return 0;  // Large negative
     if(value < g_quantile_thresholds[1]) return 1;  // Small negative
     if(value < g_quantile_thresholds[2]) return 2;  // Small positive
@@ -791,8 +832,10 @@ bool SignalsMR_CheckEntryConditions(
     double emrt_fastness = 1.0 - emrt_rank;
     double q_advantage = RL_GetQAdvantage(state);
 
-    // Weighted confidence: 50% EMRT fastness + 50% Q-advantage
-    confidence = 0.5 * emrt_fastness + 0.5 * q_advantage;
+    // Weighted confidence: MR_EMRTWeight * EMRT fastness + (1 - MR_EMRTWeight) * Q-advantage
+    double emrt_weight = MR_EMRTWeight;
+    double q_weight = 1.0 - emrt_weight;
+    confidence = emrt_weight * emrt_fastness + q_weight * q_advantage;
     return true;
 }
 
@@ -801,7 +844,7 @@ void SignalsMR_GetSpreadChanges(const string symbol, double &changes[], int peri
     ArrayResize(changes, periods);
 
     // Get recent synthetic spread values
-    // For XAUUSD: spread = XAUUSD - beta * EURUSD
+    // For XAUEUR: use log-ratio when MR_UseLogRatio=true; otherwise linear spread with beta
     string emrt_symbol = (symbol == "XAUUSD" ? "XAUEUR" : symbol);
     double beta = EMRT_GetBeta(emrt_symbol);
 
@@ -820,8 +863,20 @@ void SignalsMR_GetSpreadChanges(const string symbol, double &changes[], int peri
 
     // Calculate spread changes (current - previous)
     for(int i = 0; i < periods; i++) {
-        double spread_curr = xau_close[i] - beta * eur_close[i];
-        double spread_prev = xau_close[i + 1] - beta * eur_close[i + 1];
+        double spread_curr;
+        double spread_prev;
+        if(MR_UseLogRatio) {
+            if(xau_close[i] <= 0.0 || eur_close[i] <= 0.0 ||
+               xau_close[i + 1] <= 0.0 || eur_close[i + 1] <= 0.0) {
+                changes[i] = 0.0;
+                continue;
+            }
+            spread_curr = MathLog(xau_close[i]) - MathLog(eur_close[i]);
+            spread_prev = MathLog(xau_close[i + 1]) - MathLog(eur_close[i + 1]);
+        } else {
+            spread_curr = xau_close[i] - beta * eur_close[i];
+            spread_prev = xau_close[i + 1] - beta * eur_close[i + 1];
+        }
         changes[i] = spread_curr - spread_prev;
     }
 }
@@ -959,7 +1014,7 @@ void SignalsMR_Propose(
 
 input int    TrainingEpisodes = 10000;
 input double LearningRate     = 0.1;
-input double DiscountFactor   = 0.95;
+input double DiscountFactor   = 0.99;
 input double EpsilonStart     = 1.0;
 input double EpsilonEnd       = 0.1;
 input string OutputPath       = "RPEA/qtable/mr_qtable.bin";
@@ -984,6 +1039,13 @@ void OnStart() {
         Print("Q-table saved to ", OutputPath);
     else
         Print("ERROR: Failed to save Q-table");
+
+    // Save calibrated thresholds for live discretization
+    // File: MQL5/Files/RPEA/rl/thresholds.json
+    if(RL_SaveThresholds("RPEA/rl/thresholds.json"))
+        Print("Thresholds saved.");
+    else
+        Print("WARNING: Failed to save thresholds.");
 }
 ```
 
@@ -1107,6 +1169,37 @@ double MathRandomNormal(double mean, double stddev) {
 ```
 
 **Compile checkpoint**: ✅ Full pre-training script compiles
+
+#### Step 3.4: Save Threshold Calibration (Required)
+
+During pre-training, compute thresholds from simulated spread changes and persist them
+so live trading uses consistent bins.
+
+**File**: `Files/RPEA/rl/thresholds.json`
+
+**Format**:
+```
+{ "k_thresholds": [-0.02, 0.0, 0.02], "sigma_ref": 0.015, "calibrated_at": "2026-01-28" }
+```
+
+**Staleness rule**: If `calibrated_at` is older than 30 days, live trading falls back to fixed 3% thresholds.
+
+```cpp
+bool RL_SaveThresholds(const string path) {
+    // TODO[M7-Phase3]: derive k_thresholds from training distribution
+    double k_thresholds[3] = {-0.02, 0.0, 0.02};
+    double sigma_ref = 0.015;
+    string calibrated_at = TimeToString(TimeCurrent(), TIME_DATE);
+
+    int handle = FileOpen(path, FILE_WRITE | FILE_TXT | FILE_ANSI);
+    if(handle == INVALID_HANDLE) return false;
+    FileWriteString(handle,
+        StringFormat("{\"k_thresholds\":[%.4f,%.4f,%.4f],\"sigma_ref\":%.6f,\"calibrated_at\":\"%s\"}",
+            k_thresholds[0], k_thresholds[1], k_thresholds[2], sigma_ref, calibrated_at));
+    FileClose(handle);
+    return true;
+}
+```
 
 ---
 
@@ -1581,7 +1674,7 @@ void SLO_CheckAndThrottle(SLO_Metrics& metrics) {
 1. **RL_BellmanUpdate()**: Defined in Task 2 (Phase 1), used by Task 3 (Phase 3). No forward dependency since Task 2 completes before Task 3.
 2. **RL_QuantileBin()**: Defined in Task 2, called by RL_StateFromSpread(). Self-contained within Task 2.
 3. **Helper wrappers** (GetATR_D1, GetSpreadCurrent, etc.): Defined in Phase 0 using existing M1-M6 infrastructure.
-4. **Confidence calculation**: Uses `0.5 * EMRT_fastness + 0.5 * Q_advantage` per spec.
+4. **Confidence calculation**: Uses `MR_EMRTWeight * EMRT_fastness + (1 - MR_EMRTWeight) * Q_advantage` (default 0.60/0.40).
 
 ---
 
