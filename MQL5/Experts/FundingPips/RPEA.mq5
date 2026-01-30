@@ -139,6 +139,7 @@ input bool   UseBanditMetaPolicy        = true;    // Enable contextual bandit f
 input bool   BanditShadowMode           = true;    // Log bandit decisions without executing
 input double BWISC_ConfCut              = 0.70;
 input double MR_ConfCut                 = 0.80;
+input double MR_EMRTWeight              = 0.60;    // Confidence weight on EMRT fastness
 input int    EMRT_FastThresholdPct      = 40;
 input double CorrelationFallbackRho     = 0.50;    // Assumed correlation if unknown
 input double MR_RiskPct_Default         = 0.90;
@@ -277,6 +278,26 @@ int OnInit()
    Persistence_EnsureFolders();
    Persistence_EnsurePlaceholderFiles();
    AuditLogger_Init(AuditLogPath, Config_GetLogBufferSize(), EnableDetailedLogging);
+
+   // 5a) Load EMRT cache (rank/p50/beta)
+   bool emrt_loaded = EMRT_LoadCache(FILE_EMRT_CACHE);
+   if(!emrt_loaded)
+      Print("[EMRT] Cache not loaded (using defaults): ", FILE_EMRT_CACHE);
+   else
+      Print("[EMRT] Cache loaded: ", FILE_EMRT_CACHE);
+
+   // 5b) Load RL artifacts (Q-table + thresholds)
+   bool qtable_loaded = RL_LoadQTable(FILE_QTABLE_BIN);
+   if(!qtable_loaded)
+      Print("[RL] Q-table not loaded (using defaults): ", FILE_QTABLE_BIN);
+   else
+      Print("[RL] Q-table loaded: ", FILE_QTABLE_BIN);
+
+   bool thresholds_loaded = RL_LoadThresholds();
+   if(!thresholds_loaded)
+      Print("[RL] Thresholds not loaded or stale (using defaults)");
+   else
+      Print("[RL] Thresholds loaded");
 
    // M4-Task01: Initialize News Stabilization
    string news_symbols[];

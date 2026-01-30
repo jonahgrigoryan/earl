@@ -9,9 +9,35 @@
 #include <RPEA/m7_helpers.mqh>
 #include <RPEA/config.mqh>
 #include <RPEA/app_context.mqh>
+#include <RPEA/logging.mqh>
 
 // Module-scope guard (no static locals per repo rules)
 bool g_mr_proxy_warned = false;
+datetime g_mr_gate_log_time = 0;
+string g_mr_gate_log_symbol = "";
+string g_mr_gate_log_reason = "";
+
+bool SignalsMR_ShouldLogGate(const string symbol, const string reason, const datetime now)
+{
+   if(now <= 0)
+      return false;
+   if(symbol == g_mr_gate_log_symbol &&
+      reason == g_mr_gate_log_reason &&
+      (now - g_mr_gate_log_time) < 60)
+      return false;
+   g_mr_gate_log_symbol = symbol;
+   g_mr_gate_log_reason = reason;
+   g_mr_gate_log_time = now;
+   return true;
+}
+
+void SignalsMR_LogGate(const string symbol, const string reason, const string details, const datetime now)
+{
+   if(!SignalsMR_ShouldLogGate(symbol, reason, now))
+      return;
+   string fields = StringFormat("{\"symbol\":\"%s\",\"reason\":\"%s\",%s}", symbol, reason, details);
+   LogDecision("SignalsMR", "GATE", fields);
+}
 
 // Dependency validation (safe defaults)
 void SignalsMR_ValidateDependencies()
@@ -83,23 +109,35 @@ bool SignalsMR_CheckEntryConditions(
    double &confidence
 )
 {
-   if(ctx.symbols_count < 0) { /* suppress unused */ }
    confidence = 0.0;
+   const datetime now = ctx.current_server_time;
 
    if(!EnableMR)
+   {
+      SignalsMR_LogGate(symbol, "disabled", "\"detail\":\"EnableMR=false\"", now);
       return false;
+   }
 
    // Gate 1: News block
    string news_symbol = SymbolBridge_GetExecutionSymbol(symbol);
    if(news_symbol == "") news_symbol = symbol;
    if(News_IsEntryBlocked(news_symbol))
+   {
+      SignalsMR_LogGate(symbol, "news_blocked",
+                        StringFormat("\"news_symbol\":\"%s\"", news_symbol), now);
       return false;
+   }
 
    // Gate 2: EMRT rank must be favorable (fast reversion)
    string emrt_symbol = (symbol == "XAUUSD" ? "XAUEUR" : symbol);
    double emrt_rank = EMRT_GetRank(emrt_symbol);
    if(emrt_rank > EMRT_FastThresholdPct / 100.0)
+   {
+      SignalsMR_LogGate(symbol, "emrt_rank",
+                        StringFormat("\"emrt_rank\":%.4f,\"threshold\":%.4f",
+                                     emrt_rank, EMRT_FastThresholdPct / 100.0), now);
       return false;
+   }
 
    // Gate 3: RL action must be ENTER
    double spread_changes[];
@@ -107,7 +145,11 @@ bool SignalsMR_CheckEntryConditions(
    int state = RL_StateFromSpread(spread_changes, RL_NUM_PERIODS);
    int action = RL_ActionForState(state);
    if(action != RL_ACTION_ENTER)
+   {
+      SignalsMR_LogGate(symbol, "rl_action",
+                        StringFormat("\"state\":%d,\"action\":%d", state, action), now);
       return false;
+   }
 
    // Confidence: weighted combination
    double emrt_fastness = 1.0 - emrt_rank;
