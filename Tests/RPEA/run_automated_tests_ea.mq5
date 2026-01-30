@@ -54,6 +54,21 @@ input double RiskGateHeadroom           = 0.90;
 #define MarginLevelCritical    50.0
 #define EnableMarginProtection true
 #define TradingEnabledDefault  true
+// M7-Task04: MR signal inputs (defaults for test runner)
+#define EnableMR              true
+#define MR_RiskPct_Default    0.90
+#define MR_TimeStopMin        60
+#define MR_TimeStopMax        90
+#define MR_LongOnly           false
+#define MR_ConfCut            0.80
+#define MR_EMRTWeight         0.60
+#define MR_UseLogRatio        true
+#define EMRT_FastThresholdPct 40
+#define EMRT_ExtremeThresholdMult 2.0
+#define EMRT_VarCapMult           2.5
+#define EMRT_BetaGridMin          -2.0
+#define EMRT_BetaGridMax          2.0
+#define UseXAUEURProxy        true
 // M6-Task01: Additional macros for config validation tests
 #define MinTradeDaysRequired   3
 #define MinHoldSeconds         120
@@ -133,6 +148,8 @@ bool g_test_gate_force_fail = false;
 #include "test_config_validation.mqh"
 // M7-Task02: RL agent tests
 #include "test_rl_agent.mqh"
+// M7-Task04: SignalMR tests
+#include "test_signals_mr.mqh"
 
 // Forward declaration to ensure the breakeven suite is visible when compiling.
 bool TestBreakeven_RunAll();
@@ -151,6 +168,8 @@ bool TestPersistenceRecovery_RunAll();
 bool TestConfigValidation_RunAll();
 // M7-Task02 forward declaration
 bool TestRL_RunAll();
+// M7-Task04 forward declaration
+bool TestSignalsMR_RunAll();
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -538,6 +557,16 @@ void RunAllTests()
    g_test_reporter.RecordTest(suiteM7a, "TestRL_RunAll", taskM7a_result,
                                taskM7a_result ? "RL agent tests passed" : "RL agent tests failed");
    g_test_reporter.EndSuite(suiteM7a);
+
+   // M7-Task04: SignalMR Tests
+   Print("=================================================================");
+   Print("M7-Task04: SignalMR Tests");
+   Print("=================================================================");
+   int suiteM7b = g_test_reporter.BeginSuite("M7Task04_SignalMR");
+   bool taskM7b_result = TestSignalsMR_RunAll();
+   g_test_reporter.RecordTest(suiteM7b, "TestSignalsMR_RunAll", taskM7b_result,
+                               taskM7b_result ? "SignalMR tests passed" : "SignalMR tests failed");
+   g_test_reporter.EndSuite(suiteM7b);
 
    Print("Test execution complete.");
 }

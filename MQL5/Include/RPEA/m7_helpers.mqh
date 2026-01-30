@@ -37,8 +37,10 @@ double M7_GetSpreadCurrent(const string symbol)
    {
       double xau = SymbolInfoDouble("XAUUSD", SYMBOL_BID);
       double eur = SymbolInfoDouble("EURUSD", SYMBOL_BID);
-      double beta = EMRT_GetBeta("XAUEUR");
       if(xau <= 0.0 || eur <= 0.0) return 0.0;
+      if(MR_UseLogRatio)
+         return MathLog(xau) - MathLog(eur);
+      double beta = EMRT_GetBeta("XAUEUR");
       return xau - beta * eur;
    }
 
