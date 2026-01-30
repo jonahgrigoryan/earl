@@ -131,6 +131,8 @@ bool g_test_gate_force_fail = false;
 #include "test_persistence_recovery.mqh"
 // M6-Task01: Config Validation tests
 #include "test_config_validation.mqh"
+// M7-Task02: RL agent tests
+#include "test_rl_agent.mqh"
 
 // Forward declaration to ensure the breakeven suite is visible when compiling.
 bool TestBreakeven_RunAll();
@@ -147,6 +149,8 @@ bool TestPersistenceState_RunAll();
 bool TestPersistenceRecovery_RunAll();
 // M6-Task01 forward declaration
 bool TestConfigValidation_RunAll();
+// M7-Task02 forward declaration
+bool TestRL_RunAll();
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -524,6 +528,16 @@ void RunAllTests()
    g_test_reporter.RecordTest(suiteM6a, "TestConfigValidation_RunAll", taskM6a_result,
                                taskM6a_result ? "Config validation tests passed" : "Config validation tests failed");
    g_test_reporter.EndSuite(suiteM6a);
+
+   // M7-Task02: RL Agent Tests
+   Print("=================================================================");
+   Print("M7-Task02: RL Agent Tests");
+   Print("=================================================================");
+   int suiteM7a = g_test_reporter.BeginSuite("M7Task02_RL_Agent");
+   bool taskM7a_result = TestRL_RunAll();
+   g_test_reporter.RecordTest(suiteM7a, "TestRL_RunAll", taskM7a_result,
+                               taskM7a_result ? "RL agent tests passed" : "RL agent tests failed");
+   g_test_reporter.EndSuite(suiteM7a);
 
    Print("Test execution complete.");
 }

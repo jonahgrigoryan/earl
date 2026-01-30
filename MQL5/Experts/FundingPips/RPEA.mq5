@@ -145,6 +145,7 @@ input double MR_RiskPct_Default         = 0.90;
 input int    MR_TimeStopMin             = 60;
 input int    MR_TimeStopMax             = 90;
 input bool   MR_LongOnly                = false;
+input bool   MR_UseLogRatio             = true;    // Use log-ratio for XAUEUR spread
 input double EMRT_ExtremeThresholdMult  = 2.0;
 input double EMRT_VarCapMult            = 2.5;
 input double EMRT_BetaGridMin           = -2.0;
