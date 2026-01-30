@@ -10,7 +10,8 @@
 - Milestone: M4 compliance polish per `finalspec.md` / `prd.md` (calendar integration, CEST day tracking, min trade days, kill-switch floors, disable flags, persistence hardening). Base branch: `feat/m4-compliance-polish`.
 - Milestone: M5 Strategy Tester artifacts per `finalspec.md` (.set presets, optimization ranges, walk-forward scripts, CSV audit/reporting). Base branch: `feat/m5-strategy-tester`.
 - Current milestone: M6 hardening (parameter validation, config guards). Base branch: `feat/m6-hardening`. Active task docs: `m6-task01.md` through `m6-task04.md`.
-- Task execution: each `taskXX.md` (e.g., `task21.md` through `task24.md`) and `m6-taskXX.md` provides atomic steps: implement logic, add/extend tests, wire into `Tests/RPEA/run_automated_tests_ea.mq5`, update docs/fixtures. Use `m3_structure.md` and `.kiro/specs/rpea-m3/{tasks.md, design.md, requirements.md}` for M3 context.
+- Current milestone: M7 ensemble integration (BWISC + MR). Source of truth: `docs/m7-final-workflow.md`. Base branch: `feat/m7-ensemble-integration`.
+- Task execution: each `taskXX.md` (e.g., `task21.md` through `task24.md`) and `m6-taskXX.md` provides atomic steps: implement logic, add/extend tests, wire into `Tests/RPEA/run_automated_tests_ea.mq5`, update docs/fixtures. For M7, follow `docs/m7-final-workflow.md` step-by-step (compile after each numbered step). Use `m3_structure.md` and `.kiro/specs/rpea-m3/{tasks.md, design.md, requirements.md}` for M3 context.
 - Branching: work on per-task branches and merge into the milestone base. Avoid outdated branch examples.
 
 ## Build, Test, and Development Commands
@@ -30,8 +31,8 @@
 - Always rerun `powershell -ExecutionPolicy Bypass -File run_tests.ps1` before submitting; include the updated JSON or key log excerpts when relevant. The runner includes Phase 5 suites (breakeven, pending expiry) by default.
 
 ## Commit & Pull Request Guidelines
-- Preferred messages mirror `M3: Task <id> - summary`, `M4: Task <id> - summary`, `M5: Task <id> - summary`, or `M6: Task <id> - summary`, or use concise imperatives aligned with the workstream.
-- Develop on task/phase branches (e.g., `feat/m3-task24` -> `feat/m3-phase5-optimization` -> `feat/m3-order-engine`). For M4 compliance polish, use `feat/m4-taskXX` -> optional `feat/m4-phaseY` -> base `feat/m4-compliance-polish` (or the current M4 base branch). For M5 Strategy Tester artifacts, use `feat/m5-taskXX` -> base `feat/m5-strategy-tester`. For M6 hardening, use `feat/m6-taskXX` -> base `feat/m6-hardening`.
+- Preferred messages mirror `M3: Task <id> - summary`, `M4: Task <id> - summary`, `M5: Task <id> - summary`, `M6: Task <id> - summary`, or `M7: Task <id> - summary`, or use concise imperatives aligned with the workstream.
+- Develop on task/phase branches (e.g., `feat/m3-task24` -> `feat/m3-phase5-optimization` -> `feat/m3-order-engine`). For M4 compliance polish, use `feat/m4-taskXX` -> optional `feat/m4-phaseY` -> base `feat/m4-compliance-polish` (or the current M4 base branch). For M5 Strategy Tester artifacts, use `feat/m5-taskXX` -> base `feat/m5-strategy-tester`. For M6 hardening, use `feat/m6-taskXX` -> base `feat/m6-hardening`. For M7, follow `docs/m7-final-workflow.md` phase branches (e.g., `feat/m7-phase0-scaffold` -> `feat/m7-phase1-foundation` -> `feat/m7-ensemble-integration`).
 - Pull requests should summarize scope, link supporting docs (e.g., `task10.md`), and attach the latest automated test outcome or relevant compile logs.
 
 ## Agent-Specific Notes
