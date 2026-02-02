@@ -150,6 +150,8 @@ bool g_test_gate_force_fail = false;
 #include "test_rl_agent.mqh"
 // M7-Task04: SignalMR tests
 #include "test_signals_mr.mqh"
+// M7-Task05: Meta-Policy tests
+#include "test_meta_policy.mqh"
 
 // Forward declaration to ensure the breakeven suite is visible when compiling.
 bool TestBreakeven_RunAll();
@@ -170,6 +172,8 @@ bool TestConfigValidation_RunAll();
 bool TestRL_RunAll();
 // M7-Task04 forward declaration
 bool TestSignalsMR_RunAll();
+// M7-Task05 forward declaration
+bool TestMetaPolicy_RunAll();
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -567,6 +571,16 @@ void RunAllTests()
    g_test_reporter.RecordTest(suiteM7b, "TestSignalsMR_RunAll", taskM7b_result,
                                taskM7b_result ? "SignalMR tests passed" : "SignalMR tests failed");
    g_test_reporter.EndSuite(suiteM7b);
+
+   // M7-Task05: Meta-Policy Tests
+   Print("=================================================================");
+   Print("M7-Task05: Meta-Policy Tests");
+   Print("=================================================================");
+   int suiteM7c = g_test_reporter.BeginSuite("M7Task05_MetaPolicy");
+   bool taskM7c_result = TestMetaPolicy_RunAll();
+   g_test_reporter.RecordTest(suiteM7c, "TestMetaPolicy_RunAll", taskM7c_result,
+                               taskM7c_result ? "Meta-policy tests passed" : "Meta-policy tests failed");
+   g_test_reporter.EndSuite(suiteM7c);
 
    Print("Test execution complete.");
 }
