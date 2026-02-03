@@ -152,6 +152,8 @@ bool g_test_gate_force_fail = false;
 #include "test_signals_mr.mqh"
 // M7-Task05: Meta-Policy tests
 #include "test_meta_policy.mqh"
+// M7-Task06: Regime + Telemetry tests
+#include "test_regime_telemetry.mqh"
 
 // Forward declaration to ensure the breakeven suite is visible when compiling.
 bool TestBreakeven_RunAll();
@@ -174,6 +176,8 @@ bool TestRL_RunAll();
 bool TestSignalsMR_RunAll();
 // M7-Task05 forward declaration
 bool TestMetaPolicy_RunAll();
+// M7-Task06 forward declaration
+bool TestRegimeTelemetry_RunAll();
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -582,6 +586,15 @@ void RunAllTests()
                                taskM7c_result ? "Meta-policy tests passed" : "Meta-policy tests failed");
    g_test_reporter.EndSuite(suiteM7c);
 
+   // M7-Task06: Regime + Telemetry Tests
+   Print("=================================================================");
+   Print("M7-Task06: Regime + Telemetry Tests");
+   Print("=================================================================");
+   int suiteM7d = g_test_reporter.BeginSuite("M7Task06_RegimeTelemetry");
+   bool taskM7d_result = TestRegimeTelemetry_RunAll();
+   g_test_reporter.RecordTest(suiteM7d, "TestRegimeTelemetry_RunAll", taskM7d_result,
+                               taskM7d_result ? "Regime + telemetry tests passed" : "Regime + telemetry tests failed");
+cccccccc
    Print("Test execution complete.");
 }
 
