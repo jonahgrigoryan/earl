@@ -74,6 +74,9 @@ void Scheduler_Tick(const AppContext& ctx)
       double spread_val = 0.0;
       double spread_thresh = 0.0;
       bool spread_ok = Liquidity_SpreadOK(sym, spread_val, spread_thresh);
+      double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+      double spread_pts = (point > 0.0 ? spread_val / point : (double)SymbolInfoInteger(sym, SYMBOL_SPREAD));
+      Liquidity_UpdateStats(sym, spread_pts, -1.0);
 
       // Session predicates (London/NY OR) and OR window
       bool in_london = Sessions_InLondon(ctx, sym);

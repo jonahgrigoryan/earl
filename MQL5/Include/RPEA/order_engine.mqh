@@ -8,6 +8,7 @@
 #include <RPEA/config.mqh>
 #include <RPEA/app_context.mqh>
 #include <RPEA/logging.mqh>
+#include <RPEA/liquidity.mqh>
 #include <RPEA/persistence.mqh>
 #include <RPEA/queue.mqh>
 #include <RPEA/trailing.mqh>
@@ -3388,6 +3389,7 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
          double executed_slippage_pts = 0.0;
          if(snapshot_point > 0.0 && requested_price > 0.0 && trade_result.price > 0.0)
             executed_slippage_pts = MathAbs(trade_result.price - requested_price) / snapshot_point;
+         Liquidity_UpdateStats(request.symbol, -1.0, executed_slippage_pts);
 
          LogOE(StringFormat("ExecuteOrderWithRetry success on attempt %d: ticket=%llu requested=%.5f executed=%.5f slippage=%.2f pts volume=%.4f",
                             attempt,
