@@ -7,6 +7,8 @@
 #include <RPEA/rl_agent.mqh>
 #include <RPEA/news.mqh>
 #include <RPEA/m7_helpers.mqh>
+#include <RPEA/mr_context.mqh>
+#include <RPEA/symbol_bridge.mqh>
 #include <RPEA/config.mqh>
 #include <RPEA/app_context.mqh>
 #include <RPEA/logging.mqh>
@@ -203,6 +205,13 @@ void SignalsMR_Propose(const AppContext& ctx, const string symbol,
    bias = 0.0;
    confidence = 0.0;
 
+   // Clear MR context
+   g_last_mr_context.expected_R = 0.0;
+   g_last_mr_context.expected_hold = 0.0;
+   g_last_mr_context.worst_case_risk = 0.0;
+   g_last_mr_context.entry_price = 0.0;
+   g_last_mr_context.direction = 0;
+
    // Gate: Proxy must be enabled
    if(!UseXAUEURProxy)
    {
@@ -241,6 +250,33 @@ void SignalsMR_Propose(const AppContext& ctx, const string symbol,
 
    hasSetup = true;
    setupType = "MR";
+
+   // Populate MR context for allocator
+   // CRITICAL: Use execution symbol for entry price, not signal symbol
+   string exec_symbol = SymbolBridge_GetExecutionSymbol(signal_symbol);
+   if(exec_symbol == "")
+      exec_symbol = signal_symbol;
+
+   double bid = 0.0;
+   double ask = 0.0;
+   if(!SymbolInfoDouble(exec_symbol, SYMBOL_BID, bid) ||
+      !SymbolInfoDouble(exec_symbol, SYMBOL_ASK, ask) ||
+      bid <= 0.0 || ask <= 0.0)
+   {
+      hasSetup = false;
+      setupType = "None";
+      return;
+   }
+
+   if(direction > 0)
+      g_last_mr_context.entry_price = ask;
+   else
+      g_last_mr_context.entry_price = bid;
+
+   g_last_mr_context.direction = direction;
+   g_last_mr_context.expected_R = 1.5;
+   g_last_mr_context.expected_hold = EMRT_GetP50(signal_symbol);
+   g_last_mr_context.worst_case_risk = 0.0;
 }
 
 #endif // SIGNALS_MR_MQH

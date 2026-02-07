@@ -154,6 +154,8 @@ bool g_test_gate_force_fail = false;
 #include "test_meta_policy.mqh"
 // M7-Task06: Regime + Telemetry tests
 #include "test_regime_telemetry.mqh"
+// M7-Task07: Allocator MR integration tests
+#include "test_allocator_mr.mqh"
 
 // Forward declaration to ensure the breakeven suite is visible when compiling.
 bool TestBreakeven_RunAll();
@@ -178,6 +180,8 @@ bool TestSignalsMR_RunAll();
 bool TestMetaPolicy_RunAll();
 // M7-Task06 forward declaration
 bool TestRegimeTelemetry_RunAll();
+// M7-Task07 forward declaration
+bool TestAllocatorMR_RunAll();
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -594,7 +598,18 @@ void RunAllTests()
    bool taskM7d_result = TestRegimeTelemetry_RunAll();
    g_test_reporter.RecordTest(suiteM7d, "TestRegimeTelemetry_RunAll", taskM7d_result,
                                taskM7d_result ? "Regime + telemetry tests passed" : "Regime + telemetry tests failed");
-cccccccc
+   g_test_reporter.EndSuite(suiteM7d);
+
+   // M7-Task07: Allocator MR Integration Tests
+   Print("=================================================================");
+   Print("M7-Task07: Allocator MR Integration Tests");
+   Print("=================================================================");
+   int suiteM7e = g_test_reporter.BeginSuite("M7Task07_AllocatorMR");
+   bool taskM7e_result = TestAllocatorMR_RunAll();
+   g_test_reporter.RecordTest(suiteM7e, "TestAllocatorMR_RunAll", taskM7e_result,
+                               taskM7e_result ? "Allocator MR tests passed" : "Allocator MR tests failed");
+   g_test_reporter.EndSuite(suiteM7e);
+
    Print("Test execution complete.");
 }
 

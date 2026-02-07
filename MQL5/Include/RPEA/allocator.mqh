@@ -10,6 +10,7 @@
 #include <RPEA/equity_guardian.mqh>
 #include <RPEA/symbol_bridge.mqh>
 #include <RPEA/liquidity.mqh>
+#include <RPEA/mr_context.mqh>
 
 struct AppContext;
 
@@ -129,7 +130,7 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
 
    string rejection = "";
 
-   if(strategy != "BWISC")
+   if(strategy != "BWISC" && strategy != "MR")
    {
       rejection = "unsupported_strategy";
    }
@@ -144,13 +145,21 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
 
    double entry_price = 0.0;
    int direction = 0;
-  if(rejection == "")
-  {
-     entry_price = g_last_bwisc_context.entry_price;
-     direction = g_last_bwisc_context.direction;
-     if(entry_price <= 0.0)
-        rejection = "missing_entry_price";
-  }
+   if(rejection == "")
+   {
+      if(strategy == "MR")
+      {
+         entry_price = g_last_mr_context.entry_price;
+         direction = g_last_mr_context.direction;
+      }
+      else
+      {
+         entry_price = g_last_bwisc_context.entry_price;
+         direction = g_last_bwisc_context.direction;
+      }
+      if(entry_price <= 0.0)
+         rejection = "missing_entry_price";
+   }
 
    double point = 0.0;
    double value_per_point = 0.0;
@@ -256,6 +265,11 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
      }
   }
 
+   if(strategy == "MR" && rejection == "")
+   {
+      setup_type = "MR";
+   }
+
    if(rejection == "")
    {
       if(setup_type == "")
@@ -356,10 +370,28 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
    {
       rejection = "spread_filter";
    }
+
+   // Strategy-specific risk percentage
+   double riskPct = 0.0;
+   if(rejection == "")
+   {
+      if(strategy == "MR")
+      {
+         if(Equity_IsMicroModeActive())
+            riskPct = Config_GetMicroRiskPct();
+         else
+            riskPct = Config_GetMRRiskPctDefault();
+      }
+      else
+      {
+         riskPct = Risk_GetEffectiveRiskPct();
+      }
+   }
+
    double volume = 0.0;
    if(rejection == "")
    {
-      volume = Risk_SizingByATRDistanceForSymbol(exec_symbol, entry_price, sl_price, equity, Risk_GetEffectiveRiskPct(), -1.0, confidence);
+      volume = Risk_SizingByATRDistanceForSymbol(exec_symbol, entry_price, sl_price, equity, riskPct, -1.0, confidence);
       if(volume <= 0.0)
          rejection = "volume_zero";
    }
@@ -479,7 +511,7 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
 
      string ts = TimeToString(ctx.current_server_time, TIME_DATE|TIME_MINUTES);
      string prefix = (plan.is_proxy ? "PX " : "");
-     string comment = StringFormat("%sBWISC-%s b=%.2f conf=%.2f %s", prefix, setup_type, plan.bias, sanitized_confidence, ts);
+     string comment = StringFormat("%s%s-%s b=%.2f conf=%.2f %s", prefix, strategy, setup_type, plan.bias, sanitized_confidence, ts);
      plan.comment = Allocator_TrimComment(comment);
   }
    else

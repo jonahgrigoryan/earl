@@ -18,7 +18,7 @@
 
 // Decision-only gate: 1 = log decisions without executing (Phase 4)
 // Set to 0 in Phase 5 Task 7 to enable actual trade execution.
-#define M7_DECISION_ONLY 1
+#define M7_DECISION_ONLY 0
 
 //+------------------------------------------------------------------+
 //| Step 5.1: Context structure                                       |
