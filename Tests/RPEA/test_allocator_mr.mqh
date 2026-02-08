@@ -162,6 +162,44 @@ bool TestAllocatorMR_RejectsInvalid()
 }
 
 //+------------------------------------------------------------------+
+//| Test: MR proxy mapping guard                                     |
+//+------------------------------------------------------------------+
+bool TestAllocatorMR_ProxyMapGuard()
+{
+   int f = TestAllocMR_Begin("TestAllocatorMR_ProxyMapGuard");
+
+   ASSERT_FALSE(Allocator_ShouldMapProxyDistance("MR", true),
+                "MR proxy distances are not remapped");
+   ASSERT_TRUE(Allocator_ShouldMapProxyDistance("BWISC", true),
+               "BWISC proxy distances are remapped");
+   ASSERT_FALSE(Allocator_ShouldMapProxyDistance("MR", false),
+                "Non-proxy symbols are never remapped");
+
+   return TestAllocMR_End(f);
+}
+
+//+------------------------------------------------------------------+
+//| Test: MR bias computed from direction                            |
+//+------------------------------------------------------------------+
+bool TestAllocatorMR_BiasDirection()
+{
+   int f = TestAllocMR_Begin("TestAllocatorMR_BiasDirection");
+
+   double long_bias = Allocator_ComputeBias("MR", 1, 0.75);
+   double short_bias = Allocator_ComputeBias("MR", -1, 0.75);
+   double neutral_bias = Allocator_ComputeBias("None", 1, 0.75);
+
+   ASSERT_TRUE(MathAbs(long_bias - 0.75) < 0.0001,
+               "Long MR bias keeps confidence magnitude");
+   ASSERT_TRUE(MathAbs(short_bias + 0.75) < 0.0001,
+               "Short MR bias keeps direction sign");
+   ASSERT_TRUE(MathAbs(neutral_bias) < 0.0001,
+               "Unknown setup bias remains zero");
+
+   return TestAllocMR_End(f);
+}
+
+//+------------------------------------------------------------------+
 //| Test: SLO metrics initialization                                 |
 //+------------------------------------------------------------------+
 bool TestAllocatorMR_SLOInit()
@@ -242,11 +280,13 @@ bool TestAllocatorMR_RunAll()
    bool ok1 = TestAllocatorMR_AcceptsStrategy();
    bool ok2 = TestAllocatorMR_UsesCorrectContext();
    bool ok3 = TestAllocatorMR_RejectsInvalid();
-   bool ok4 = TestAllocatorMR_SLOInit();
-   bool ok5 = TestAllocatorMR_SLOBreach();
-   bool ok6 = TestAllocatorMR_RespectsMicroMode();
+   bool ok4 = TestAllocatorMR_ProxyMapGuard();
+   bool ok5 = TestAllocatorMR_BiasDirection();
+   bool ok6 = TestAllocatorMR_SLOInit();
+   bool ok7 = TestAllocatorMR_SLOBreach();
+   bool ok8 = TestAllocatorMR_RespectsMicroMode();
 
-   return (ok1 && ok2 && ok3 && ok4 && ok5 && ok6);
+   return (ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8);
 }
 
 #endif // TEST_ALLOCATOR_MR_MQH

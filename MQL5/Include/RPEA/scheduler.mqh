@@ -4,8 +4,10 @@
 #define SCHEDULER_MQH
 
 #include <RPEA/config.mqh>
+#include <RPEA/order_engine.mqh>
 
 struct AppContext;
+extern OrderEngine g_order_engine;
 
 //------------------------------------------------------------------------------
 // M6-Task04: Performance Profiling State (module-scoped)
@@ -34,7 +36,7 @@ void Scheduler_ReportPerfStats()
    g_sched_perf.max_us = 0;
 }
 
-// Main tick orchestrator (logging-only in M1)
+// Main tick orchestrator
 void Scheduler_Tick(const AppContext& ctx)
 {
    // M6-Task04: Start profiling measurement (zero overhead when disabled)
@@ -108,15 +110,79 @@ void Scheduler_Tick(const AppContext& ctx)
       // 4) Meta-policy
       string choice = MetaPolicy_Choose(ctx, sym, bw_has, bw_conf, mr_has, mr_conf);
 
-      // 5) Allocator plan (no-op)
+      if(choice == "Skip")
+      {
+         string skip_fields = StringFormat("{\"symbol\":\"%s\",\"choice\":\"%s\",\"bw_conf\":%.2f,\"mr_conf\":%.2f,\"reason\":\"policy_skip\"}",
+                                           sym,
+                                           choice,
+                                           bw_conf,
+                                           mr_conf);
+         LogDecision("Scheduler", "EVAL", skip_fields);
+         continue;
+      }
+
+      // 5) Build allocator plan and execute through order engine
       int slPoints = (choice=="BWISC")?bw_sl:mr_sl;
       int tpPoints = (choice=="BWISC")?bw_tp:mr_tp;
       double conf  = (choice=="BWISC")?bw_conf:mr_conf;
       OrderPlan plan = Allocator_BuildOrderPlan(ctx, choice, sym, slPoints, tpPoints, conf);
 
-      // 6) Log decision only
-      string fields = StringFormat("{\"symbol\":\"%s\",\"choice\":\"%s\",\"bw_conf\":%.2f,\"mr_conf\":%.2f}", sym, choice, bw_conf, mr_conf);
-      LogDecision("Scheduler", "EVAL", fields);
+      if(!plan.valid)
+      {
+         string reject_fields = StringFormat("{\"symbol\":\"%s\",\"choice\":\"%s\",\"bw_conf\":%.2f,\"mr_conf\":%.2f,\"reason\":\"%s\"}",
+                                             sym,
+                                             choice,
+                                             bw_conf,
+                                             mr_conf,
+                                             plan.rejection_reason);
+         LogDecision("Scheduler", "PLAN_REJECT", reject_fields);
+         LogDecision("Scheduler", "EVAL", reject_fields);
+         continue;
+      }
+
+      OrderRequest request;
+      ZeroMemory(request);
+      request.symbol = plan.symbol;
+      request.type = plan.order_type;
+      request.volume = plan.volume;
+      request.price = plan.price;
+      request.sl = plan.sl;
+      request.tp = plan.tp;
+      request.magic = plan.magic;
+      request.comment = plan.comment;
+      request.is_oco_primary = false;
+      request.oco_sibling_ticket = 0;
+      request.expiry = 0;
+      request.signal_symbol = plan.signal_symbol;
+      request.is_protective = false;
+      request.is_proxy = plan.is_proxy;
+      request.proxy_rate = plan.proxy_rate;
+      request.proxy_context = plan.proxy_context;
+
+      OrderResult result = g_order_engine.PlaceOrder(request);
+
+      string eval_fields = StringFormat("{\"symbol\":\"%s\",\"choice\":\"%s\",\"setup\":\"%s\",\"bw_conf\":%.2f,\"mr_conf\":%.2f,\"plan_valid\":true,\"order_sent\":%s}",
+                                        sym,
+                                        choice,
+                                        plan.setup_type,
+                                        bw_conf,
+                                        mr_conf,
+                                        result.success ? "true" : "false");
+      LogDecision("Scheduler", "EVAL", eval_fields);
+
+      string place_err = result.error_message;
+      StringReplace(place_err, "\"", "'");
+      string place_fields = StringFormat("{\"symbol\":\"%s\",\"choice\":\"%s\",\"setup\":\"%s\",\"ticket\":%llu,\"retcode\":%d,\"error\":\"%s\"}",
+                                         sym,
+                                         choice,
+                                         plan.setup_type,
+                                         result.ticket,
+                                         result.last_retcode,
+                                         place_err);
+      if(result.success)
+         LogDecision("Scheduler", "PLACE_OK", place_fields);
+      else
+         LogDecision("Scheduler", "PLACE_FAIL", place_fields);
    }
 
    // Heartbeat audit

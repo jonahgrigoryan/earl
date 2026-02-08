@@ -96,6 +96,33 @@ double Allocator_NormalizePrice(const double price, const int digits)
    return NormalizeDouble(price, digits);
 }
 
+bool Allocator_ShouldMapProxyDistance(const string strategy, const bool is_proxy)
+{
+   if(!is_proxy)
+      return false;
+
+   if(strategy == "MR")
+      return false;
+
+   return true;
+}
+
+double Allocator_ComputeBias(const string setup_type, const int direction, const double confidence)
+{
+   double bias_magnitude = MathMin(MathAbs(confidence), 1.0);
+   if(!MathIsValidNumber(bias_magnitude))
+      bias_magnitude = 0.0;
+
+   if(setup_type == "BC")
+      return (double)direction * bias_magnitude;
+   if(setup_type == "MSC")
+      return (double)(-direction) * bias_magnitude;
+   if(setup_type == "MR")
+      return (double)direction * bias_magnitude;
+
+   return 0.0;
+}
+
 // Main builder -----------------------------------------------------
 OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
                                    const string strategy,
@@ -282,7 +309,11 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
 
    double exec_sl_points = plan.signal_sl_points;
    double exec_tp_points = plan.signal_tp_points;
-   if(rejection == "" && plan.is_proxy)
+   // SignalsMR_CalculateSLTP outputs execution-symbol distances for MR.
+   // Avoid remapping MR proxy distances (XAUEUR -> XAUUSD) to prevent double conversion.
+   bool requires_proxy_distance_map = Allocator_ShouldMapProxyDistance(strategy, plan.is_proxy);
+
+   if(rejection == "" && requires_proxy_distance_map)
      {
       double mapped = 0.0;
       double eurusd_rate = 0.0;
@@ -500,14 +531,7 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
      plan.sl = sl_price;
      plan.tp = tp_price;
      plan.setup_type = setup_type;
-     plan.bias = 0.0;
-     double bias_magnitude = MathMin(MathAbs(sanitized_confidence), 1.0);
-     if(!MathIsValidNumber(bias_magnitude))
-        bias_magnitude = 0.0;
-     if(setup_type == "BC")
-        plan.bias = (double)direction * bias_magnitude;
-     else if(setup_type == "MSC")
-        plan.bias = (double)(-direction) * bias_magnitude;
+     plan.bias = Allocator_ComputeBias(setup_type, direction, sanitized_confidence);
 
      string ts = TimeToString(ctx.current_server_time, TIME_DATE|TIME_MINUTES);
      string prefix = (plan.is_proxy ? "PX " : "");

@@ -16,7 +16,7 @@ alwaysApply: true
 > that changed, and the **Recent Changes** list at the bottom of this section.
 > This keeps future agents current without a full codebase scan.
 
-**Last Updated**: M7 Task 07 complete (2026-02-07). Execution mode enabled; Task 08 pending.
+**Last Updated**: M7 Task 07 closeout hardening complete (2026-02-08). Scheduler execution wired; Task 08 pending.
 
 ### Module Inventory
 
@@ -33,7 +33,7 @@ avoid unintended coupling.
 | `config.mqh` | ~1070 | Support | EA inputs, validation, clamping. Many `#ifdef RPEA_TEST_RUNNER` branches. |
 | `news.mqh` | ~875 | Support | Calendar API + CSV fallback, T +/-300s window, `News_IsEntryBlocked`, `News_GetWindowStateDetailed`. |
 | `synthetic.mqh` | ~650 | Execution | XAUEUR proxy/replication manager (XAUUSD-only or two-leg XAUUSD+EURUSD). |
-| `allocator.mqh` | ~572 | Risk | Builds `OrderPlan` for **BWISC + MR**, strategy-specific risk sizing, budget gate, and strategy-tagged comments. |
+| `allocator.mqh` | ~596 | Risk | Builds `OrderPlan` for **BWISC + MR**, strategy-specific risk sizing, proxy-distance mapping guard for MR, budget gate, and strategy-tagged comments. |
 | `sessions.mqh` | ~445 | Support | Session windows (LO, NY), OR snapshot. |
 | `logging.mqh` | ~415 | Support | CSV audit rows (`LogAuditRow`), structured `LogDecision`. |
 | `indicators.mqh` | ~403 | Support | Indicator snapshots (ATR, MA, Bollinger, etc.). |
@@ -49,7 +49,7 @@ avoid unintended coupling.
 | `liquidity.mqh` | ~204 | Support | Rolling spread/slippage stats, quantile getters, `Liquidity_SpreadOK`. |
 | `risk.mqh` | ~192 | Risk | `Risk_SizingByATRDistanceForSymbol`, `Risk_GetEffectiveRiskPct` (handles MicroMode). |
 | `m7_helpers.mqh` | ~185 | M7 Ensemble | Wrapper functions (ATR, spread, session helpers) to avoid circular includes. |
-| `scheduler.mqh` | ~123 | Orchestration | Main tick handler. Calls signals -> meta-policy -> allocator -> logs. |
+| `scheduler.mqh` | ~212 | Orchestration | Main tick handler. Calls signals -> meta-policy -> allocator -> order engine, with `PLAN_REJECT`/`PLACE_OK`/`PLACE_FAIL` telemetry. |
 | `symbol_bridge.mqh` | ~85 | Support | XAUEUR -> XAUUSD mapping. `SymbolBridge_GetExecutionSymbol()`. |
 | `regime.mqh` | ~81 | M7 Ensemble | Regime detection (trending/ranging/volatile). ADX + ATR percentile. |
 | `telemetry.mqh` | ~64 | Support | `LogMetaPolicyDecision` (structured meta-policy telemetry). |
@@ -112,6 +112,7 @@ g_last_bwisc_context.entry_price = ask; // or bid based on direction
 
 Update this list when completing a task. Helps agents understand what just changed.
 
+- **M7 Task 07 closeout (2026-02-08)**: Wired scheduler execution path (`OrderPlan` -> `OrderRequest` -> `g_order_engine.PlaceOrder`), added explicit skip/reject/place logging in `scheduler.mqh`, added allocator helpers `Allocator_ShouldMapProxyDistance` (prevents MR XAUEUR double-conversion) and `Allocator_ComputeBias` (MR directional bias), and extended `test_allocator_mr.mqh` with proxy-map and bias tests. Validation: EA compile `0 errors, 5 warnings`; Strategy Tester `34/34` passed including `M7Task07_AllocatorMR`.
 - **M7 Task 07** (complete): Added `mr_context.mqh`, populated MR context in `signals_mr.mqh`, integrated MR strategy path in `allocator.mqh` (context selection, strategy-specific risk, MR setup type/comment format), enabled execution mode in `meta_policy.mqh` (`M7_DECISION_ONLY=0`), added `slo_monitor.mqh` stub, added `test_allocator_mr.mqh`, and wired `M7Task07_AllocatorMR` in `run_automated_tests_ea.mq5`. Validation: compile clean, tests `34/34` passed including `M7Task07_AllocatorMR`.
 - **Ops Note (2026-02-07)**: During M7 Task 07 preflight, `run_tests.ps1` appeared stalled because the test runner had a compile blocker (`Tests/RPEA/run_automated_tests_ea.mq5` contained stray token at line 597). Added troubleshooting guidance in Build/Test commands: compile the test runner first, then use explicit `/config:` Strategy Tester invocation and verify latest tester-agent `test_results.json` when needed.
 - **M7 Task 06** (complete): Added `Regime_Detect()` in `regime.mqh`, `LogMetaPolicyDecision()` in `telemetry.mqh`, rolling liquidity stats in `liquidity.mqh`, efficiency stubs in `meta_policy.mqh`, wired quantiles/regime into meta-policy, `Liquidity_UpdateStats` fed from scheduler + order engine. Tests: `test_regime_telemetry.mqh`.
