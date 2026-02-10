@@ -35,6 +35,7 @@
 #include <RPEA/persistence.mqh>
 #include <RPEA/logging.mqh>
 #include <RPEA/telemetry.mqh>
+#include <RPEA/slo_monitor.mqh>
 // sessions.mqh and scheduler.mqh are included after AppContext is defined
 
 // order_engine.mqh defines a default CutoffHour macro for unit tests; undefine so we can expose an input
@@ -298,6 +299,10 @@ int OnInit()
       Print("[RL] Thresholds not loaded or stale (using defaults)");
    else
       Print("[RL] Thresholds loaded");
+
+   // 5c) Initialize SLO monitoring (M7 Task 08)
+   SLO_OnInit();
+   Print("[SLO] Metrics initialized (stub defaults)");
 
    // M4-Task01: Initialize News Stabilization
    string news_symbols[];

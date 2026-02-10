@@ -14,6 +14,7 @@
 #include <RPEA/news.mqh>
 #include <RPEA/regime.mqh>
 #include <RPEA/rl_agent.mqh>
+#include <RPEA/slo_monitor.mqh>
 #include <RPEA/telemetry.mqh>
 
 // Decision-only gate: 1 = log decisions without executing (Phase 4)
@@ -116,6 +117,23 @@ string MetaPolicy_DeterministicChoice(const MetaPolicyContext &mpc)
 
    // Default: Skip
    return "Skip";
+}
+
+//+------------------------------------------------------------------+
+//| Step 8.3d: SLO override helper (deterministic, testable)         |
+//+------------------------------------------------------------------+
+string MetaPolicy_ApplySLOOverride(const string choice,
+                                   const MetaPolicyContext &mpc,
+                                   const bool hard_blocked)
+{
+   if(!hard_blocked && choice == "MR" && SLO_IsMRThrottled())
+   {
+      if(mpc.bwisc_has_setup && mpc.bwisc_confidence >= Config_GetBWISCConfCut())
+         return "BWISC";
+      return "Skip";
+   }
+
+   return choice;
 }
 
 //+------------------------------------------------------------------+
@@ -229,6 +247,14 @@ string MetaPolicy_Choose(const AppContext &ctx, const string symbol,
       gating_reason = "RULE_5_BWISC";
    else if(!mpc.bwisc_has_setup && mpc.mr_has_setup)
       gating_reason = "RULE_6_MR_FALLBACK";
+
+   // SLO MR-throttle gate (Task 08): runs after deterministic/bandit choice.
+   string gated_choice = MetaPolicy_ApplySLOOverride(choice, mpc, hard_blocked);
+   if(gated_choice != choice)
+   {
+      choice = gated_choice;
+      gating_reason = "SLO_MR_THROTTLED";
+   }
 
    double confidence = 0.0;
    double efficiency = 0.0;

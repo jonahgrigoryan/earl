@@ -155,6 +155,25 @@
 #ifndef DEFAULT_ServerToCEST_OffsetMinutes
 #define DEFAULT_ServerToCEST_OffsetMinutes   0
 #endif
+
+//------------------------------------------------------------------------------
+// M7-Task08: EnableMR test override for BWISC-only regression tests
+//------------------------------------------------------------------------------
+#ifdef RPEA_TEST_RUNNER
+bool   g_test_enable_mr_override_active = false;
+bool   g_test_enable_mr_override_value = true;
+
+void Config_Test_SetEnableMROverride(bool active, bool value)
+{
+   g_test_enable_mr_override_active = active;
+   g_test_enable_mr_override_value = value;
+}
+
+void Config_Test_ClearEnableMROverride()
+{
+   g_test_enable_mr_override_active = false;
+}
+#endif
 //------------------------------------------------------------------------------
 // Task 17 Resilience Config Helpers
 //------------------------------------------------------------------------------
@@ -1001,6 +1020,8 @@ inline bool Config_ValidateInputs()
 inline bool Config_GetEnableMR()
 {
 #ifdef RPEA_TEST_RUNNER
+   if(g_test_enable_mr_override_active)
+      return g_test_enable_mr_override_value;
    #ifdef EnableMR
       return EnableMR;
    #else
