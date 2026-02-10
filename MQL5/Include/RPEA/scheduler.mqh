@@ -5,9 +5,82 @@
 
 #include <RPEA/config.mqh>
 #include <RPEA/order_engine.mqh>
+#include <RPEA/slo_monitor.mqh>
 
 struct AppContext;
 extern OrderEngine g_order_engine;
+
+//+------------------------------------------------------------------+
+//| MR position detection (Task 08)                                  |
+//+------------------------------------------------------------------+
+bool Scheduler_IsMRPosition(const ulong ticket)
+{
+   if(ticket == 0 || !PositionSelectByTicket(ticket))
+      return false;
+
+   // Stage 1: Cheap integer check - is this our EA's position?
+   long magic = PositionGetInteger(POSITION_MAGIC);
+   if(!OrderEngine_IsOurMagic(magic))
+      return false;
+
+   // Stage 2: Comment substring match.
+   // Handles: "MR-MR b=...", "PX MR-MR b=...", truncated at 31 chars.
+   string comment = PositionGetString(POSITION_COMMENT);
+   return (StringFind(comment, "MR-MR") >= 0);
+}
+
+//+------------------------------------------------------------------+
+//| MR time stop enforcement (Task 08)                               |
+//| Closes MR positions exceeding MR_TimeStopMin / MR_TimeStopMax.   |
+//| Uses PositionGetInteger(POSITION_TIME) for elapsed calculation.  |
+//| Anti-spam: checks Queue_FindIndexByTicketAction before re-queue. |
+//| Closes via OrderEngine_RequestProtectiveClose (existing path).   |
+//+------------------------------------------------------------------+
+void Scheduler_CheckMRTimeStops(const datetime server_time)
+{
+   int min_seconds = Config_GetMRTimeStopMin() * 60;
+   int max_seconds = Config_GetMRTimeStopMax() * 60;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+      if(!Scheduler_IsMRPosition(ticket))
+         continue;
+
+      datetime open_time = (datetime)PositionGetInteger(POSITION_TIME);
+      if(open_time <= 0)
+         continue;
+
+      int elapsed = (int)(server_time - open_time);
+      if(elapsed < min_seconds)
+         continue;
+
+      // Anti-spam: skip if close already queued for this ticket.
+      if(Queue_FindIndexByTicketAction((long)ticket, QA_CLOSE) >= 0)
+         continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      string reason = (elapsed >= max_seconds)
+                      ? "mr_timestop_max_force"
+                      : "mr_timestop_min";
+      bool closed = OrderEngine_RequestProtectiveClose(symbol, (long)ticket, reason);
+
+      string fields = StringFormat(
+         "{\"ticket\":%llu,\"symbol\":\"%s\",\"elapsed_sec\":%d,"
+         "\"min_threshold\":%d,\"max_threshold\":%d,"
+         "\"reason\":\"%s\",\"close_requested\":%s}",
+         ticket,
+         symbol,
+         elapsed,
+         min_seconds,
+         max_seconds,
+         reason,
+         closed ? "true" : "false");
+      LogDecision("Scheduler", "MR_TIMESTOP", fields);
+   }
+}
 
 //------------------------------------------------------------------------------
 // M6-Task04: Performance Profiling State (module-scoped)
@@ -184,6 +257,12 @@ void Scheduler_Tick(const AppContext& ctx)
       else
          LogDecision("Scheduler", "PLACE_FAIL", place_fields);
    }
+
+   // MR time stop enforcement (scan all open positions).
+   Scheduler_CheckMRTimeStops(ctx.current_server_time);
+
+   // SLO periodic check (self-throttles to once per minute).
+   SLO_PeriodicCheck(ctx.current_server_time);
 
    // Heartbeat audit
    LogAuditRow("SCHED_TICK", "Scheduler", 1, "heartbeat", "{}");

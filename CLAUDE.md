@@ -12,8 +12,10 @@ Use `docs/m7-final-workflow.md` as the source of truth for tasks, sequencing, an
 - Create phase branches from base (Phase 0 uses `feat/m7-phase0-scaffold`; follow `docs/m7-final-workflow.md` for phase naming).
 
 ## Build/Test
-- Compile EA: `MetaEditor64.exe /compile:MQL5\Experts\FundingPips\RPEA.mq5 /log:MQL5\Experts\FundingPips\compile_rpea.log`
-- Run tests: `powershell -ExecutionPolicy Bypass -File run_tests.ps1`
+- **Sync first**: `powershell -ExecutionPolicy Bypass -File SyncRepoToTerminal.ps1` (copies repo files to MT5 data folder).
+- **Compile from MT5 data folder** (not the repo root): `cd "C:\Users\AWCS\AppData\Roaming\MetaQuotes\Terminal\D0E8209F77C8CF37AD8BF550E51FF075" && "C:\Program Files\MetaTrader 5\metaeditor64.exe" /compile:MQL5\Experts\FundingPips\RPEA.mq5 /log:MQL5\Experts\FundingPips\compile_rpea.log`
+- Run tests (from repo root): `powershell -ExecutionPolicy Bypass -File run_tests.ps1`
+- The `/compile:` path is relative to the working directory. It must be the MT5 data folder, not the repo.
 
 ## MQL5 Style
 - Strict mode, 3-space indent, braces on new lines.

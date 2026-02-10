@@ -57,4 +57,37 @@ void SLO_CheckAndThrottle(SLO_Metrics& metrics)
    }
 }
 
+//+------------------------------------------------------------------+
+//| SLO Runtime State (Task 08)                                      |
+//| Single owner of all SLO metrics. Init in RPEA.mq5::OnInit().     |
+//+------------------------------------------------------------------+
+SLO_Metrics g_slo_metrics;
+datetime    g_slo_last_check_time = 0;
+const int   SLO_CHECK_INTERVAL_SEC = 60;  // Check once per minute
+
+// Initialize SLO state - call from RPEA.mq5::OnInit()
+void SLO_OnInit()
+{
+   SLO_InitMetrics(g_slo_metrics);
+   g_slo_last_check_time = 0;
+}
+
+// Query: is MR currently throttled by SLO breach?
+bool SLO_IsMRThrottled()
+{
+   return g_slo_metrics.slo_breached;
+}
+
+// Periodic check - call from Scheduler_Tick each tick; self-throttles to once/minute
+void SLO_PeriodicCheck(const datetime server_time)
+{
+   if(server_time - g_slo_last_check_time < SLO_CHECK_INTERVAL_SEC)
+      return;
+   g_slo_last_check_time = server_time;
+
+   // NOTE: g_slo_metrics fields are stub defaults (safe, no breach).
+   // Full 30-day rolling analytics computation is post-M7 scope.
+   SLO_CheckAndThrottle(g_slo_metrics);
+}
+
 #endif // RPEA_SLO_MONITOR_MQH

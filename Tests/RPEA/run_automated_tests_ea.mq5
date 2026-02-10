@@ -156,6 +156,8 @@ bool g_test_gate_force_fail = false;
 #include "test_regime_telemetry.mqh"
 // M7-Task07: Allocator MR integration tests
 #include "test_allocator_mr.mqh"
+// M7-Task08: End-to-End tests
+#include "test_m7_end_to_end.mqh"
 
 // Forward declaration to ensure the breakeven suite is visible when compiling.
 bool TestBreakeven_RunAll();
@@ -182,6 +184,8 @@ bool TestMetaPolicy_RunAll();
 bool TestRegimeTelemetry_RunAll();
 // M7-Task07 forward declaration
 bool TestAllocatorMR_RunAll();
+// M7-Task08 forward declaration
+bool TestM7EndToEnd_RunAll();
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -609,6 +613,16 @@ void RunAllTests()
    g_test_reporter.RecordTest(suiteM7e, "TestAllocatorMR_RunAll", taskM7e_result,
                                taskM7e_result ? "Allocator MR tests passed" : "Allocator MR tests failed");
    g_test_reporter.EndSuite(suiteM7e);
+
+   // M7-Task08: End-to-End Tests
+   Print("=================================================================");
+   Print("M7-Task08: End-to-End Tests");
+   Print("=================================================================");
+   int suiteM7f = g_test_reporter.BeginSuite("M7Task08_EndToEnd");
+   bool taskM7f_result = TestM7EndToEnd_RunAll();
+   g_test_reporter.RecordTest(suiteM7f, "TestM7EndToEnd_RunAll", taskM7f_result,
+                              taskM7f_result ? "E2E tests passed" : "E2E tests failed");
+   g_test_reporter.EndSuite(suiteM7f);
 
    Print("Test execution complete.");
 }

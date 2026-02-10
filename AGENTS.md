@@ -16,7 +16,7 @@ alwaysApply: true
 > that changed, and the **Recent Changes** list at the bottom of this section.
 > This keeps future agents current without a full codebase scan.
 
-**Last Updated**: M7 Task 07 closeout hardening complete (2026-02-08). Scheduler execution wired; Task 08 pending.
+**Last Updated**: M7 Task 08 acceptance evidence refresh complete (2026-02-10). M7 milestone complete.
 
 ### Module Inventory
 
@@ -30,7 +30,7 @@ avoid unintended coupling.
 | `persistence.mqh` | ~2020 | Support | File-backed state recovery, intent queue, challenge state persistence. |
 | `equity_guardian.mqh` | ~1350 | Risk | Baseline tracking, daily/overall floors, kill-switch, MicroMode activation (+10% target), giveback protection. |
 | `queue.mqh` | ~1250 | Execution | Action queueing during news windows, TTL expiry, post-news revalidation. |
-| `config.mqh` | ~1070 | Support | EA inputs, validation, clamping. Many `#ifdef RPEA_TEST_RUNNER` branches. |
+| `config.mqh` | ~1199 | Support | EA inputs, validation, clamping. Many `#ifdef RPEA_TEST_RUNNER` branches. |
 | `news.mqh` | ~875 | Support | Calendar API + CSV fallback, T +/-300s window, `News_IsEntryBlocked`, `News_GetWindowStateDetailed`. |
 | `synthetic.mqh` | ~650 | Execution | XAUEUR proxy/replication manager (XAUUSD-only or two-leg XAUUSD+EURUSD). |
 | `allocator.mqh` | ~596 | Risk | Builds `OrderPlan` for **BWISC + MR**, strategy-specific risk sizing, proxy-distance mapping guard for MR, budget gate, and strategy-tagged comments. |
@@ -41,7 +41,7 @@ avoid unintended coupling.
 | `breakeven.mqh` | ~312 | Execution | Breakeven at +0.5R. |
 | `trailing.mqh` | ~288 | Execution | Trailing stop logic (ATR-based, activates at +1R). |
 | `rl_pretrain_inputs.mqh` | ~277 | M7 Ensemble | Pre-training parameter defaults (MR_RiskPct_Default, TimeStopMin/Max, etc.). |
-| `meta_policy.mqh` | ~306 | Signal | Strategy chooser (BWISC vs MR vs Skip). Deterministic rules + optional bandit. **`M7_DECISION_ONLY` is 0 (execution enabled).** |
+| `meta_policy.mqh` | ~332 | Signal | Strategy chooser (BWISC vs MR vs Skip). Deterministic rules + optional bandit. Includes deterministic SLO override helper for MR throttle fallback. **`M7_DECISION_ONLY` is 0 (execution enabled).** |
 | `state.mqh` | ~237 | Support | `ChallengeState` struct, `State_Get()`/`State_Set()` accessors. |
 | `signals_bwisc.mqh` | ~230 | Signal | BWISC signals (BC/MSC). Populates `g_last_bwisc_context` (`BWISC_Context`). |
 | `rl_agent.mqh` | ~220 | M7 Ensemble | Q-learning table, `RL_StateFromSpread`, `RL_GetQAdvantage`. |
@@ -49,11 +49,11 @@ avoid unintended coupling.
 | `liquidity.mqh` | ~204 | Support | Rolling spread/slippage stats, quantile getters, `Liquidity_SpreadOK`. |
 | `risk.mqh` | ~192 | Risk | `Risk_SizingByATRDistanceForSymbol`, `Risk_GetEffectiveRiskPct` (handles MicroMode). |
 | `m7_helpers.mqh` | ~185 | M7 Ensemble | Wrapper functions (ATR, spread, session helpers) to avoid circular includes. |
-| `scheduler.mqh` | ~212 | Orchestration | Main tick handler. Calls signals -> meta-policy -> allocator -> order engine, with `PLAN_REJECT`/`PLACE_OK`/`PLACE_FAIL` telemetry. |
+| `scheduler.mqh` | ~291 | Orchestration | Main tick handler. Calls signals -> meta-policy -> allocator -> order engine, with `PLAN_REJECT`/`PLACE_OK`/`PLACE_FAIL` telemetry. Includes MR time-stop enforcement + SLO periodic checks. |
 | `symbol_bridge.mqh` | ~85 | Support | XAUEUR -> XAUUSD mapping. `SymbolBridge_GetExecutionSymbol()`. |
 | `regime.mqh` | ~81 | M7 Ensemble | Regime detection (trending/ranging/volatile). ADX + ATR percentile. |
 | `telemetry.mqh` | ~64 | Support | `LogMetaPolicyDecision` (structured meta-policy telemetry). |
-| `slo_monitor.mqh` | ~60 | M7 Ensemble | SLO metrics stub + threshold check (`SLO_InitMetrics`, `SLO_CheckAndThrottle`). |
+| `slo_monitor.mqh` | ~93 | M7 Ensemble | SLO metrics state + threshold check (`SLO_InitMetrics`, `SLO_CheckAndThrottle`, `SLO_OnInit`, `SLO_PeriodicCheck`, `SLO_IsMRThrottled`). |
 | `app_context.mqh` | ~27 | Support | `AppContext` struct definition. |
 | `mr_context.mqh` | ~17 | Signal | Lightweight `MR_Context` struct + `g_last_mr_context` (allocator-safe include). |
 | `bandit.mqh` | ~12 | M7 Ensemble | Contextual bandit stub (optional meta-policy enhancement). |
@@ -112,6 +112,9 @@ g_last_bwisc_context.entry_price = ask; // or bid based on direction
 
 Update this list when completing a task. Helps agents understand what just changed.
 
+- **M7 Task 08 evidence refresh (2026-02-10)**: Validated placement-probe results from terminal log `decisions_20260210.csv` (local runtime source), refreshed committed summary artifacts `rubric_counts.txt` and `real_ea_run_summary.json` with live scheduler counts (`EVAL=62`, `PLAN_REJECT=7`, `PLACE_OK=1`, `PLACE_FAIL=8`, `unsupported_strategy=0`), and updated `m7-task08.md` rubric Check 9 from `N/A` to `PASS` with stable artifact paths.
+- **M7 Task 08 acceptance hardening (2026-02-09)**: Added deterministic `MetaPolicy_ApplySLOOverride()` helper in `meta_policy.mqh` and expanded `test_m7_end_to_end.mqh` with explicit SLO regression checks (`MR -> BWISC` when BWISC qualified, `MR -> Skip` when BWISC unavailable), raising Task 08 suite coverage from 11 to 13 internal tests. Re-ran real-EA `/config` validation and copied durable evidence to `MQL5/Files/RPEA/test_results/task08_evidence/` (`decisions_20240102..20240105`, `real_ea_run_summary.json`, `rubric_counts.txt`, `journal_slo_snippet.txt`) for reproducible rubric checks 8-10. Validation: EA compile `0 errors, 5 warnings`; test-runner compile `0 errors, 6 warnings`; automated suites `35/35` pass with required `M7Task08_EndToEnd`.
+- **M7 Task 08 (2026-02-09, complete)**: Added `Scheduler_IsMRPosition` + `Scheduler_CheckMRTimeStops` in `scheduler.mqh` (uses `PositionGetInteger(POSITION_TIME)`, anti-spam `Queue_FindIndexByTicketAction`, `OrderEngine_RequestProtectiveClose`, `MR_TIMESTOP` logging), wired SLO plumbing (`g_slo_metrics`, `SLO_OnInit`, `SLO_PeriodicCheck`, `SLO_IsMRThrottled`) into `slo_monitor.mqh`, `RPEA.mq5`, `scheduler.mqh`, and `meta_policy.mqh` (`SLO_MR_THROTTLED` gate), added runtime `EnableMR` test override in `config.mqh`, switched MR gate in `signals_mr.mqh` to `Config_GetEnableMR()`, added `test_m7_end_to_end.mqh` and registered `M7Task08_EndToEnd` in `run_automated_tests_ea.mq5`. Validation: EA compile `0 errors, 5 warnings`; test-runner compile `0 errors, 6 warnings`; suite results `35/35` passed (`M7Task08_EndToEnd` and `M7Task07_AllocatorMR` passing) via Strategy Tester `/config` fallback when `run_tests.ps1` stalled; real-EA tester run logged Scheduler `EVAL` and `[SLO] Metrics initialized`.
 - **M7 Task 07 closeout (2026-02-08)**: Wired scheduler execution path (`OrderPlan` -> `OrderRequest` -> `g_order_engine.PlaceOrder`), added explicit skip/reject/place logging in `scheduler.mqh`, added allocator helpers `Allocator_ShouldMapProxyDistance` (prevents MR XAUEUR double-conversion) and `Allocator_ComputeBias` (MR directional bias), and extended `test_allocator_mr.mqh` with proxy-map and bias tests. Validation: EA compile `0 errors, 5 warnings`; Strategy Tester `34/34` passed including `M7Task07_AllocatorMR`.
 - **M7 Task 07** (complete): Added `mr_context.mqh`, populated MR context in `signals_mr.mqh`, integrated MR strategy path in `allocator.mqh` (context selection, strategy-specific risk, MR setup type/comment format), enabled execution mode in `meta_policy.mqh` (`M7_DECISION_ONLY=0`), added `slo_monitor.mqh` stub, added `test_allocator_mr.mqh`, and wired `M7Task07_AllocatorMR` in `run_automated_tests_ea.mq5`. Validation: compile clean, tests `34/34` passed including `M7Task07_AllocatorMR`.
 - **Ops Note (2026-02-07)**: During M7 Task 07 preflight, `run_tests.ps1` appeared stalled because the test runner had a compile blocker (`Tests/RPEA/run_automated_tests_ea.mq5` contained stray token at line 597). Added troubleshooting guidance in Build/Test commands: compile the test runner first, then use explicit `/config:` Strategy Tester invocation and verify latest tester-agent `test_results.json` when needed.
@@ -134,7 +137,7 @@ Update this list when completing a task. Helps agents understand what just chang
 ## Current Baseline & Workflow
 - Milestones M3-M6 complete (order engine, compliance, strategy tester, hardening).
 - **Active milestone**: M7 ensemble integration (BWISC + MR). Source of truth: `docs/m7-final-workflow.md`. Base branch: `feat/m7-ensemble-integration`.
-- **M7 progress**: Tasks 01-07 complete. Task 08 (end-to-end testing) is the final task.
+- **M7 progress**: Tasks 01-08 complete. M7 milestone complete.
 - Task execution: each `m7-taskXX.md` provides atomic steps: implement logic, add/extend tests, wire into `Tests/RPEA/run_automated_tests_ea.mq5`, compile checkpoint after each step. Follow `docs/m7-final-workflow.md` step-by-step.
 - Branching: work on per-task branches and merge into the milestone base. For M7, follow phase branches (e.g., `feat/m7-phase5-task07-allocator-integration` -> `feat/m7-ensemble-integration`).
 

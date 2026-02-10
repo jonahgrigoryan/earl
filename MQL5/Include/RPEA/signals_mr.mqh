@@ -114,7 +114,7 @@ bool SignalsMR_CheckEntryConditions(
    confidence = 0.0;
    const datetime now = ctx.current_server_time;
 
-   if(!EnableMR)
+   if(!Config_GetEnableMR())
    {
       SignalsMR_LogGate(symbol, "disabled", "\"detail\":\"EnableMR=false\"", now);
       return false;
