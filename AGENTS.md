@@ -16,7 +16,7 @@ alwaysApply: true
 > that changed, and the **Recent Changes** list at the bottom of this section.
 > This keeps future agents current without a full codebase scan.
 
-**Last Updated**: M7 Task 08 acceptance evidence refresh complete (2026-02-10). M7 milestone complete.
+**Last Updated**: Post-M7 task-pack planning scaffold complete (2026-02-11). M7 milestone complete; post-M7 execution planning active.
 
 ### Module Inventory
 
@@ -112,6 +112,7 @@ g_last_bwisc_context.entry_price = ask; // or bid based on direction
 
 Update this list when completing a task. Helps agents understand what just changed.
 
+- **Post-M7 planning scaffold (2026-02-11)**: Added full task-pack docs for post-M7 execution flow: `post-m7-task-index.md` and `post-m7-task01.md` .. `post-m7-task17.md`, including branch topology, per-task compile/test/evidence gates, and deterministic handoff chain to drive full `TODO[M7*]` closure.
 - **M7 Task 08 evidence refresh (2026-02-10)**: Validated placement-probe results from terminal log `decisions_20260210.csv` (local runtime source), refreshed committed summary artifacts `rubric_counts.txt` and `real_ea_run_summary.json` with live scheduler counts (`EVAL=62`, `PLAN_REJECT=7`, `PLACE_OK=1`, `PLACE_FAIL=8`, `unsupported_strategy=0`), and updated `m7-task08.md` rubric Check 9 from `N/A` to `PASS` with stable artifact paths.
 - **M7 Task 08 acceptance hardening (2026-02-09)**: Added deterministic `MetaPolicy_ApplySLOOverride()` helper in `meta_policy.mqh` and expanded `test_m7_end_to_end.mqh` with explicit SLO regression checks (`MR -> BWISC` when BWISC qualified, `MR -> Skip` when BWISC unavailable), raising Task 08 suite coverage from 11 to 13 internal tests. Re-ran real-EA `/config` validation and copied durable evidence to `MQL5/Files/RPEA/test_results/task08_evidence/` (`decisions_20240102..20240105`, `real_ea_run_summary.json`, `rubric_counts.txt`, `journal_slo_snippet.txt`) for reproducible rubric checks 8-10. Validation: EA compile `0 errors, 5 warnings`; test-runner compile `0 errors, 6 warnings`; automated suites `35/35` pass with required `M7Task08_EndToEnd`.
 - **M7 Task 08 (2026-02-09, complete)**: Added `Scheduler_IsMRPosition` + `Scheduler_CheckMRTimeStops` in `scheduler.mqh` (uses `PositionGetInteger(POSITION_TIME)`, anti-spam `Queue_FindIndexByTicketAction`, `OrderEngine_RequestProtectiveClose`, `MR_TIMESTOP` logging), wired SLO plumbing (`g_slo_metrics`, `SLO_OnInit`, `SLO_PeriodicCheck`, `SLO_IsMRThrottled`) into `slo_monitor.mqh`, `RPEA.mq5`, `scheduler.mqh`, and `meta_policy.mqh` (`SLO_MR_THROTTLED` gate), added runtime `EnableMR` test override in `config.mqh`, switched MR gate in `signals_mr.mqh` to `Config_GetEnableMR()`, added `test_m7_end_to_end.mqh` and registered `M7Task08_EndToEnd` in `run_automated_tests_ea.mq5`. Validation: EA compile `0 errors, 5 warnings`; test-runner compile `0 errors, 6 warnings`; suite results `35/35` passed (`M7Task08_EndToEnd` and `M7Task07_AllocatorMR` passing) via Strategy Tester `/config` fallback when `run_tests.ps1` stalled; real-EA tester run logged Scheduler `EVAL` and `[SLO] Metrics initialized`.
