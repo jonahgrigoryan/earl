@@ -62,12 +62,12 @@ struct MetaPolicyContext
 //+------------------------------------------------------------------+
 double MetaPolicy_GetBWISCEfficiency()
 {
-   return 0.0;
+   return Telemetry_GetBWISCEfficiency();
 }
 
 double MetaPolicy_GetMREfficiency()
 {
-   return 0.0;
+   return Telemetry_GetMREfficiency();
 }
 
 //+------------------------------------------------------------------+
@@ -278,25 +278,26 @@ string MetaPolicy_Choose(const AppContext &ctx, const string symbol,
 
    double rho_est = Config_GetCorrelationFallbackRho();
 
+   LogMetaPolicyDecision(symbol,
+                         choice,
+                         gating_reason,
+                         news_window_state,
+                         confidence,
+                         efficiency,
+                         mpc.bwisc_confidence,
+                         mpc.mr_confidence,
+                         mpc.bwisc_efficiency,
+                         mpc.mr_efficiency,
+                         mpc.emrt_rank,
+                         rho_est,
+                         mpc.spread_quantile,
+                         mpc.slippage_quantile,
+                         hold_time_min,
+                         regime_label);
+
    // Decision-only gate (Phase 4)
    if(M7_DECISION_ONLY)
    {
-      LogMetaPolicyDecision(symbol,
-                            choice,
-                            gating_reason,
-                            news_window_state,
-                            confidence,
-                            efficiency,
-                            mpc.bwisc_confidence,
-                            mpc.mr_confidence,
-                            mpc.bwisc_efficiency,
-                            mpc.mr_efficiency,
-                            mpc.emrt_rank,
-                            rho_est,
-                            mpc.spread_quantile,
-                            mpc.slippage_quantile,
-                            hold_time_min,
-                            regime_label);
       LogDecision("MetaPolicy", "DECISION_ONLY",
          StringFormat("{\"choice\":\"%s\",\"bw_has\":%s,\"bw_conf\":%.2f,"
                       "\"mr_has\":%s,\"mr_conf\":%.2f,"

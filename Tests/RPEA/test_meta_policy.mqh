@@ -326,6 +326,53 @@ bool TestMP_BanditNotReady()
 }
 
 //+------------------------------------------------------------------+
+//| Test: Efficiency helpers return safe zero without samples        |
+//+------------------------------------------------------------------+
+bool TestMP_EfficiencyHelpers_DefaultZero()
+{
+   int f = TestMP_Begin("TestMP_EfficiencyHelpers_DefaultZero");
+   Telemetry_TestReset();
+   Telemetry_TestSetMinSamples(3);
+
+   ASSERT_TRUE(MathAbs(MetaPolicy_GetBWISCEfficiency()) < 1e-9,
+               "BWISC efficiency defaults to 0.0 with no samples");
+   ASSERT_TRUE(MathAbs(MetaPolicy_GetMREfficiency()) < 1e-9,
+               "MR efficiency defaults to 0.0 with no samples");
+
+   return TestMP_End(f);
+}
+
+//+------------------------------------------------------------------+
+//| Test: Efficiency helpers become non-zero after threshold         |
+//+------------------------------------------------------------------+
+bool TestMP_EfficiencyHelpers_Thresholded()
+{
+   int f = TestMP_Begin("TestMP_EfficiencyHelpers_Thresholded");
+   Telemetry_TestReset();
+   Telemetry_TestSetMinSamples(3);
+
+   Telemetry_TestRecordOutcome("BWISC", 1.0);
+   Telemetry_TestRecordOutcome("BWISC", -0.5);
+   ASSERT_TRUE(MathAbs(MetaPolicy_GetBWISCEfficiency()) < 1e-9,
+               "BWISC efficiency remains zero before threshold");
+
+   Telemetry_TestRecordOutcome("BWISC", 0.5);
+   ASSERT_TRUE(MathAbs(MetaPolicy_GetBWISCEfficiency() - 0.75) < 1e-6,
+               "BWISC efficiency updates after threshold");
+
+   Telemetry_TestRecordOutcome("MR", 2.0);
+   Telemetry_TestRecordOutcome("MR", 1.0);
+   ASSERT_TRUE(MathAbs(MetaPolicy_GetMREfficiency()) < 1e-9,
+               "MR efficiency remains zero before threshold");
+
+   Telemetry_TestRecordOutcome("MR", -1.0);
+   ASSERT_TRUE(MathAbs(MetaPolicy_GetMREfficiency() - 0.75) < 1e-6,
+               "MR efficiency updates after threshold");
+
+   return TestMP_End(f);
+}
+
+//+------------------------------------------------------------------+
 //| Suite runner                                                       |
 //+------------------------------------------------------------------+
 bool TestMetaPolicy_RunAll()
@@ -350,9 +397,12 @@ bool TestMetaPolicy_RunAll()
    bool ok14 = TestMP_Precedence_BlockedOverridesLock();
    bool ok15 = TestMP_Precedence_SessionCapOverridesLock();
    bool ok16 = TestMP_BanditNotReady();
+   bool ok17 = TestMP_EfficiencyHelpers_DefaultZero();
+   bool ok18 = TestMP_EfficiencyHelpers_Thresholded();
 
    return (ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 &&
-           ok9 && ok10 && ok11 && ok12 && ok13 && ok14 && ok15 && ok16);
+           ok9 && ok10 && ok11 && ok12 && ok13 && ok14 && ok15 && ok16 &&
+           ok17 && ok18);
 }
 
 #endif // TEST_META_POLICY_MQH

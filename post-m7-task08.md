@@ -9,6 +9,7 @@
 
 ## Prerequisites
 - Task 07 complete
+- Hold-time capture and final-close aggregation are already available from Phase-1 telemetry close-path ingestion.
 
 ## Target Files
 - MQL5/Include/RPEA/slo_monitor.mqh
@@ -16,7 +17,7 @@
 - Tests/RPEA/test_m7_end_to_end.mqh
 
 ## Implementation Steps
-1. Implement rolling-window calculations for win rate, hold median/p80, efficiency median, friction median.
+1. Implement rolling-window calculations for win rate, hold median/p80, efficiency median, friction median using ingested close events (do not re-implement hold capture).
 2. Update periodic check to recompute breach flags from rolling set.
 3. Keep calculations deterministic and robust with insufficient sample guards.
 
