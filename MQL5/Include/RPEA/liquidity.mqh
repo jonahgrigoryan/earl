@@ -230,4 +230,21 @@ double Liquidity_GetSlippageQuantile(const string symbol)
    if(quantile > 1.0) quantile = 1.0;
    return quantile;
 }
+
+#ifdef RPEA_TEST_RUNNER
+void Liquidity_TestResetState()
+{
+   ArrayResize(g_liquidity_symbols, 0);
+   ArrayResize(g_liquidity_spread_samples, 0);
+   ArrayResize(g_liquidity_slippage_samples, 0);
+   ArrayResize(g_liquidity_spread_count, 0);
+   ArrayResize(g_liquidity_slippage_count, 0);
+   ArrayResize(g_liquidity_spread_index, 0);
+   ArrayResize(g_liquidity_slippage_index, 0);
+   ArrayResize(g_liquidity_last_spread, 0);
+   ArrayResize(g_liquidity_last_slippage, 0);
+   ArrayResize(g_liquidity_has_last_spread, 0);
+   ArrayResize(g_liquidity_has_last_slippage, 0);
+}
+#endif // RPEA_TEST_RUNNER
 #endif // RPEA_LIQUIDITY_MQH

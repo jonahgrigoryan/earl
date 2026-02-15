@@ -16,7 +16,7 @@ alwaysApply: true
 > that changed, and the **Recent Changes** list at the bottom of this section.
 > This keeps future agents current without a full codebase scan.
 
-**Last Updated**: Post-M7 Phase 3 friction hardening complete (2026-02-15). M7 milestone complete; post-M7 Phase 4 ready.
+**Last Updated**: Post-M7 Phase 4 test isolation hardening complete (2026-02-15). M7 milestone complete; post-M7 Phase 5 ready.
 
 ### Module Inventory
 
@@ -41,23 +41,24 @@ avoid unintended coupling.
 | `breakeven.mqh` | ~312 | Execution | Breakeven at +0.5R. |
 | `trailing.mqh` | ~288 | Execution | Trailing stop logic (ATR-based, activates at +1R). |
 | `rl_pretrain_inputs.mqh` | ~277 | M7 Ensemble | Pre-training parameter defaults (MR_RiskPct_Default, TimeStopMin/Max, etc.). |
-| `meta_policy.mqh` | ~333 | Signal | Strategy chooser (BWISC vs MR vs Skip). Deterministic rules + optional bandit. Includes deterministic SLO override helper for MR throttle fallback. **`M7_DECISION_ONLY` is 0 (execution enabled).** |
+| `learning.mqh` | ~337 | M7 Ensemble | File-backed calibration state loader/updater with schema validation, atomic persistence, and SLO-breach freeze gate (`Learning_LoadCalibration`, `Learning_Update`). |
+| `meta_policy.mqh` | ~333 | Signal | Strategy chooser (BWISC vs MR vs Skip). Deterministic rules + optional bandit with persisted posterior readiness check and shadow delta logging. Includes deterministic SLO override helper for MR throttle fallback. **`M7_DECISION_ONLY` is 0 (execution enabled).** |
 | `state.mqh` | ~237 | Support | `ChallengeState` struct, `State_Get()`/`State_Set()` accessors. |
 | `signals_bwisc.mqh` | ~230 | Signal | BWISC signals (BC/MSC). Populates `g_last_bwisc_context` (`BWISC_Context`). |
 | `rl_agent.mqh` | ~220 | M7 Ensemble | Q-learning table, `RL_StateFromSpread`, `RL_GetQAdvantage`. |
 | `signals_mr.mqh` | ~282 | Signal | MR signals (mean reversion, EMRT + RL). Populates `g_last_mr_context` with execution-symbol entry price and direction. |
-| `liquidity.mqh` | ~204 | Support | Rolling spread/slippage stats, quantile getters, `Liquidity_SpreadOK`. |
+| `liquidity.mqh` | ~220 | Support | Rolling spread/slippage stats, quantile getters, `Liquidity_SpreadOK`, plus test-only state reset helper (`Liquidity_TestResetState`) for suite isolation. |
 | `risk.mqh` | ~192 | Risk | `Risk_SizingByATRDistanceForSymbol`, `Risk_GetEffectiveRiskPct` (handles MicroMode). |
 | `m7_helpers.mqh` | ~497 | M7 Ensemble | Wrapper functions (ATR, spread, session helpers) plus rolling spread buffer + full ATR percentile helpers used by policy/regime paths. |
 | `scheduler.mqh` | ~291 | Orchestration | Main tick handler. Calls signals -> meta-policy -> allocator -> order engine, with `PLAN_REJECT`/`PLACE_OK`/`PLACE_FAIL` telemetry. Includes MR time-stop enforcement + SLO periodic checks. |
 | `symbol_bridge.mqh` | ~85 | Support | XAUEUR -> XAUUSD mapping. `SymbolBridge_GetExecutionSymbol()`. |
 | `regime.mqh` | ~81 | M7 Ensemble | Regime detection (trending/ranging/volatile). ADX + ATR percentile. |
-| `telemetry.mqh` | ~724 | Support | Rolling KPI state/update pipeline + `LogMetaPolicyDecision`; includes position-level close tracking to avoid partial-close overcount, robust strategy attribution fallback, hold-minute capture, and canonical friction tax in R-units using entry-side risk basis capture + final-close aggregation (`Telemetry_OnPositionExitWithTheory`). |
+| `telemetry.mqh` | ~741 | Support | Rolling KPI state/update pipeline + `LogMetaPolicyDecision`; includes position-level close tracking to avoid partial-close overcount, robust strategy attribution fallback, hold-minute capture, canonical friction tax in R-units using entry-side risk basis capture + final-close aggregation (`Telemetry_OnPositionExitWithTheory`), and bandit shadow delta telemetry (`Telemetry_LogBanditShadowDelta`). |
 | `adaptive.mqh` | ~96 | Risk | Deterministic adaptive multiplier by regime + efficiency with strict bound clamping and invalid-input fallback to neutral risk. |
 | `slo_monitor.mqh` | ~463 | M7 Ensemble | SLO closed-trade ingestion + rolling metric engine (win rate, hold median/p80, efficiency/friction medians), staged warn/throttle/disable policy, and deterministic periodic recompute hooks (`SLO_OnTradeClosed`, `SLO_CheckAndThrottle`, `SLO_IsMRThrottled`, `SLO_IsMRDisabled`). |
 | `app_context.mqh` | ~27 | Support | `AppContext` struct definition. |
 | `mr_context.mqh` | ~17 | Signal | Lightweight `MR_Context` struct + `g_last_mr_context` (allocator-safe include). |
-| `bandit.mqh` | ~12 | M7 Ensemble | Contextual bandit stub (optional meta-policy enhancement). |
+| `bandit.mqh` | ~455 | M7 Ensemble | Deterministic contextual bandit with file-backed posterior load/save (schema/version validation + atomic `.tmp` writes), posterior readiness checks, and trade-outcome update path (`Bandit_RecordTradeOutcome`). |
 
 **Files planned for Task 08**:
 - No new required headers from Task 07 remain pending.
@@ -113,6 +114,8 @@ g_last_bwisc_context.entry_price = ask; // or bid based on direction
 
 Update this list when completing a task. Helps agents understand what just changed.
 
+- **Post-M7 Phase 4 test isolation hardening (2026-02-15)**: Closed cross-suite state leakage in `test_bandit.mqh` and `test_learning.mqh` by adding explicit setup/teardown cleanup (posterior/calibration file cleanup + runtime state resets) and introducing `Liquidity_TestResetState()` in `liquidity.mqh` (`#ifdef RPEA_TEST_RUNNER`) to clear rolling quantile buffers between tests. Validation rerun: EA compile `0 errors, 5 warnings`; automated suites `40/40` passing with `PostM7Task14_15_Bandit` gate.
+- **Post-M7 Phase 4 complete (2026-02-15)**: Executed tasks 12-15 on `feat/m7-postfix-phase4-learning-bandit`: implemented file-backed learning calibration load/update in `learning.mqh` (schema validation, missing/malformed fallback, atomic update writes, SLO freeze gate), wired runtime calls in `RPEA.mq5` (`Learning_LoadCalibration` on init, `Learning_Update` on final close), implemented deterministic contextual bandit runtime in `bandit.mqh` (posterior persistence + readiness, contextual selection, trade-outcome updates), completed meta-policy readiness + shadow integration in `meta_policy.mqh` (`MetaPolicy_BanditIsReady` delegates to posterior readiness, shadow path logs bandit-vs-deterministic deltas through `Telemetry_LogBanditShadowDelta`), and added suites/tests `test_learning.mqh`, `test_bandit.mqh`, `test_meta_policy.mqh` updates with runner registration `PostM7Task14_15_Bandit`. Validation artifacts: `task12_learning_load_summary.json`, `task13_learning_update_summary.json`, `task14_bandit_summary.json`, `task15_metapolicy_bandit_shadow.json`; compile gates `0 errors`; automated suites `40/40` passing.
 - **Post-M7 Phase 3 complete (2026-02-15)**: Executed tasks 10-11 on `feat/m7-postfix-phase3-adaptive-risk`: implemented `Adaptive_RiskMultiplier` mapping with strict bounds and neutral fallback in `adaptive.mqh`, closed carry-forward friction path by wiring theoretical-vs-realized close payload (`profit` vs `net_outcome`) through `Telemetry_OnPositionExitWithTheory` into `SLO_OnTradeClosed(... friction_r ...)`, and integrated allocator adaptive sizing behind runtime toggle (`EnableAdaptiveRisk`, min/max multipliers) with MicroMode precedence preserved. Added `test_adaptive_risk.mqh`, expanded `test_allocator_mr.mqh` and `test_slo_monitor.mqh` (non-zero friction regression), wired suite `PostM7Task10_11_AdaptiveRisk`, and validated artifacts: `task10_adaptive_multiplier_summary.json`, `task11_allocator_adaptive_summary.json` with full harness green (`38/38`, `total_failed=0`) and `unsupported_strategy` regression scan clear.
 - **Post-M7 Phase 3 friction hardening (2026-02-15)**: Replaced proxy friction math with canonical R-tax model in `telemetry.mqh`: entry-side risk basis capture (`worst_case_risk_money_total`, weighted `theoretical_r`) and final-close computation `friction_r = max(0, theoretical_r - realized_r)` where `realized_r = cumulative_net_outcome / worst_case_risk_money_total`. Wired `RPEA.mq5` `DEAL_ENTRY_IN` to pass entry price/SL/TP/volume into `Telemetry_OnPositionEntryDetailed`, removed close-path profit proxy dependency, and expanded `test_slo_monitor.mqh` with deterministic cases for single-entry basis, partial-close aggregation, weighted multi-entry basis, and invalid-basis fallback. Refreshed Phase 3 real-EA evidence with manifest-backed files (`phase3_real_run_manifest.json`, `phase3_decisions_20240108..20240111.csv`) to avoid reused artifact ambiguity.
 - **Post-M7 Phase 2 complete (2026-02-15)**: Executed tasks 07-09 on `feat/m7-postfix-phase2-slo`: added authoritative `SLO_OnTradeClosed(...)` ingestion wired from final-close telemetry output path in `RPEA.mq5` (`Telemetry_OnPositionExit` emit -> `SLO_OnTradeClosed`), implemented rolling 30-day metric recompute in `slo_monitor.mqh` (win rate, hold median/p80, efficiency median, friction median) with insufficient-sample guards, and finalized persistent staged policy (`WARN_ONLY` -> `THROTTLE` -> `DISABLE_MR`) with configurable breach persistence checks and meta-policy gating reason split (`SLO_MR_THROTTLED` vs `SLO_MR_DISABLED`). Added `test_slo_monitor.mqh`, expanded `test_m7_end_to_end.mqh`, updated suite wiring in `run_automated_tests_ea.mq5`, and validated artifacts: `task07_slo_ingestion_summary.json`, `task08_slo_metrics_summary.json`, `task09_slo_throttle_summary.json` with full harness green (`37/37`, `total_failed=0`) and `unsupported_strategy` regression scan clear.
@@ -146,7 +149,7 @@ Update this list when completing a task. Helps agents understand what just chang
 - Milestones M3-M6 complete (order engine, compliance, strategy tester, hardening).
 - **M7 milestone status**: Tasks 01-08 complete. M7 core integration baseline is `feat/m7-ensemble-integration`.
 - **Active execution stream**: Post-M7 TODO closure + hardening on `feat/m7-post-fixes`.
-- **Post-M7 phase status**: Phase 0 baseline complete, Phase 1 data/policy complete, Phase 2 SLO realism complete, Phase 3 adaptive risk complete, next phase kickoff is `feat/m7-postfix-phase4-learning-bandit`.
+- **Post-M7 phase status**: Phase 0 baseline complete, Phase 1 data/policy complete, Phase 2 SLO realism complete, Phase 3 adaptive risk complete, Phase 4 learning+bandit complete, next phase kickoff is `feat/m7-postfix-phase5-tuning-closeout`.
 - **Post-M7 source of truth**: `m7-post-fixes-plan.md`, `post-m7-task-index.md`, and `post-m7-task01.md` .. `post-m7-task17.md`.
 - **Post-M7 task execution**: Run task docs in numeric order with per-task compile/test/evidence gates.
 - **Post-M7 branch promotion model**:

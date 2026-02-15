@@ -163,6 +163,10 @@ bool g_test_gate_force_fail = false;
 #include "test_slo_monitor.mqh"
 // Post-M7 Task10/11: adaptive risk tests
 #include "test_adaptive_risk.mqh"
+// Post-M7 Task12/13: learning tests
+#include "test_learning.mqh"
+// Post-M7 Task14/15: bandit tests
+#include "test_bandit.mqh"
 // M7-Task07: Allocator MR integration tests
 #include "test_allocator_mr.mqh"
 // M7-Task08: End-to-End tests
@@ -197,6 +201,10 @@ bool TestM7Helpers_RunAll();
 bool TestSLOMonitor_RunAll();
 // Post-M7 Task10/11 forward declaration
 bool TestAdaptiveRisk_RunAll();
+// Post-M7 Task12/13 forward declaration
+bool TestLearning_RunAll();
+// Post-M7 Task14/15 forward declaration
+bool TestBandit_RunAll();
 // M7-Task07 forward declaration
 bool TestAllocatorMR_RunAll();
 // M7-Task08 forward declaration
@@ -648,6 +656,26 @@ void RunAllTests()
    g_test_reporter.RecordTest(suiteP7c, "TestAdaptiveRisk_RunAll", taskP7c_result,
                               taskP7c_result ? "Adaptive risk tests passed" : "Adaptive risk tests failed");
    g_test_reporter.EndSuite(suiteP7c);
+
+   // Post-M7 Task12/13: Learning tests
+   Print("=================================================================");
+   Print("Post-M7 Task12/13: Learning Tests");
+   Print("=================================================================");
+   int suiteP7d = g_test_reporter.BeginSuite("PostM7Task12_13_Learning");
+   bool taskP7d_result = TestLearning_RunAll();
+   g_test_reporter.RecordTest(suiteP7d, "TestLearning_RunAll", taskP7d_result,
+                              taskP7d_result ? "Learning tests passed" : "Learning tests failed");
+   g_test_reporter.EndSuite(suiteP7d);
+
+   // Post-M7 Task14/15: Bandit tests
+   Print("=================================================================");
+   Print("Post-M7 Task14/15: Bandit Tests");
+   Print("=================================================================");
+   int suiteP7e = g_test_reporter.BeginSuite("PostM7Task14_15_Bandit");
+   bool taskP7e_result = TestBandit_RunAll();
+   g_test_reporter.RecordTest(suiteP7e, "TestBandit_RunAll", taskP7e_result,
+                              taskP7e_result ? "Bandit tests passed" : "Bandit tests failed");
+   g_test_reporter.EndSuite(suiteP7e);
 
    // M7-Task07: Allocator MR Integration Tests
    Print("=================================================================");

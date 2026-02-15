@@ -308,6 +308,8 @@ int OnInit()
    Print("[SLO] Metrics initialized (stub defaults)");
    Telemetry_InitKpis();
    Print("[Telemetry] KPI metrics initialized");
+   Learning_LoadCalibration();
+   Print("[Learning] Calibration loaded");
 
    // M4-Task01: Initialize News Stabilization
    string news_symbols[];
@@ -641,6 +643,8 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                                  telemetry_hold_minutes,
                                  telemetry_friction_r,
                                  deal_time);
+               Bandit_RecordTradeOutcome(telemetry_strategy, telemetry_outcome);
+               Learning_Update();
             }
          }
       }

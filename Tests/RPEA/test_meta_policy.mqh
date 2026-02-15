@@ -4,6 +4,7 @@
 // Tests MetaPolicy_DeterministicChoice() directly to verify rule ordering.
 
 #include <RPEA/meta_policy.mqh>
+#include <RPEA/persistence.mqh>
 
 #ifndef TEST_FRAMEWORK_DEFINED
 extern int g_test_passed;
@@ -315,13 +316,64 @@ bool TestMP_Precedence_SessionCapOverridesLock()
 }
 
 //+------------------------------------------------------------------+
-//| Test: BanditIsReady returns false in Phase 4                      |
+//| Test: BanditIsReady false when posterior is missing               |
 //+------------------------------------------------------------------+
-bool TestMP_BanditNotReady()
+bool TestMP_BanditReadiness_MissingPosterior()
 {
-   int f = TestMP_Begin("TestMP_BanditNotReady");
+   int f = TestMP_Begin("TestMP_BanditReadiness_MissingPosterior");
+   Persistence_EnsureFolders();
+   FileDelete(FILE_BANDIT_POSTERIOR);
+   Bandit_TestResetState();
+
    bool ready = MetaPolicy_BanditIsReady();
-   ASSERT_TRUE(!ready, "BanditIsReady returns false in Phase 4");
+   ASSERT_TRUE(!ready, "BanditIsReady returns false when posterior is unavailable");
+   return TestMP_End(f);
+}
+
+//+------------------------------------------------------------------+
+//| Test: BanditIsReady true for valid persisted posterior            |
+//+------------------------------------------------------------------+
+bool TestMP_BanditReadiness_ValidPosterior()
+{
+   int f = TestMP_Begin("TestMP_BanditReadiness_ValidPosterior");
+   Persistence_EnsureFolders();
+   FileDelete(FILE_BANDIT_POSTERIOR);
+
+   Bandit_TestResetState();
+   Bandit_TestSetPosterior(4, 3.2, 4, 2.8, 8);
+   ASSERT_TRUE(Bandit_TestSavePosterior(), "posterior fixture persisted");
+
+   Bandit_TestResetState();
+   ASSERT_TRUE(MetaPolicy_BanditIsReady(), "BanditIsReady returns true for valid posterior file");
+
+   return TestMP_End(f);
+}
+
+//+------------------------------------------------------------------+
+//| Test: Shadow mode logs bandit delta but returns deterministic     |
+//+------------------------------------------------------------------+
+bool TestMP_BanditShadow_UsesDeterministicChoice()
+{
+   int f = TestMP_Begin("TestMP_BanditShadow_UsesDeterministicChoice");
+
+   Bandit_TestResetState();
+   Bandit_TestSetPosterior(4, 3.0, 4, 3.0, 8);
+   Bandit_TestSetForcedPolicy(true, Bandit_MR);
+
+   MetaPolicyContext mpc = MakeDefaultContext();
+   mpc.bwisc_has_setup = true;
+   mpc.bwisc_confidence = 0.85;
+   mpc.mr_has_setup = true;
+   mpc.mr_confidence = 0.90;
+
+   AppContext ctx;
+   ZeroMemory(ctx);
+   ctx.symbols_count = 1;
+
+   string choice = MetaPolicy_BanditChoice(ctx, "EURUSD", mpc);
+   ASSERT_STR_EQ("BWISC", choice, "shadow mode preserves deterministic execution choice");
+
+   Bandit_TestSetForcedPolicy(false, Bandit_Skip);
    return TestMP_End(f);
 }
 
@@ -396,13 +448,15 @@ bool TestMetaPolicy_RunAll()
    bool ok13 = TestMP_Default_Skip();
    bool ok14 = TestMP_Precedence_BlockedOverridesLock();
    bool ok15 = TestMP_Precedence_SessionCapOverridesLock();
-   bool ok16 = TestMP_BanditNotReady();
-   bool ok17 = TestMP_EfficiencyHelpers_DefaultZero();
-   bool ok18 = TestMP_EfficiencyHelpers_Thresholded();
+   bool ok16 = TestMP_BanditReadiness_MissingPosterior();
+   bool ok17 = TestMP_BanditReadiness_ValidPosterior();
+   bool ok18 = TestMP_BanditShadow_UsesDeterministicChoice();
+   bool ok19 = TestMP_EfficiencyHelpers_DefaultZero();
+   bool ok20 = TestMP_EfficiencyHelpers_Thresholded();
 
    return (ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 &&
            ok9 && ok10 && ok11 && ok12 && ok13 && ok14 && ok15 && ok16 &&
-           ok17 && ok18);
+           ok17 && ok18 && ok19 && ok20);
 }
 
 #endif // TEST_META_POLICY_MQH

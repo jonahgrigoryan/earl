@@ -42,6 +42,12 @@ Close all remaining `TODO[M7*]` stubs and improve live/backtest performance afte
 - `MQL5/Files/RPEA/test_results/post_m7/task11_allocator_adaptive_summary.json`
 - Targeted run decision evidence (manifest-backed fresh run): `MQL5/Files/RPEA/test_results/post_m7/phase3_real_run_manifest.json`, `MQL5/Files/RPEA/test_results/post_m7/phase3_decisions_20240108.csv` .. `MQL5/Files/RPEA/test_results/post_m7/phase3_decisions_20240111.csv`, `MQL5/Files/RPEA/test_results/post_m7/phase3_rubric_counts.json`
 
+### Phase 4 Learning + Bandit Shadow
+- `MQL5/Files/RPEA/test_results/post_m7/task12_learning_load_summary.json`
+- `MQL5/Files/RPEA/test_results/post_m7/task13_learning_update_summary.json`
+- `MQL5/Files/RPEA/test_results/post_m7/task14_bandit_summary.json`
+- `MQL5/Files/RPEA/test_results/post_m7/task15_metapolicy_bandit_shadow.json`
+
 ## Scope Boundaries
 - In scope: telemetry/KPI realism, SLO analytics realism, adaptive risk, learning/bandit shadow path, controlled parameter tuning.
 - Out of scope: removing hard guards (news block, session cap, liquidity hard blocks, kill-switch/floors), unsafe risk expansion.
@@ -52,16 +58,7 @@ Close all remaining `TODO[M7*]` stubs and improve live/backtest performance afte
 - This includes all variants such as `TODO[M7]`, `TODO[M7-PhaseX]`, and `TODO[M7-TaskX]`.
 
 ## Current M7 TODO Inventory (must be resolved by this plan)
-1. `MQL5/Include/RPEA/telemetry.mqh:11` - `TODO[M7]: compute rolling KPIs`
-2. `MQL5/Include/RPEA/telemetry.mqh:16` - `TODO[M7]: SLO thresholds and auto-risk reduction`
-3. `MQL5/Include/RPEA/adaptive.mqh:8` - `TODO[M7]: scale risk by regime/efficiency/room`
-4. `MQL5/Include/RPEA/learning.mqh:8` - `TODO[M7]: load calibration.json and apply`
-5. `MQL5/Include/RPEA/learning.mqh:13` - `TODO[M7]: apply updates; freeze on SLO breaches`
-6. `MQL5/Include/RPEA/bandit.mqh:11` - `TODO[M7]: Thompson/LinUCB with posterior persistence`
-7. `MQL5/Include/RPEA/m7_helpers.mqh:60` - `TODO[M7-Phase2]: rolling spread buffer`
-8. `MQL5/Include/RPEA/m7_helpers.mqh:90` - `TODO[M7-Phase4]: full percentile calculation`
-9. `MQL5/Include/RPEA/meta_policy.mqh:144` - `TODO[M7-Phase5]: bandit posterior readiness check`
-10. `MQL5/Include/RPEA/slo_monitor.mqh:49` - `TODO[M7-Task8]: persistent MR throttle action`
+1. `MQL5/Include/RPEA/telemetry.mqh:507` - `TODO[M7]: SLO thresholds and auto-risk reduction`
 
 ## Global Rules (apply to all 4 steps)
 1. Implement one subtask at a time.
