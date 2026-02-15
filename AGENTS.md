@@ -16,7 +16,7 @@ alwaysApply: true
 > that changed, and the **Recent Changes** list at the bottom of this section.
 > This keeps future agents current without a full codebase scan.
 
-**Last Updated**: Post-M7 task-pack planning scaffold complete (2026-02-11). M7 milestone complete; post-M7 execution planning active.
+**Last Updated**: Post-M7 Phase 1 telemetry close-path hardening complete (2026-02-15). M7 milestone complete; post-M7 Phase 2 ready.
 
 ### Module Inventory
 
@@ -41,18 +41,18 @@ avoid unintended coupling.
 | `breakeven.mqh` | ~312 | Execution | Breakeven at +0.5R. |
 | `trailing.mqh` | ~288 | Execution | Trailing stop logic (ATR-based, activates at +1R). |
 | `rl_pretrain_inputs.mqh` | ~277 | M7 Ensemble | Pre-training parameter defaults (MR_RiskPct_Default, TimeStopMin/Max, etc.). |
-| `meta_policy.mqh` | ~332 | Signal | Strategy chooser (BWISC vs MR vs Skip). Deterministic rules + optional bandit. Includes deterministic SLO override helper for MR throttle fallback. **`M7_DECISION_ONLY` is 0 (execution enabled).** |
+| `meta_policy.mqh` | ~333 | Signal | Strategy chooser (BWISC vs MR vs Skip). Deterministic rules + optional bandit. Includes deterministic SLO override helper for MR throttle fallback. **`M7_DECISION_ONLY` is 0 (execution enabled).** |
 | `state.mqh` | ~237 | Support | `ChallengeState` struct, `State_Get()`/`State_Set()` accessors. |
 | `signals_bwisc.mqh` | ~230 | Signal | BWISC signals (BC/MSC). Populates `g_last_bwisc_context` (`BWISC_Context`). |
 | `rl_agent.mqh` | ~220 | M7 Ensemble | Q-learning table, `RL_StateFromSpread`, `RL_GetQAdvantage`. |
 | `signals_mr.mqh` | ~282 | Signal | MR signals (mean reversion, EMRT + RL). Populates `g_last_mr_context` with execution-symbol entry price and direction. |
 | `liquidity.mqh` | ~204 | Support | Rolling spread/slippage stats, quantile getters, `Liquidity_SpreadOK`. |
 | `risk.mqh` | ~192 | Risk | `Risk_SizingByATRDistanceForSymbol`, `Risk_GetEffectiveRiskPct` (handles MicroMode). |
-| `m7_helpers.mqh` | ~185 | M7 Ensemble | Wrapper functions (ATR, spread, session helpers) to avoid circular includes. |
+| `m7_helpers.mqh` | ~497 | M7 Ensemble | Wrapper functions (ATR, spread, session helpers) plus rolling spread buffer + full ATR percentile helpers used by policy/regime paths. |
 | `scheduler.mqh` | ~291 | Orchestration | Main tick handler. Calls signals -> meta-policy -> allocator -> order engine, with `PLAN_REJECT`/`PLACE_OK`/`PLACE_FAIL` telemetry. Includes MR time-stop enforcement + SLO periodic checks. |
 | `symbol_bridge.mqh` | ~85 | Support | XAUEUR -> XAUUSD mapping. `SymbolBridge_GetExecutionSymbol()`. |
 | `regime.mqh` | ~81 | M7 Ensemble | Regime detection (trending/ranging/volatile). ADX + ATR percentile. |
-| `telemetry.mqh` | ~64 | Support | `LogMetaPolicyDecision` (structured meta-policy telemetry). |
+| `telemetry.mqh` | ~457 | Support | Rolling KPI state/update pipeline + `LogMetaPolicyDecision`; includes position-level close tracking to avoid partial-close overcount, robust strategy attribution fallback, and real hold-minute capture on final close. |
 | `slo_monitor.mqh` | ~93 | M7 Ensemble | SLO metrics state + threshold check (`SLO_InitMetrics`, `SLO_CheckAndThrottle`, `SLO_OnInit`, `SLO_PeriodicCheck`, `SLO_IsMRThrottled`). |
 | `app_context.mqh` | ~27 | Support | `AppContext` struct definition. |
 | `mr_context.mqh` | ~17 | Signal | Lightweight `MR_Context` struct + `g_last_mr_context` (allocator-safe include). |
@@ -112,6 +112,9 @@ g_last_bwisc_context.entry_price = ask; // or bid based on direction
 
 Update this list when completing a task. Helps agents understand what just changed.
 
+- **Post-M7 Phase 1 hardening (2026-02-15)**: Completed telemetry close-path robustness work before Phase 2: added final-close aggregation in `telemetry.mqh` to prevent KPI double-counting on partial exits, added position-tracked strategy attribution with resilient comment fallback (`MR-MR`, `BWISC-*`), captured real hold minutes from entry/exit timestamps, and wired `RPEA.mq5` `OnTradeTransaction` to `Telemetry_OnPositionEntry/Exit`. Added deterministic regression coverage in `test_regime_telemetry.mqh` for partial-close finalization, strategy attribution precedence, and hold-minute capture; updated Phase 2 docs (`post-m7-task07.md`, `post-m7-task08.md`, `m7-post-fixes-plan.md`) to consume the now-available hold-time payload instead of re-implementing capture.
+- **Post-M7 Phase 1 complete (2026-02-14)**: Closed tasks 02-06 on `feat/m7-postfix-phase1-data-policy` with deterministic implementations for `m7_helpers` rolling spread buffer + ATR percentile, telemetry KPI state/update pipeline, and meta-policy efficiency wiring to telemetry. Added suite `PostM7Task02_03_M7Helpers` and expanded telemetry/meta-policy regression coverage. Validation artifacts written under `MQL5/Files/RPEA/test_results/post_m7/` (`task02_*`, `task03_*`, `task04_*`, `task05_*`, `task06_phase1_validation.json`) with compile (`0 errors`) and automated suites (`36/36`) passing.
+- **Post-M7 workflow alignment (2026-02-14)**: Clarified active post-M7 execution stream in `Current Baseline & Workflow`, including source-of-truth docs (`m7-post-fixes-plan.md`, `post-m7-task-index.md`, `post-m7-task01..17.md`) and required branch promotion model (merge each phase into `feat/m7-post-fixes`, then cut next phase from updated base).
 - **Post-M7 planning scaffold (2026-02-11)**: Added full task-pack docs for post-M7 execution flow: `post-m7-task-index.md` and `post-m7-task01.md` .. `post-m7-task17.md`, including branch topology, per-task compile/test/evidence gates, and deterministic handoff chain to drive full `TODO[M7*]` closure.
 - **M7 Task 08 evidence refresh (2026-02-10)**: Validated placement-probe results from terminal log `decisions_20260210.csv` (local runtime source), refreshed committed summary artifacts `rubric_counts.txt` and `real_ea_run_summary.json` with live scheduler counts (`EVAL=62`, `PLAN_REJECT=7`, `PLACE_OK=1`, `PLACE_FAIL=8`, `unsupported_strategy=0`), and updated `m7-task08.md` rubric Check 9 from `N/A` to `PASS` with stable artifact paths.
 - **M7 Task 08 acceptance hardening (2026-02-09)**: Added deterministic `MetaPolicy_ApplySLOOverride()` helper in `meta_policy.mqh` and expanded `test_m7_end_to_end.mqh` with explicit SLO regression checks (`MR -> BWISC` when BWISC qualified, `MR -> Skip` when BWISC unavailable), raising Task 08 suite coverage from 11 to 13 internal tests. Re-ran real-EA `/config` validation and copied durable evidence to `MQL5/Files/RPEA/test_results/task08_evidence/` (`decisions_20240102..20240105`, `real_ea_run_summary.json`, `rubric_counts.txt`, `journal_slo_snippet.txt`) for reproducible rubric checks 8-10. Validation: EA compile `0 errors, 5 warnings`; test-runner compile `0 errors, 6 warnings`; automated suites `35/35` pass with required `M7Task08_EndToEnd`.
@@ -137,10 +140,16 @@ Update this list when completing a task. Helps agents understand what just chang
 
 ## Current Baseline & Workflow
 - Milestones M3-M6 complete (order engine, compliance, strategy tester, hardening).
-- **Active milestone**: M7 ensemble integration (BWISC + MR). Source of truth: `docs/m7-final-workflow.md`. Base branch: `feat/m7-ensemble-integration`.
-- **M7 progress**: Tasks 01-08 complete. M7 milestone complete.
-- Task execution: each `m7-taskXX.md` provides atomic steps: implement logic, add/extend tests, wire into `Tests/RPEA/run_automated_tests_ea.mq5`, compile checkpoint after each step. Follow `docs/m7-final-workflow.md` step-by-step.
-- Branching: work on per-task branches and merge into the milestone base. For M7, follow phase branches (e.g., `feat/m7-phase5-task07-allocator-integration` -> `feat/m7-ensemble-integration`).
+- **M7 milestone status**: Tasks 01-08 complete. M7 core integration baseline is `feat/m7-ensemble-integration`.
+- **Active execution stream**: Post-M7 TODO closure + hardening on `feat/m7-post-fixes`.
+- **Post-M7 phase status**: Phase 0 baseline complete, Phase 1 data/policy complete, next phase kickoff is `feat/m7-postfix-phase2-slo`.
+- **Post-M7 source of truth**: `m7-post-fixes-plan.md`, `post-m7-task-index.md`, and `post-m7-task01.md` .. `post-m7-task17.md`.
+- **Post-M7 task execution**: Run task docs in numeric order with per-task compile/test/evidence gates.
+- **Post-M7 branch promotion model**:
+  1. Complete and validate current phase branch.
+  2. Merge current phase branch into `feat/m7-post-fixes`.
+  3. Cut next phase branch from updated `feat/m7-post-fixes`.
+  4. After Phase 5 closeout gates, merge `feat/m7-post-fixes` into `feat/m7-ensemble-integration`.
 
 ## Build, Test, and Development Commands
 

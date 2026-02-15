@@ -154,6 +154,8 @@ bool g_test_gate_force_fail = false;
 #include "test_meta_policy.mqh"
 // M7-Task06: Regime + Telemetry tests
 #include "test_regime_telemetry.mqh"
+// Post-M7 Task02/03: helper data quality tests
+#include "test_m7_helpers.mqh"
 // M7-Task07: Allocator MR integration tests
 #include "test_allocator_mr.mqh"
 // M7-Task08: End-to-End tests
@@ -182,6 +184,8 @@ bool TestSignalsMR_RunAll();
 bool TestMetaPolicy_RunAll();
 // M7-Task06 forward declaration
 bool TestRegimeTelemetry_RunAll();
+// Post-M7 Task02/03 forward declaration
+bool TestM7Helpers_RunAll();
 // M7-Task07 forward declaration
 bool TestAllocatorMR_RunAll();
 // M7-Task08 forward declaration
@@ -603,6 +607,16 @@ void RunAllTests()
    g_test_reporter.RecordTest(suiteM7d, "TestRegimeTelemetry_RunAll", taskM7d_result,
                                taskM7d_result ? "Regime + telemetry tests passed" : "Regime + telemetry tests failed");
    g_test_reporter.EndSuite(suiteM7d);
+
+   // Post-M7 Task02/03: M7 helper data quality tests
+   Print("=================================================================");
+   Print("Post-M7 Task02/03: M7 Helpers Tests");
+   Print("=================================================================");
+   int suiteP7a = g_test_reporter.BeginSuite("PostM7Task02_03_M7Helpers");
+   bool taskP7a_result = TestM7Helpers_RunAll();
+   g_test_reporter.RecordTest(suiteP7a, "TestM7Helpers_RunAll", taskP7a_result,
+                              taskP7a_result ? "M7 helpers tests passed" : "M7 helpers tests failed");
+   g_test_reporter.EndSuite(suiteP7a);
 
    // M7-Task07: Allocator MR Integration Tests
    Print("=================================================================");

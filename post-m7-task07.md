@@ -5,20 +5,22 @@
 - Task branch: feat/m7-p2-task07-slo-ingestion
 
 ## Objective
-- Create authoritative runtime API to feed SLO metrics from realized trade outcomes.
+- Create authoritative runtime API to feed SLO metrics from realized trade outcomes, reusing existing trade-close telemetry capture.
 
 ## Prerequisites
 - Phase-1 complete and merged
+- Phase-1 telemetry close-path capture is available (`Telemetry_OnPositionExit` outputs strategy, net outcome, and hold minutes on final close).
 
 ## Target Files
 - MQL5/Include/RPEA/slo_monitor.mqh
 - MQL5/Include/RPEA/order_engine.mqh (or canonical close path)
+- MQL5/Include/RPEA/telemetry.mqh (contract reference only; avoid duplicate capture logic)
 - Tests/RPEA/test_slo_monitor.mqh (new)
 
 ## Implementation Steps
-1. Define SLO_OnTradeClosed payload contract (strategy, pnl proxy, hold duration, friction, timestamp).
-2. Invoke ingestion from one authoritative closure path to avoid double counting.
-3. Add duplicate-protection by intent/ticket id where applicable.
+1. Define `SLO_OnTradeClosed` payload contract to match existing telemetry close outputs (`strategy`, `net_outcome`, `hold_minutes`, `friction`, `timestamp`).
+2. Invoke ingestion from one authoritative closure-complete path (final close only) to avoid double counting partial exits.
+3. Add duplicate-protection by position/intent identifier where applicable.
 
 ## Compile and Test Checkpoints
 1. Run commands:

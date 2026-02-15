@@ -18,6 +18,20 @@ Close all remaining `TODO[M7*]` stubs and improve live/backtest performance afte
 - Task specs: `post-m7-task01.md` ... `post-m7-task17.md`
 - Rule: each task file is the source of truth for implementation scope, checkpoints, artifacts, and handoff.
 
+## Execution Evidence
+
+### Phase 0 Baseline
+- `MQL5/Files/RPEA/test_results/post_m7/baseline_summary.json`
+- `MQL5/Files/RPEA/test_results/post_m7/todo_scan_pre.txt`
+
+### Phase 1 Data/Policy
+- `MQL5/Files/RPEA/test_results/post_m7/task02_spread_buffer_summary.json`
+- `MQL5/Files/RPEA/test_results/post_m7/task03_atr_percentile_summary.json`
+- `MQL5/Files/RPEA/test_results/post_m7/task04_telemetry_kpi_summary.json`
+- `MQL5/Files/RPEA/test_results/post_m7/task05_metapolicy_efficiency_summary.json`
+- `MQL5/Files/RPEA/test_results/post_m7/task06_phase1_validation.json`
+- Targeted run decision evidence: `MQL5/Files/RPEA/test_results/post_m7/phase1_decisions_20240102.csv` .. `MQL5/Files/RPEA/test_results/post_m7/phase1_decisions_20240105.csv`
+
 ## Scope Boundaries
 - In scope: telemetry/KPI realism, SLO analytics realism, adaptive risk, learning/bandit shadow path, controlled parameter tuning.
 - Out of scope: removing hard guards (news block, session cap, liquidity hard blocks, kill-switch/floors), unsafe risk expansion.
@@ -120,6 +134,7 @@ Replace placeholder efficiency inputs and close helper-data TODOs so meta-policy
 
 ### Objective
 Make `SLO_IsMRThrottled()` depend on real rolling metrics, not optimistic defaults.
+Note: close-event hold-time capture is already landed in Phase 1 via telemetry position tracking; Step 2 should consume that payload, not duplicate it.
 
 ### Files
 - `MQL5/Include/RPEA/slo_monitor.mqh`
@@ -136,8 +151,8 @@ Make `SLO_IsMRThrottled()` depend on real rolling metrics, not optimistic defaul
 - Friction median estimator.
 
 2.2 Add event ingestion API:
-- Add explicit function (example: `SLO_OnTradeClosed(...)`) to feed outcomes.
-- Call this API from one authoritative close/realization path.
+- Add explicit function (example: `SLO_OnTradeClosed(...)`) to feed outcomes from telemetry close payload.
+- Call this API from one authoritative close/realization path (final close only).
 
 2.3 Implement periodic recompute:
 - `SLO_PeriodicCheck()` recomputes flags from rolling window.
