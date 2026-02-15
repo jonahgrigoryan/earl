@@ -141,15 +141,14 @@ string MetaPolicy_ApplySLOOverride(const string choice,
 //+------------------------------------------------------------------+
 bool MetaPolicy_BanditIsReady()
 {
-   // TODO[M7-Phase5]: Check if Files/RPEA/bandit/posterior.json exists
-   // For Phase 4, always use deterministic rules.
-   return false;
+   return Bandit_IsPosteriorReady();
 }
 
 string MetaPolicy_BanditChoice(const AppContext &ctx, const string symbol,
                                const MetaPolicyContext &mpc)
 {
-   if(!Config_GetUseBanditMetaPolicy() || !MetaPolicy_BanditIsReady())
+   bool bandit_ready = MetaPolicy_BanditIsReady();
+   if(!Config_GetUseBanditMetaPolicy() || !bandit_ready)
       return MetaPolicy_DeterministicChoice(mpc);
 
    // Call existing bandit API
@@ -167,9 +166,10 @@ string MetaPolicy_BanditChoice(const AppContext &ctx, const string symbol,
    if(Config_GetBanditShadowMode())
    {
       string det_str = MetaPolicy_DeterministicChoice(mpc);
-      LogDecision("MetaPolicy", "SHADOW",
-         StringFormat("{\"bandit\":\"%s\",\"deterministic\":\"%s\"}",
-            bandit_str, det_str));
+      Telemetry_LogBanditShadowDelta(symbol,
+                                     bandit_str,
+                                     det_str,
+                                     bandit_ready);
       return det_str;
    }
 

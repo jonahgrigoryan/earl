@@ -721,4 +721,21 @@ void LogMetaPolicyDecision(const string symbol,
 
    LogDecision("MetaPolicy", "EVAL", fields);
 }
+
+void Telemetry_LogBanditShadowDelta(const string symbol,
+                                    const string bandit_choice,
+                                    const string deterministic_choice,
+                                    const bool bandit_ready)
+{
+   bool delta = (bandit_choice != deterministic_choice);
+   string fields = StringFormat(
+      "{\"symbol\":\"%s\",\"bandit\":\"%s\",\"deterministic\":\"%s\","
+      "\"delta\":%s,\"bandit_ready\":%s}",
+      symbol,
+      bandit_choice,
+      deterministic_choice,
+      delta ? "true" : "false",
+      bandit_ready ? "true" : "false");
+   LogDecision("MetaPolicy", "SHADOW", fields);
+}
 #endif // RPEA_TELEMETRY_MQH
