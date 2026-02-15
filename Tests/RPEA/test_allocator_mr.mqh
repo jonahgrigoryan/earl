@@ -206,6 +206,7 @@ bool TestAllocatorMR_SLOInit()
 {
    int f = TestAllocMR_Begin("TestAllocatorMR_SLOInit");
 
+   SLO_OnInit();
    SLO_Metrics metrics;
    SLO_InitMetrics(metrics);
 
@@ -223,10 +224,12 @@ bool TestAllocatorMR_SLOBreach()
 {
    int f = TestAllocMR_Begin("TestAllocatorMR_SLOBreach");
 
+   SLO_OnInit();
    SLO_Metrics metrics;
    SLO_InitMetrics(metrics);
 
    metrics.mr_win_rate_30d = 0.50;
+   metrics.rolling_samples = SLO_DEFAULT_MIN_SAMPLES;
    SLO_CheckAndThrottle(metrics);
 
    ASSERT_TRUE(metrics.warn_only, "warn_only set when win_rate < 0.55");

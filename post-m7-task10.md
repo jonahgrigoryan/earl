@@ -5,19 +5,24 @@
 - Task branch: feat/m7-p3-task10-adaptive-multiplier
 
 ## Objective
-- Replace adaptive stub with deterministic multiplier based on regime and efficiency.
+- Replace adaptive stub with deterministic multiplier based on regime and efficiency, and close the Phase 2 carry-forward by wiring real `friction_r` inputs into SLO trade-close ingestion.
 
 ## Prerequisites
 - Phase-2 complete
 
 ## Target Files
 - MQL5/Include/RPEA/adaptive.mqh
+- MQL5/Include/RPEA/telemetry.mqh
+- MQL5/Experts/FundingPips/RPEA.mq5
 - Tests/RPEA/test_adaptive_risk.mqh (new)
+- Tests/RPEA/test_slo_monitor.mqh
 
 ## Implementation Steps
 1. Implement Adaptive_RiskMultiplier mapping with strict clamp bounds.
 2. Define safe defaults and invalid-input fallback to 1.0.
-3. Remove TODO[M7]: scale risk by regime/efficiency/room.
+3. Wire real `friction_r` close payload (from tracked/theoretical-vs-realized risk context) into `SLO_OnTradeClosed(...)` so friction-median SLO is no longer fed by constant `0.0`.
+4. Add deterministic regression proving friction payload is non-zero when theoretical and realized outcomes diverge.
+5. Remove TODO[M7]: scale risk by regime/efficiency/room.
 
 ## Compile and Test Checkpoints
 1. Run commands:
@@ -28,6 +33,7 @@
 - EA compile 0 errors.
 3. Test expectations:
 - Clamp and mapping tests pass across regime/efficiency combinations.
+- Friction payload path is test-covered and deterministic.
 
 ## Evidence Artifacts
 - MQL5/Files/RPEA/test_results/post_m7/task10_adaptive_multiplier_summary.json

@@ -150,14 +150,15 @@ Branch:
 Execution requirements:
 1. Execute tasks 10 -> 11 in order.
 2. Implement Adaptive_RiskMultiplier with strict clamps.
-3. Integrate adaptive risk in allocator behind runtime toggle:
+3. Close the Phase 2 carry-forward by wiring real `friction_r` into `SLO_OnTradeClosed(...)` (no constant `0.0` close payload).
+4. Integrate adaptive risk in allocator behind runtime toggle:
    - default must preserve baseline behavior.
-4. Preserve MicroMode and all hard risk/budget gates.
-5. Compile/test after each task.
-6. Produce artifacts:
+5. Preserve MicroMode and all hard risk/budget gates.
+6. Compile/test after each task.
+7. Produce artifacts:
    - task10_adaptive_multiplier_summary.json
    - task11_allocator_adaptive_summary.json
-7. Do not push/merge unless explicitly requested.
+8. Do not push/merge unless explicitly requested.
 
 Final response format:
 1. Overall status

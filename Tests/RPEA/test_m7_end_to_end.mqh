@@ -109,6 +109,7 @@ bool TestE2E_SLOBreach_ThrottlesMR()
 
    SLO_OnInit();
    g_slo_metrics.mr_win_rate_30d = 0.50;  // Below 0.55 threshold
+   g_slo_metrics.rolling_samples = 5;
    SLO_CheckAndThrottle(g_slo_metrics);
    ASSERT_TRUE(SLO_IsMRThrottled(), "MR throttled when win rate < 0.55");
 
@@ -143,6 +144,75 @@ bool TestE2E_SLOClear_AllowsMR()
 }
 
 //+------------------------------------------------------------------+
+//| Test: SLO breach is metrics-driven from ingested outcomes        |
+//+------------------------------------------------------------------+
+bool TestE2E_SLOMetricsDriven_Breach()
+{
+   int f = TestE2E_Begin("TestE2E_SLOMetricsDriven_Breach");
+
+#ifdef RPEA_TEST_RUNNER
+   SLO_OnInit();
+   SLO_TestSetMinSamples(5);
+   SLO_TestSetWindowDays(30);
+
+   datetime t0 = 1704067200;
+   for(int i = 0; i < 5; i++)
+   {
+      SLO_TestIngestTradeClosed((ulong)(9300 + i),
+                                (ulong)(8300 + i),
+                                "MR",
+                                -1.0,
+                                300,
+                                0.50,
+                                t0 + (i * 60));
+   }
+
+   SLO_TestRunPeriodicCheck(t0 + 7200);
+   ASSERT_TRUE(g_slo_metrics.rolling_samples == 5, "rolling metrics use ingested outcomes");
+   ASSERT_TRUE(g_slo_metrics.slo_breached, "hard breach set from computed rolling metrics");
+   ASSERT_TRUE(SLO_IsMRThrottled(), "MR throttled from computed rolling metrics");
+#else
+   ASSERT_TRUE(true, "Metrics-driven breach test skipped (not RPEA_TEST_RUNNER)");
+#endif
+
+   return TestE2E_End(f);
+}
+
+//+------------------------------------------------------------------+
+//| Test: SLO recovery clears throttle after better outcomes         |
+//+------------------------------------------------------------------+
+bool TestE2E_SLOMetricsDriven_Recovery()
+{
+   int f = TestE2E_Begin("TestE2E_SLOMetricsDriven_Recovery");
+
+#ifdef RPEA_TEST_RUNNER
+   SLO_OnInit();
+   SLO_TestSetMinSamples(5);
+   SLO_TestSetWindowDays(30);
+
+   datetime t0 = 1704067200;
+   for(int i = 0; i < 5; i++)
+   {
+      SLO_TestIngestTradeClosed((ulong)(9400 + i),
+                                (ulong)(8400 + i),
+                                "MR",
+                                1.5,
+                                90,
+                                0.10,
+                                t0 + (i * 60));
+   }
+
+   SLO_TestRunPeriodicCheck(t0 + 7200);
+   ASSERT_FALSE(g_slo_metrics.slo_breached, "hard breach clears with healthy rolling metrics");
+   ASSERT_FALSE(SLO_IsMRThrottled(), "MR throttle clears on recovery");
+#else
+   ASSERT_TRUE(true, "Metrics-driven recovery test skipped (not RPEA_TEST_RUNNER)");
+#endif
+
+   return TestE2E_End(f);
+}
+
+//+------------------------------------------------------------------+
 //| Test: Meta-policy SLO gate reroutes MR to BWISC when qualified    |
 //+------------------------------------------------------------------+
 bool TestE2E_MetaPolicySLOGate_MRToBWISC()
@@ -151,6 +221,7 @@ bool TestE2E_MetaPolicySLOGate_MRToBWISC()
 
    SLO_OnInit();
    g_slo_metrics.mr_win_rate_30d = 0.50;
+   g_slo_metrics.rolling_samples = 5;
    SLO_CheckAndThrottle(g_slo_metrics);
    ASSERT_TRUE(SLO_IsMRThrottled(), "MR is throttled after breach");
 
@@ -174,6 +245,7 @@ bool TestE2E_MetaPolicySLOGate_MRToSkip()
 
    SLO_OnInit();
    g_slo_metrics.mr_win_rate_30d = 0.50;
+   g_slo_metrics.rolling_samples = 5;
    SLO_CheckAndThrottle(g_slo_metrics);
    ASSERT_TRUE(SLO_IsMRThrottled(), "MR is throttled after breach");
 
@@ -185,6 +257,74 @@ bool TestE2E_MetaPolicySLOGate_MRToSkip()
    ASSERT_STR_EQ("Skip", result, "SLO gate falls back to Skip when BWISC is unavailable");
 
    SLO_OnInit();
+   return TestE2E_End(f);
+}
+
+//+------------------------------------------------------------------+
+//| Test: Persistent disable reroutes MR to BWISC when qualified     |
+//+------------------------------------------------------------------+
+bool TestE2E_SLOPersistentDisable_MRToBWISC()
+{
+   int f = TestE2E_Begin("TestE2E_SLOPersistentDisable_MRToBWISC");
+
+#ifdef RPEA_TEST_RUNNER
+   SLO_OnInit();
+   SLO_TestSetMinSamples(5);
+   SLO_TestSetDisableAfterBreachChecks(1);
+   SLO_TestSetWindowDays(30);
+
+   datetime t0 = 1704067200;
+   for(int i = 0; i < 5; i++)
+      SLO_TestIngestTradeClosed((ulong)(9800 + i), (ulong)(5800 + i), "MR", -1.0, 300, 0.50, t0 + (i * 60));
+   SLO_TestRunPeriodicCheck(t0 + 7200);
+
+   ASSERT_TRUE(SLO_IsMRDisabled(), "MR persistent disable activates after configured persistence");
+
+   MetaPolicyContext mpc = TestE2E_DefaultMetaPolicyContext();
+   mpc.bwisc_has_setup = true;
+   mpc.bwisc_confidence = Config_GetBWISCConfCut();
+   string result = MetaPolicy_ApplySLOOverride("MR", mpc, false);
+   ASSERT_STR_EQ("BWISC", result, "persistent disable still preserves BWISC fallback");
+
+   SLO_OnInit();
+#else
+   ASSERT_TRUE(true, "Persistent-disable BWISC fallback test skipped (not RPEA_TEST_RUNNER)");
+#endif
+
+   return TestE2E_End(f);
+}
+
+//+------------------------------------------------------------------+
+//| Test: Persistent disable reroutes MR to Skip when BWISC absent   |
+//+------------------------------------------------------------------+
+bool TestE2E_SLOPersistentDisable_MRToSkip()
+{
+   int f = TestE2E_Begin("TestE2E_SLOPersistentDisable_MRToSkip");
+
+#ifdef RPEA_TEST_RUNNER
+   SLO_OnInit();
+   SLO_TestSetMinSamples(5);
+   SLO_TestSetDisableAfterBreachChecks(1);
+   SLO_TestSetWindowDays(30);
+
+   datetime t0 = 1704067200;
+   for(int i = 0; i < 5; i++)
+      SLO_TestIngestTradeClosed((ulong)(9900 + i), (ulong)(5900 + i), "MR", -1.0, 300, 0.50, t0 + (i * 60));
+   SLO_TestRunPeriodicCheck(t0 + 7200);
+
+   ASSERT_TRUE(SLO_IsMRDisabled(), "MR persistent disable activates after configured persistence");
+
+   MetaPolicyContext mpc = TestE2E_DefaultMetaPolicyContext();
+   mpc.bwisc_has_setup = false;
+   mpc.bwisc_confidence = 0.0;
+   string result = MetaPolicy_ApplySLOOverride("MR", mpc, false);
+   ASSERT_STR_EQ("Skip", result, "persistent disable falls back to Skip when BWISC unavailable");
+
+   SLO_OnInit();
+#else
+   ASSERT_TRUE(true, "Persistent-disable Skip fallback test skipped (not RPEA_TEST_RUNNER)");
+#endif
+
    return TestE2E_End(f);
 }
 
@@ -371,20 +511,25 @@ bool TestM7EndToEnd_RunAll()
    bool ok1  = TestE2E_SLOInit_SafeDefaults();
    bool ok2  = TestE2E_SLOBreach_ThrottlesMR();
    bool ok3  = TestE2E_SLOClear_AllowsMR();
-   bool ok4  = TestE2E_MetaPolicySLOGate_MRToBWISC();
-   bool ok5  = TestE2E_MetaPolicySLOGate_MRToSkip();
-   bool ok6  = TestE2E_EnableMROverride_DisablesMR();
-   bool ok7  = TestE2E_BWISCOnlyMode();
-   bool ok8  = TestE2E_TimeStopDecision_BelowMin();
-   bool ok9  = TestE2E_TimeStopDecision_AboveMin();
-   bool ok10 = TestE2E_TimeStopDecision_AboveMax();
-   bool ok11 = TestE2E_AntiSpamQueueCheck();
-   bool ok12 = TestE2E_ProxyDistanceGuard();
-   bool ok13 = TestE2E_MRBiasSign();
+   bool ok4  = TestE2E_SLOMetricsDriven_Breach();
+   bool ok5  = TestE2E_SLOMetricsDriven_Recovery();
+   bool ok6  = TestE2E_MetaPolicySLOGate_MRToBWISC();
+   bool ok7  = TestE2E_MetaPolicySLOGate_MRToSkip();
+   bool ok8  = TestE2E_SLOPersistentDisable_MRToBWISC();
+   bool ok9  = TestE2E_SLOPersistentDisable_MRToSkip();
+   bool ok10 = TestE2E_EnableMROverride_DisablesMR();
+   bool ok11 = TestE2E_BWISCOnlyMode();
+   bool ok12 = TestE2E_TimeStopDecision_BelowMin();
+   bool ok13 = TestE2E_TimeStopDecision_AboveMin();
+   bool ok14 = TestE2E_TimeStopDecision_AboveMax();
+   bool ok15 = TestE2E_AntiSpamQueueCheck();
+   bool ok16 = TestE2E_ProxyDistanceGuard();
+   bool ok17 = TestE2E_MRBiasSign();
 
    return (ok1 && ok2 && ok3 && ok4 && ok5 &&
            ok6 && ok7 && ok8 && ok9 && ok10 &&
-           ok11 && ok12 && ok13);
+           ok11 && ok12 && ok13 && ok14 && ok15 &&
+           ok16 && ok17);
 }
 
 #endif // TEST_M7_END_TO_END_MQH

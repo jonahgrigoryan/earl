@@ -596,14 +596,24 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
             string telemetry_strategy = "";
             double telemetry_outcome = 0.0;
             int telemetry_hold_minutes = 0;
-            Telemetry_OnPositionExit(position_id,
-                                     comment,
-                                     net_outcome,
-                                     deal_time,
-                                     position_closed,
-                                     telemetry_strategy,
-                                     telemetry_outcome,
-                                     telemetry_hold_minutes);
+            bool telemetry_emitted = Telemetry_OnPositionExit(position_id,
+                                                              comment,
+                                                              net_outcome,
+                                                              deal_time,
+                                                              position_closed,
+                                                              telemetry_strategy,
+                                                              telemetry_outcome,
+                                                              telemetry_hold_minutes);
+            if(telemetry_emitted)
+            {
+               SLO_OnTradeClosed(trans.deal,
+                                 position_id,
+                                 telemetry_strategy,
+                                 telemetry_outcome,
+                                 telemetry_hold_minutes,
+                                 0.0,
+                                 deal_time);
+            }
          }
       }
    }

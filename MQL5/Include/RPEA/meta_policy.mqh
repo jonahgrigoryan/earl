@@ -253,7 +253,7 @@ string MetaPolicy_Choose(const AppContext &ctx, const string symbol,
    if(gated_choice != choice)
    {
       choice = gated_choice;
-      gating_reason = "SLO_MR_THROTTLED";
+      gating_reason = SLO_IsMRDisabled() ? "SLO_MR_DISABLED" : "SLO_MR_THROTTLED";
    }
 
    double confidence = 0.0;

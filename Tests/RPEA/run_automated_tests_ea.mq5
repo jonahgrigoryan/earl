@@ -156,6 +156,8 @@ bool g_test_gate_force_fail = false;
 #include "test_regime_telemetry.mqh"
 // Post-M7 Task02/03: helper data quality tests
 #include "test_m7_helpers.mqh"
+// Post-M7 Task07/08/09: SLO monitor realism tests
+#include "test_slo_monitor.mqh"
 // M7-Task07: Allocator MR integration tests
 #include "test_allocator_mr.mqh"
 // M7-Task08: End-to-End tests
@@ -186,6 +188,8 @@ bool TestMetaPolicy_RunAll();
 bool TestRegimeTelemetry_RunAll();
 // Post-M7 Task02/03 forward declaration
 bool TestM7Helpers_RunAll();
+// Post-M7 Task07/08/09 forward declaration
+bool TestSLOMonitor_RunAll();
 // M7-Task07 forward declaration
 bool TestAllocatorMR_RunAll();
 // M7-Task08 forward declaration
@@ -617,6 +621,16 @@ void RunAllTests()
    g_test_reporter.RecordTest(suiteP7a, "TestM7Helpers_RunAll", taskP7a_result,
                               taskP7a_result ? "M7 helpers tests passed" : "M7 helpers tests failed");
    g_test_reporter.EndSuite(suiteP7a);
+
+   // Post-M7 Task07/08/09: SLO monitor tests
+   Print("=================================================================");
+   Print("Post-M7 Task07/08/09: SLO Monitor Tests");
+   Print("=================================================================");
+   int suiteP7b = g_test_reporter.BeginSuite("PostM7Task07_09_SLOMonitor");
+   bool taskP7b_result = TestSLOMonitor_RunAll();
+   g_test_reporter.RecordTest(suiteP7b, "TestSLOMonitor_RunAll", taskP7b_result,
+                              taskP7b_result ? "SLO monitor tests passed" : "SLO monitor tests failed");
+   g_test_reporter.EndSuite(suiteP7b);
 
    // M7-Task07: Allocator MR Integration Tests
    Print("=================================================================");

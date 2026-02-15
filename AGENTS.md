@@ -16,7 +16,7 @@ alwaysApply: true
 > that changed, and the **Recent Changes** list at the bottom of this section.
 > This keeps future agents current without a full codebase scan.
 
-**Last Updated**: Post-M7 Phase 1 telemetry close-path hardening complete (2026-02-15). M7 milestone complete; post-M7 Phase 2 ready.
+**Last Updated**: Post-M7 Phase 2 SLO realism tasks 07-09 complete (2026-02-15). M7 milestone complete; post-M7 Phase 3 ready.
 
 ### Module Inventory
 
@@ -53,7 +53,7 @@ avoid unintended coupling.
 | `symbol_bridge.mqh` | ~85 | Support | XAUEUR -> XAUUSD mapping. `SymbolBridge_GetExecutionSymbol()`. |
 | `regime.mqh` | ~81 | M7 Ensemble | Regime detection (trending/ranging/volatile). ADX + ATR percentile. |
 | `telemetry.mqh` | ~457 | Support | Rolling KPI state/update pipeline + `LogMetaPolicyDecision`; includes position-level close tracking to avoid partial-close overcount, robust strategy attribution fallback, and real hold-minute capture on final close. |
-| `slo_monitor.mqh` | ~93 | M7 Ensemble | SLO metrics state + threshold check (`SLO_InitMetrics`, `SLO_CheckAndThrottle`, `SLO_OnInit`, `SLO_PeriodicCheck`, `SLO_IsMRThrottled`). |
+| `slo_monitor.mqh` | ~463 | M7 Ensemble | SLO closed-trade ingestion + rolling metric engine (win rate, hold median/p80, efficiency/friction medians), staged warn/throttle/disable policy, and deterministic periodic recompute hooks (`SLO_OnTradeClosed`, `SLO_CheckAndThrottle`, `SLO_IsMRThrottled`, `SLO_IsMRDisabled`). |
 | `app_context.mqh` | ~27 | Support | `AppContext` struct definition. |
 | `mr_context.mqh` | ~17 | Signal | Lightweight `MR_Context` struct + `g_last_mr_context` (allocator-safe include). |
 | `bandit.mqh` | ~12 | M7 Ensemble | Contextual bandit stub (optional meta-policy enhancement). |
@@ -112,6 +112,7 @@ g_last_bwisc_context.entry_price = ask; // or bid based on direction
 
 Update this list when completing a task. Helps agents understand what just changed.
 
+- **Post-M7 Phase 2 complete (2026-02-15)**: Executed tasks 07-09 on `feat/m7-postfix-phase2-slo`: added authoritative `SLO_OnTradeClosed(...)` ingestion wired from final-close telemetry output path in `RPEA.mq5` (`Telemetry_OnPositionExit` emit -> `SLO_OnTradeClosed`), implemented rolling 30-day metric recompute in `slo_monitor.mqh` (win rate, hold median/p80, efficiency median, friction median) with insufficient-sample guards, and finalized persistent staged policy (`WARN_ONLY` -> `THROTTLE` -> `DISABLE_MR`) with configurable breach persistence checks and meta-policy gating reason split (`SLO_MR_THROTTLED` vs `SLO_MR_DISABLED`). Added `test_slo_monitor.mqh`, expanded `test_m7_end_to_end.mqh`, updated suite wiring in `run_automated_tests_ea.mq5`, and validated artifacts: `task07_slo_ingestion_summary.json`, `task08_slo_metrics_summary.json`, `task09_slo_throttle_summary.json` with full harness green (`37/37`, `total_failed=0`) and `unsupported_strategy` regression scan clear. Known follow-up for Phase 3: live close-path currently passes `friction_r=0.0` to `SLO_OnTradeClosed`, so friction-tax gating is not yet informative until real theoretical/worst-case-R instrumentation is added.
 - **Post-M7 Phase 1 hardening (2026-02-15)**: Completed telemetry close-path robustness work before Phase 2: added final-close aggregation in `telemetry.mqh` to prevent KPI double-counting on partial exits, added position-tracked strategy attribution with resilient comment fallback (`MR-MR`, `BWISC-*`), captured real hold minutes from entry/exit timestamps, and wired `RPEA.mq5` `OnTradeTransaction` to `Telemetry_OnPositionEntry/Exit`. Added deterministic regression coverage in `test_regime_telemetry.mqh` for partial-close finalization, strategy attribution precedence, and hold-minute capture; updated Phase 2 docs (`post-m7-task07.md`, `post-m7-task08.md`, `m7-post-fixes-plan.md`) to consume the now-available hold-time payload instead of re-implementing capture.
 - **Post-M7 Phase 1 complete (2026-02-14)**: Closed tasks 02-06 on `feat/m7-postfix-phase1-data-policy` with deterministic implementations for `m7_helpers` rolling spread buffer + ATR percentile, telemetry KPI state/update pipeline, and meta-policy efficiency wiring to telemetry. Added suite `PostM7Task02_03_M7Helpers` and expanded telemetry/meta-policy regression coverage. Validation artifacts written under `MQL5/Files/RPEA/test_results/post_m7/` (`task02_*`, `task03_*`, `task04_*`, `task05_*`, `task06_phase1_validation.json`) with compile (`0 errors`) and automated suites (`36/36`) passing.
 - **Post-M7 workflow alignment (2026-02-14)**: Clarified active post-M7 execution stream in `Current Baseline & Workflow`, including source-of-truth docs (`m7-post-fixes-plan.md`, `post-m7-task-index.md`, `post-m7-task01..17.md`) and required branch promotion model (merge each phase into `feat/m7-post-fixes`, then cut next phase from updated base).
@@ -142,7 +143,8 @@ Update this list when completing a task. Helps agents understand what just chang
 - Milestones M3-M6 complete (order engine, compliance, strategy tester, hardening).
 - **M7 milestone status**: Tasks 01-08 complete. M7 core integration baseline is `feat/m7-ensemble-integration`.
 - **Active execution stream**: Post-M7 TODO closure + hardening on `feat/m7-post-fixes`.
-- **Post-M7 phase status**: Phase 0 baseline complete, Phase 1 data/policy complete, next phase kickoff is `feat/m7-postfix-phase2-slo`.
+- **Post-M7 phase status**: Phase 0 baseline complete, Phase 1 data/policy complete, Phase 2 SLO realism complete, next phase kickoff is `feat/m7-postfix-phase3-adaptive-risk`.
+- **Phase 3 carry-forward note**: Wire real `friction_r` inputs (theoretical vs realized R) into SLO close ingestion so friction median thresholds become fully live.
 - **Post-M7 source of truth**: `m7-post-fixes-plan.md`, `post-m7-task-index.md`, and `post-m7-task01.md` .. `post-m7-task17.md`.
 - **Post-M7 task execution**: Run task docs in numeric order with per-task compile/test/evidence gates.
 - **Post-M7 branch promotion model**:
