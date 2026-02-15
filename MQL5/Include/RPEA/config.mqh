@@ -100,6 +100,11 @@
 #define DEFAULT_ProxyRiskMultiplier          1.0
 #define DEFAULT_EnableReplicationFallback    true
 
+// Adaptive Risk Configuration (Post-M7 Phase 3)
+#define DEFAULT_EnableAdaptiveRisk           false
+#define DEFAULT_AdaptiveRiskMinMult          0.80
+#define DEFAULT_AdaptiveRiskMaxMult          1.20
+
 // News and Queue Configuration
 #define DEFAULT_NewsCSVPath                  "RPEA/news/calendar_high_impact.csv"
 #define DEFAULT_NewsCSVMaxAgeHours           24
@@ -162,6 +167,11 @@
 #ifdef RPEA_TEST_RUNNER
 bool   g_test_enable_mr_override_active = false;
 bool   g_test_enable_mr_override_value = true;
+bool   g_test_enable_adaptive_override_active = false;
+bool   g_test_enable_adaptive_override_value = DEFAULT_EnableAdaptiveRisk;
+bool   g_test_adaptive_bounds_override_active = false;
+double g_test_adaptive_min_mult_override = DEFAULT_AdaptiveRiskMinMult;
+double g_test_adaptive_max_mult_override = DEFAULT_AdaptiveRiskMaxMult;
 
 void Config_Test_SetEnableMROverride(bool active, bool value)
 {
@@ -172,6 +182,33 @@ void Config_Test_SetEnableMROverride(bool active, bool value)
 void Config_Test_ClearEnableMROverride()
 {
    g_test_enable_mr_override_active = false;
+}
+
+void Config_Test_SetEnableAdaptiveRiskOverride(bool active, bool value)
+{
+   g_test_enable_adaptive_override_active = active;
+   g_test_enable_adaptive_override_value = value;
+}
+
+void Config_Test_ClearEnableAdaptiveRiskOverride()
+{
+   g_test_enable_adaptive_override_active = false;
+}
+
+void Config_Test_SetAdaptiveRiskBoundsOverride(bool active,
+                                               double min_multiplier,
+                                               double max_multiplier)
+{
+   g_test_adaptive_bounds_override_active = active;
+   g_test_adaptive_min_mult_override = min_multiplier;
+   g_test_adaptive_max_mult_override = max_multiplier;
+}
+
+void Config_Test_ClearAdaptiveRiskBoundsOverride()
+{
+   g_test_adaptive_bounds_override_active = false;
+   g_test_adaptive_min_mult_override = DEFAULT_AdaptiveRiskMinMult;
+   g_test_adaptive_max_mult_override = DEFAULT_AdaptiveRiskMaxMult;
 }
 #endif
 //------------------------------------------------------------------------------
@@ -1056,6 +1093,78 @@ inline bool Config_GetBanditShadowMode()
 #else
    return BanditShadowMode;
 #endif
+}
+
+inline double Config_ClampAdaptiveRiskMultiplier(const double value, const double fallback)
+{
+   if(!MathIsValidNumber(value) || value <= 0.0)
+      return fallback;
+
+   double clamped = value;
+   if(clamped < 0.25)
+      clamped = 0.25;
+   if(clamped > 2.50)
+      clamped = 2.50;
+   return clamped;
+}
+
+inline bool Config_GetEnableAdaptiveRisk()
+{
+#ifdef RPEA_TEST_RUNNER
+   if(g_test_enable_adaptive_override_active)
+      return g_test_enable_adaptive_override_value;
+   #ifdef EnableAdaptiveRisk
+      return EnableAdaptiveRisk;
+   #else
+      return DEFAULT_EnableAdaptiveRisk;
+   #endif
+#else
+   return EnableAdaptiveRisk;
+#endif
+}
+
+inline double Config_GetAdaptiveRiskMinMult()
+{
+#ifdef RPEA_TEST_RUNNER
+   if(g_test_adaptive_bounds_override_active)
+      return Config_ClampAdaptiveRiskMultiplier(g_test_adaptive_min_mult_override,
+                                                DEFAULT_AdaptiveRiskMinMult);
+   #ifdef AdaptiveRiskMinMult
+      return Config_ClampAdaptiveRiskMultiplier(AdaptiveRiskMinMult,
+                                                DEFAULT_AdaptiveRiskMinMult);
+   #else
+      return DEFAULT_AdaptiveRiskMinMult;
+   #endif
+#else
+   return Config_ClampAdaptiveRiskMultiplier(AdaptiveRiskMinMult,
+                                             DEFAULT_AdaptiveRiskMinMult);
+#endif
+}
+
+inline double Config_GetAdaptiveRiskMaxMult()
+{
+#ifdef RPEA_TEST_RUNNER
+   double configured_max = 0.0;
+   if(g_test_adaptive_bounds_override_active)
+      configured_max = g_test_adaptive_max_mult_override;
+   else
+   {
+      #ifdef AdaptiveRiskMaxMult
+         configured_max = AdaptiveRiskMaxMult;
+      #else
+         configured_max = DEFAULT_AdaptiveRiskMaxMult;
+      #endif
+   }
+#else
+   double configured_max = AdaptiveRiskMaxMult;
+#endif
+
+   double min_mult = Config_GetAdaptiveRiskMinMult();
+   double max_mult = Config_ClampAdaptiveRiskMultiplier(configured_max,
+                                                        DEFAULT_AdaptiveRiskMaxMult);
+   if(max_mult < min_mult)
+      max_mult = min_mult;
+   return max_mult;
 }
 
 inline double Config_GetBWISCConfCut()
