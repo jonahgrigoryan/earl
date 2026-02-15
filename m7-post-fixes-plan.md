@@ -32,6 +32,11 @@ Close all remaining `TODO[M7*]` stubs and improve live/backtest performance afte
 - `MQL5/Files/RPEA/test_results/post_m7/task06_phase1_validation.json`
 - Targeted run decision evidence: `MQL5/Files/RPEA/test_results/post_m7/phase1_decisions_20240102.csv` .. `MQL5/Files/RPEA/test_results/post_m7/phase1_decisions_20240105.csv`
 
+### Phase 2 SLO Realism
+- `MQL5/Files/RPEA/test_results/post_m7/task07_slo_ingestion_summary.json`
+- `MQL5/Files/RPEA/test_results/post_m7/task08_slo_metrics_summary.json`
+- `MQL5/Files/RPEA/test_results/post_m7/task09_slo_throttle_summary.json`
+
 ## Scope Boundaries
 - In scope: telemetry/KPI realism, SLO analytics realism, adaptive risk, learning/bandit shadow path, controlled parameter tuning.
 - Out of scope: removing hard guards (news block, session cap, liquidity hard blocks, kill-switch/floors), unsafe risk expansion.
@@ -180,7 +185,7 @@ Note: close-event hold-time capture is already landed in Phase 1 via telemetry p
 ## Step 3 - Adaptive Risk Multiplier (guarded rollout)
 
 ### Objective
-Adjust risk sizing by regime/efficiency while staying within strict safety bounds.
+Adjust risk sizing by regime/efficiency while staying within strict safety bounds, and close the Phase 2 friction-data carry-forward for SLO ingestion.
 
 ### Files
 - `MQL5/Include/RPEA/adaptive.mqh`
@@ -208,6 +213,7 @@ Adjust risk sizing by regime/efficiency while staying within strict safety bound
 - Clamp boundaries.
 - MicroMode precedence.
 - Disabled toggle returns exact baseline volume/risk.
+- Friction close payload no longer hardcoded to `0.0` in live close path.
 
 3.5 Checkpoints
 - Compile checkpoint: EA compile `0 errors`.
