@@ -11,6 +11,8 @@
 #include <RPEA/symbol_bridge.mqh>
 #include <RPEA/liquidity.mqh>
 #include <RPEA/mr_context.mqh>
+#include <RPEA/telemetry.mqh>
+#include <RPEA/adaptive.mqh>
 
 struct AppContext;
 
@@ -121,6 +123,72 @@ double Allocator_ComputeBias(const string setup_type, const int direction, const
       return (double)direction * bias_magnitude;
 
    return 0.0;
+}
+
+string Allocator_RegimeLabelToString(const REGIME_LABEL regime)
+{
+   switch(regime)
+   {
+      case REGIME_TRENDING: return "TRENDING";
+      case REGIME_RANGING:  return "RANGING";
+      case REGIME_VOLATILE: return "VOLATILE";
+      default:              return "UNKNOWN";
+   }
+}
+
+double Allocator_GetBaseRiskPct(const string strategy)
+{
+   if(strategy == "MR")
+   {
+      if(Equity_IsMicroModeActive())
+         return Config_GetMicroRiskPct();
+      return Config_GetMRRiskPctDefault();
+   }
+   return Risk_GetEffectiveRiskPct();
+}
+
+double Allocator_GetStrategyEfficiency(const string strategy)
+{
+   if(strategy == "MR")
+      return Telemetry_GetMREfficiency();
+   return Telemetry_GetBWISCEfficiency();
+}
+
+double Allocator_ApplyAdaptiveRiskPct(const AppContext& ctx,
+                                      const string strategy,
+                                      const string signal_symbol,
+                                      const double base_risk_pct,
+                                      string &out_regime_label,
+                                      double &out_efficiency,
+                                      double &out_multiplier,
+                                      bool &out_applied)
+{
+   out_regime_label = "NONE";
+   out_efficiency = 0.0;
+   out_multiplier = 1.0;
+   out_applied = false;
+
+   double risk_pct = base_risk_pct;
+   if(!MathIsValidNumber(risk_pct) || risk_pct <= 0.0)
+      return 0.0;
+
+   // MicroMode must dominate adaptive sizing.
+   if(Equity_IsMicroModeActive())
+      return risk_pct;
+
+   if(!Config_GetEnableAdaptiveRisk())
+      return risk_pct;
+
+   REGIME_LABEL regime = Regime_Detect(ctx, signal_symbol);
+   out_regime_label = Allocator_RegimeLabelToString(regime);
+   out_efficiency = Allocator_GetStrategyEfficiency(strategy);
+   out_multiplier = Adaptive_RiskMultiplier(out_regime_label, out_efficiency);
+   out_applied = true;
+
+   double adjusted = risk_pct * out_multiplier;
+   if(!MathIsValidNumber(adjusted) || adjusted <= 0.0)
+      return risk_pct;
+   return adjusted;
 }
 
 // Main builder -----------------------------------------------------
@@ -404,19 +472,24 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
 
    // Strategy-specific risk percentage
    double riskPct = 0.0;
+   double riskPctBase = 0.0;
+   double adaptive_multiplier = 1.0;
+   double adaptive_efficiency = 0.0;
+   string adaptive_regime = "NONE";
+   bool adaptive_applied = false;
    if(rejection == "")
    {
-      if(strategy == "MR")
-      {
-         if(Equity_IsMicroModeActive())
-            riskPct = Config_GetMicroRiskPct();
-         else
-            riskPct = Config_GetMRRiskPctDefault();
-      }
-      else
-      {
-         riskPct = Risk_GetEffectiveRiskPct();
-      }
+      riskPctBase = Allocator_GetBaseRiskPct(strategy);
+      riskPct = Allocator_ApplyAdaptiveRiskPct(ctx,
+                                               strategy,
+                                               signal_symbol,
+                                               riskPctBase,
+                                               adaptive_regime,
+                                               adaptive_efficiency,
+                                               adaptive_multiplier,
+                                               adaptive_applied);
+      if(riskPct <= 0.0)
+         rejection = "risk_pct";
    }
 
    double volume = 0.0;
@@ -548,7 +621,7 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
    }
 
    string log_fields = StringFormat(
-      "{\"signal_symbol\":\"%s\",\"exec_symbol\":\"%s\",\"strategy\":\"%s\",\"setup_type\":\"%s\",\"order_type\":%d,\"entry_price\":%.5f,\"sl\":%.5f,\"tp\":%.5f,\"volume\":%.4f,\"magic\":\"%s\",\"bias\":%.4f,\"valid\":%s,\"signal_sl_points\":%.2f,\"exec_sl_points\":%.2f,\"signal_tp_points\":%.2f,\"exec_tp_points\":%.2f,\"direction\":%d,\"positions_total\":%d,\"positions_symbol\":%d,\"pendings_symbol\":%d,\"proxy\":%s,\"proxy_rate\":%.5f",
+      "{\"signal_symbol\":\"%s\",\"exec_symbol\":\"%s\",\"strategy\":\"%s\",\"setup_type\":\"%s\",\"order_type\":%d,\"entry_price\":%.5f,\"sl\":%.5f,\"tp\":%.5f,\"volume\":%.4f,\"magic\":\"%s\",\"bias\":%.4f,\"valid\":%s,\"signal_sl_points\":%.2f,\"exec_sl_points\":%.2f,\"signal_tp_points\":%.2f,\"exec_tp_points\":%.2f,\"direction\":%d,\"positions_total\":%d,\"positions_symbol\":%d,\"pendings_symbol\":%d,\"proxy\":%s,\"proxy_rate\":%.5f,\"risk_pct_base\":%.4f,\"risk_pct_final\":%.4f,\"adaptive_applied\":%s,\"adaptive_multiplier\":%.4f,\"adaptive_efficiency\":%.4f,\"adaptive_regime\":\"%s\"",
       signal_symbol,
       exec_symbol,
       strategy,
@@ -570,7 +643,13 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
       symbol_positions,
       symbol_pending,
       plan.is_proxy ? "true" : "false",
-      plan.proxy_rate);
+      plan.proxy_rate,
+      riskPctBase,
+      riskPct,
+      adaptive_applied ? "true" : "false",
+      adaptive_multiplier,
+      adaptive_efficiency,
+      adaptive_regime);
 
    if(rejection != "")
       log_fields += StringFormat(",\"rejection_reason\":\"%s\"", rejection);

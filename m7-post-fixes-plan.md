@@ -37,6 +37,11 @@ Close all remaining `TODO[M7*]` stubs and improve live/backtest performance afte
 - `MQL5/Files/RPEA/test_results/post_m7/task08_slo_metrics_summary.json`
 - `MQL5/Files/RPEA/test_results/post_m7/task09_slo_throttle_summary.json`
 
+### Phase 3 Adaptive Risk
+- `MQL5/Files/RPEA/test_results/post_m7/task10_adaptive_multiplier_summary.json`
+- `MQL5/Files/RPEA/test_results/post_m7/task11_allocator_adaptive_summary.json`
+- Targeted run decision evidence (manifest-backed fresh run): `MQL5/Files/RPEA/test_results/post_m7/phase3_real_run_manifest.json`, `MQL5/Files/RPEA/test_results/post_m7/phase3_decisions_20240108.csv` .. `MQL5/Files/RPEA/test_results/post_m7/phase3_decisions_20240111.csv`, `MQL5/Files/RPEA/test_results/post_m7/phase3_rubric_counts.json`
+
 ## Scope Boundaries
 - In scope: telemetry/KPI realism, SLO analytics realism, adaptive risk, learning/bandit shadow path, controlled parameter tuning.
 - Out of scope: removing hard guards (news block, session cap, liquidity hard blocks, kill-switch/floors), unsafe risk expansion.

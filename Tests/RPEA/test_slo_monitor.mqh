@@ -122,6 +122,223 @@ bool TestSLO_Ingestion_IgnoresNonMR()
    return TestSLO_End(f);
 }
 
+bool TestSLO_Ingestion_UsesRealFrictionPayload()
+{
+   int f = TestSLO_Begin("TestSLO_Ingestion_UsesRealFrictionPayload");
+
+   SLO_TestResetState();
+   Telemetry_TestReset();
+   SLO_TestSetMinSamples(1);
+
+   datetime t0 = 1704067200;
+   ulong position_id = 9012;
+   Telemetry_TestProcessPositionEntryDetailed(position_id,
+                                              "MR-MR",
+                                              t0,
+                                              "EURUSD",
+                                              1.10000,
+                                              1.09900,
+                                              1.10200,
+                                              1.0);
+
+   double worst_case_risk = 0.0;
+   double theoretical_r = 0.0;
+   bool has_basis = Telemetry_TestGetPositionRiskBasis(position_id, worst_case_risk, theoretical_r);
+   ASSERT_TRUE(has_basis, "entry risk basis captured");
+   ASSERT_TRUE(MathAbs(theoretical_r - 2.0) < 1e-6, "single-entry theoretical R equals tp/sl ratio");
+   ASSERT_TRUE(worst_case_risk > 0.0, "worst-case risk money captured");
+
+   double expected_realized_r = 1.25;
+   double expected_friction_r = 0.75;
+   double final_outcome = worst_case_risk * expected_realized_r;
+
+   string strategy = "";
+   double outcome = 0.0;
+   int hold_minutes = 0;
+   double friction_r = 0.0;
+   bool emitted = Telemetry_TestProcessPositionExitDetailedWithTheory(position_id,
+                                                                      "MR-MR",
+                                                                      final_outcome,
+                                                                      0.0,
+                                                                      t0 + 600,
+                                                                      true,
+                                                                      strategy,
+                                                                      outcome,
+                                                                      hold_minutes,
+                                                                      friction_r);
+   ASSERT_TRUE(emitted, "final close emits telemetry payload");
+   ASSERT_TRUE(MathAbs(friction_r - expected_friction_r) < 1e-6,
+               "friction payload matches canonical R-tax formula");
+
+   bool ingested = SLO_TestIngestTradeClosed(8110,
+                                             position_id,
+                                             strategy,
+                                             outcome,
+                                             hold_minutes,
+                                             friction_r,
+                                             t0 + 600);
+   ASSERT_TRUE(ingested, "SLO ingest accepts real friction payload");
+
+   SLO_TestRunPeriodicCheck(t0 + 3600);
+   ASSERT_TRUE(MathAbs(g_slo_metrics.mr_median_friction_r - expected_friction_r) < 1e-6,
+               "SLO friction metric consumes emitted friction payload");
+
+   return TestSLO_End(f);
+}
+
+bool TestSLO_Ingestion_FrictionAggregatesAcrossPartialCloses()
+{
+   int f = TestSLO_Begin("TestSLO_Ingestion_FrictionAggregatesAcrossPartialCloses");
+
+   SLO_TestResetState();
+   Telemetry_TestReset();
+
+   datetime t0 = 1704067200;
+   ulong position_id = 9013;
+   Telemetry_TestProcessPositionEntryDetailed(position_id,
+                                              "MR-MR",
+                                              t0,
+                                              "EURUSD",
+                                              1.10000,
+                                              1.09900,
+                                              1.10200,
+                                              1.0);
+
+   double worst_case_risk = 0.0;
+   double theoretical_r = 0.0;
+   bool has_basis = Telemetry_TestGetPositionRiskBasis(position_id, worst_case_risk, theoretical_r);
+   ASSERT_TRUE(has_basis, "entry risk basis captured");
+   ASSERT_TRUE(MathAbs(theoretical_r - 2.0) < 1e-6, "expected single-entry theoretical R");
+
+   string strategy = "";
+   double outcome = 0.0;
+   int hold_minutes = 0;
+   double friction_r = 0.0;
+   bool emitted_partial = Telemetry_TestProcessPositionExitDetailedWithTheory(position_id,
+                                                                              "MR-MR",
+                                                                              worst_case_risk * 0.4,
+                                                                              0.0,
+                                                                              t0 + 300,
+                                                                              false,
+                                                                              strategy,
+                                                                              outcome,
+                                                                              hold_minutes,
+                                                                              friction_r);
+   ASSERT_FALSE(emitted_partial, "partial close does not emit final-close telemetry");
+
+   bool emitted_final = Telemetry_TestProcessPositionExitDetailedWithTheory(position_id,
+                                                                            "MR-MR",
+                                                                            worst_case_risk * 0.3,
+                                                                            0.0,
+                                                                            t0 + 900,
+                                                                            true,
+                                                                            strategy,
+                                                                            outcome,
+                                                                            hold_minutes,
+                                                                            friction_r);
+   ASSERT_TRUE(emitted_final, "final close emits telemetry payload");
+   ASSERT_TRUE(MathAbs(outcome - (worst_case_risk * 0.7)) < 1e-6, "partial outcomes are aggregated");
+   ASSERT_TRUE(MathAbs(friction_r - 1.3) < 1e-6, "friction uses aggregated realized R at final close");
+
+   return TestSLO_End(f);
+}
+
+bool TestSLO_Ingestion_FrictionUsesWeightedTheoreticalR()
+{
+   int f = TestSLO_Begin("TestSLO_Ingestion_FrictionUsesWeightedTheoreticalR");
+
+   SLO_TestResetState();
+   Telemetry_TestReset();
+
+   datetime t0 = 1704067200;
+   ulong position_id = 9014;
+   Telemetry_TestProcessPositionEntryDetailed(position_id,
+                                              "MR-MR",
+                                              t0,
+                                              "EURUSD",
+                                              1.10000,
+                                              1.09900,
+                                              1.10200,
+                                              1.0);
+   Telemetry_TestProcessPositionEntryDetailed(position_id,
+                                              "MR-MR",
+                                              t0 + 60,
+                                              "EURUSD",
+                                              1.20000,
+                                              1.19800,
+                                              1.20200,
+                                              1.0);
+
+   double worst_case_risk = 0.0;
+   double theoretical_r = 0.0;
+   bool has_basis = Telemetry_TestGetPositionRiskBasis(position_id, worst_case_risk, theoretical_r);
+   ASSERT_TRUE(has_basis, "multi-entry risk basis captured");
+   ASSERT_TRUE(MathAbs(theoretical_r - (4.0 / 3.0)) < 1e-4, "theoretical R is weighted by leg risk money");
+   ASSERT_TRUE(worst_case_risk > 0.0, "multi-entry worst-case risk > 0");
+
+   string strategy = "";
+   double outcome = 0.0;
+   int hold_minutes = 0;
+   double friction_r = 0.0;
+   bool emitted = Telemetry_TestProcessPositionExitDetailedWithTheory(position_id,
+                                                                      "MR-MR",
+                                                                      worst_case_risk * 0.5,
+                                                                      0.0,
+                                                                      t0 + 1200,
+                                                                      true,
+                                                                      strategy,
+                                                                      outcome,
+                                                                      hold_minutes,
+                                                                      friction_r);
+   ASSERT_TRUE(emitted, "final close emits telemetry payload");
+   ASSERT_TRUE(MathAbs(friction_r - ((4.0 / 3.0) - 0.5)) < 1e-4, "friction uses weighted theoretical R");
+
+   return TestSLO_End(f);
+}
+
+bool TestSLO_Ingestion_InvalidRiskBasisFallsBackToZeroFriction()
+{
+   int f = TestSLO_Begin("TestSLO_Ingestion_InvalidRiskBasisFallsBackToZeroFriction");
+
+   SLO_TestResetState();
+   Telemetry_TestReset();
+
+   datetime t0 = 1704067200;
+   ulong position_id = 9015;
+   Telemetry_TestProcessPositionEntryDetailed(position_id,
+                                              "MR-MR",
+                                              t0,
+                                              "EURUSD",
+                                              1.10000,
+                                              0.0,
+                                              0.0,
+                                              1.0);
+
+   double worst_case_risk = 0.0;
+   double theoretical_r = 0.0;
+   bool has_basis = Telemetry_TestGetPositionRiskBasis(position_id, worst_case_risk, theoretical_r);
+   ASSERT_FALSE(has_basis, "invalid entry basis is rejected");
+
+   string strategy = "";
+   double outcome = 0.0;
+   int hold_minutes = 0;
+   double friction_r = 0.0;
+   bool emitted = Telemetry_TestProcessPositionExitDetailedWithTheory(position_id,
+                                                                      "MR-MR",
+                                                                      25.0,
+                                                                      0.0,
+                                                                      t0 + 600,
+                                                                      true,
+                                                                      strategy,
+                                                                      outcome,
+                                                                      hold_minutes,
+                                                                      friction_r);
+   ASSERT_TRUE(emitted, "final close still emits payload with invalid basis");
+   ASSERT_TRUE(MathAbs(friction_r) < 1e-9, "friction falls back to zero when risk basis is invalid");
+
+   return TestSLO_End(f);
+}
+
 bool TestSLO_Metrics_ComputedFromRollingWindow()
 {
    int f = TestSLO_Begin("TestSLO_Metrics_ComputedFromRollingWindow");
@@ -242,12 +459,16 @@ bool TestSLOMonitor_RunAll()
    bool ok1 = TestSLO_Ingestion_OncePerFinalClose();
    bool ok2 = TestSLO_Ingestion_DuplicateCloseIdIgnored();
    bool ok3 = TestSLO_Ingestion_IgnoresNonMR();
-   bool ok4 = TestSLO_Metrics_ComputedFromRollingWindow();
-   bool ok5 = TestSLO_Metrics_InsufficientSamplesGuard();
-   bool ok6 = TestSLO_PersistentThrottle_DisablesAfterConfiguredChecks();
-   bool ok7 = TestSLO_PersistentThrottle_RecoveryClearsDisable();
+   bool ok4 = TestSLO_Ingestion_UsesRealFrictionPayload();
+   bool ok5 = TestSLO_Ingestion_FrictionAggregatesAcrossPartialCloses();
+   bool ok6 = TestSLO_Ingestion_FrictionUsesWeightedTheoreticalR();
+   bool ok7 = TestSLO_Ingestion_InvalidRiskBasisFallsBackToZeroFriction();
+   bool ok8 = TestSLO_Metrics_ComputedFromRollingWindow();
+   bool ok9 = TestSLO_Metrics_InsufficientSamplesGuard();
+   bool ok10 = TestSLO_PersistentThrottle_DisablesAfterConfiguredChecks();
+   bool ok11 = TestSLO_PersistentThrottle_RecoveryClearsDisable();
 
-   return (ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7);
+   return (ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10 && ok11);
 }
 
 #endif // TEST_SLO_MONITOR_MQH

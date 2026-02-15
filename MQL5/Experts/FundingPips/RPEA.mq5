@@ -144,6 +144,9 @@ input double MR_EMRTWeight              = 0.60;    // Confidence weight on EMRT 
 input int    EMRT_FastThresholdPct      = 40;
 input double CorrelationFallbackRho     = 0.50;    // Assumed correlation if unknown
 input double MR_RiskPct_Default         = 0.90;
+input bool   EnableAdaptiveRisk         = DEFAULT_EnableAdaptiveRisk;
+input double AdaptiveRiskMinMult        = DEFAULT_AdaptiveRiskMinMult;
+input double AdaptiveRiskMaxMult        = DEFAULT_AdaptiveRiskMaxMult;
 input int    MR_TimeStopMin             = 60;
 input int    MR_TimeStopMax             = 90;
 input bool   MR_LongOnly                = false;
@@ -555,7 +558,29 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
          string deal_comment = HistoryDealGetString(trans.deal, DEAL_COMMENT);
 
          if(OrderEngine_IsOurMagic(deal_magic))
-            Telemetry_OnPositionEntry(position_id, deal_comment, deal_time);
+         {
+            double entry_price = HistoryDealGetDouble(trans.deal, DEAL_PRICE);
+            double entry_volume = HistoryDealGetDouble(trans.deal, DEAL_VOLUME);
+            double sl_price = HistoryDealGetDouble(trans.deal, DEAL_SL);
+            double tp_price = HistoryDealGetDouble(trans.deal, DEAL_TP);
+
+            if(position_id > 0 && PositionSelectByTicket(position_id))
+            {
+               if(sl_price <= 0.0)
+                  sl_price = PositionGetDouble(POSITION_SL);
+               if(tp_price <= 0.0)
+                  tp_price = PositionGetDouble(POSITION_TP);
+            }
+
+            Telemetry_OnPositionEntryDetailed(position_id,
+                                              deal_comment,
+                                              deal_time,
+                                              deal_symbol,
+                                              entry_price,
+                                              sl_price,
+                                              tp_price,
+                                              entry_volume);
+         }
 
          if(M7_ShouldCountEntry(position_id, deal_magic))
          {
@@ -596,14 +621,17 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
             string telemetry_strategy = "";
             double telemetry_outcome = 0.0;
             int telemetry_hold_minutes = 0;
-            bool telemetry_emitted = Telemetry_OnPositionExit(position_id,
-                                                              comment,
-                                                              net_outcome,
-                                                              deal_time,
-                                                              position_closed,
-                                                              telemetry_strategy,
-                                                              telemetry_outcome,
-                                                              telemetry_hold_minutes);
+            double telemetry_friction_r = 0.0;
+            bool telemetry_emitted = Telemetry_OnPositionExitWithTheory(position_id,
+                                                                        comment,
+                                                                        net_outcome,
+                                                                        0.0,
+                                                                        deal_time,
+                                                                        position_closed,
+                                                                        telemetry_strategy,
+                                                                        telemetry_outcome,
+                                                                        telemetry_hold_minutes,
+                                                                        telemetry_friction_r);
             if(telemetry_emitted)
             {
                SLO_OnTradeClosed(trans.deal,
@@ -611,7 +639,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                                  telemetry_strategy,
                                  telemetry_outcome,
                                  telemetry_hold_minutes,
-                                 0.0,
+                                 telemetry_friction_r,
                                  deal_time);
             }
          }

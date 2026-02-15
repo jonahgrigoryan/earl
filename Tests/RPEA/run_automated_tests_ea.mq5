@@ -62,6 +62,9 @@ input double RiskGateHeadroom           = 0.90;
 #define MR_LongOnly           false
 #define MR_ConfCut            0.80
 #define MR_EMRTWeight         0.60
+#define EnableAdaptiveRisk    false
+#define AdaptiveRiskMinMult   0.80
+#define AdaptiveRiskMaxMult   1.20
 #define MR_UseLogRatio        true
 #define EMRT_FastThresholdPct 40
 #define EMRT_ExtremeThresholdMult 2.0
@@ -158,6 +161,8 @@ bool g_test_gate_force_fail = false;
 #include "test_m7_helpers.mqh"
 // Post-M7 Task07/08/09: SLO monitor realism tests
 #include "test_slo_monitor.mqh"
+// Post-M7 Task10/11: adaptive risk tests
+#include "test_adaptive_risk.mqh"
 // M7-Task07: Allocator MR integration tests
 #include "test_allocator_mr.mqh"
 // M7-Task08: End-to-End tests
@@ -190,6 +195,8 @@ bool TestRegimeTelemetry_RunAll();
 bool TestM7Helpers_RunAll();
 // Post-M7 Task07/08/09 forward declaration
 bool TestSLOMonitor_RunAll();
+// Post-M7 Task10/11 forward declaration
+bool TestAdaptiveRisk_RunAll();
 // M7-Task07 forward declaration
 bool TestAllocatorMR_RunAll();
 // M7-Task08 forward declaration
@@ -631,6 +638,16 @@ void RunAllTests()
    g_test_reporter.RecordTest(suiteP7b, "TestSLOMonitor_RunAll", taskP7b_result,
                               taskP7b_result ? "SLO monitor tests passed" : "SLO monitor tests failed");
    g_test_reporter.EndSuite(suiteP7b);
+
+   // Post-M7 Task10/11: Adaptive risk tests
+   Print("=================================================================");
+   Print("Post-M7 Task10/11: Adaptive Risk Tests");
+   Print("=================================================================");
+   int suiteP7c = g_test_reporter.BeginSuite("PostM7Task10_11_AdaptiveRisk");
+   bool taskP7c_result = TestAdaptiveRisk_RunAll();
+   g_test_reporter.RecordTest(suiteP7c, "TestAdaptiveRisk_RunAll", taskP7c_result,
+                              taskP7c_result ? "Adaptive risk tests passed" : "Adaptive risk tests failed");
+   g_test_reporter.EndSuite(suiteP7c);
 
    // M7-Task07: Allocator MR Integration Tests
    Print("=================================================================");
