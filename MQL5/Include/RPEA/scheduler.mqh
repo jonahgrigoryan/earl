@@ -173,7 +173,7 @@ void Scheduler_Tick(const AppContext& ctx)
          continue;
       }
 
-      // 3) Signal proposals (stubs return none)
+      // 3) Signal proposals (if no signal available, booleans remain false)
       bool bw_has=false, mr_has=false; string bw_setup="None", mr_setup="None";
       int bw_sl=0,bw_tp=0,mr_sl=0,mr_tp=0; double bw_bias=0,bw_conf=0,mr_bias=0,mr_conf=0;
 

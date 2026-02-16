@@ -298,6 +298,56 @@ bool ExecuteOrderWithRetry_FailFastStopsImmediately()
    return (g_test_failed == 0);
 }
 
+bool OE_RequestCancel_RetriesOnTransientFailure()
+{
+   g_current_test = "OE_RequestCancel_RetriesOnTransientFailure";
+   PrintFormat("[TEST START] %s", g_current_test);
+
+   OE_Test_ClearOverrides();
+   OE_Test_DisableCancelModifyOverride();
+   OE_Test_EnableOrderSendOverride();
+   OE_Test_EnqueueOrderSendResponse(false, TRADE_RETCODE_REQUOTE, 0, 0, 0.0, 0.0, "transient-fail");
+   OE_Test_EnqueueOrderSendResponse(true,  TRADE_RETCODE_DONE, 12345, 0, 0.0, 0.0, "cancel-ok");
+   OE_Test_BeginRetryDelayCapture(true);
+
+   bool ok = OE_RequestCancel(88888, "retry-test");
+
+   ASSERT_TRUE(ok, "Cancel succeeds after transient retry");
+   ASSERT_EQUALS(2, OE_Test_GetOrderSendCallCount(), "Retry loop executed one retry");
+   ASSERT_EQUALS(1, OE_Test_GetCapturedDelayCount(), "One retry delay observed");
+   ASSERT_EQUALS(300, OE_Test_GetCapturedDelay(0), "Linear retry uses 300ms delay");
+
+   OE_Test_EndRetryDelayCapture();
+   OE_Test_ClearOverrides();
+
+   PrintFormat("[TEST END] %s", g_current_test);
+   return (g_test_failed == 0);
+}
+
+bool OE_RequestModify_WithRetryStopsOnFailFast()
+{
+   g_current_test = "OE_RequestModify_WithRetryStopsOnFailFast";
+   PrintFormat("[TEST START] %s", g_current_test);
+
+   OE_Test_ClearOverrides();
+   OE_Test_DisableCancelModifyOverride();
+   OE_Test_EnableOrderSendOverride();
+   OE_Test_EnqueueOrderSendResponse(false, TRADE_RETCODE_TRADE_DISABLED, 0, 0, 0.0, 0.0, "failfast");
+   OE_Test_BeginRetryDelayCapture(true);
+
+   bool ok = OE_RequestModifyVolume(99999, 0.12, "retry-stop-test");
+
+   ASSERT_FALSE(ok, "Modify fails immediately on fail-fast retcode");
+   ASSERT_EQUALS(1, OE_Test_GetOrderSendCallCount(), "No retry on fail-fast retcode");
+   ASSERT_EQUALS(0, OE_Test_GetCapturedDelayCount(), "No retry delay on fail-fast retcode");
+
+   OE_Test_EndRetryDelayCapture();
+   OE_Test_ClearOverrides();
+
+   PrintFormat("[TEST END] %s", g_current_test);
+   return (g_test_failed == 0);
+}
+
 //------------------------------------------------------------------------------
 // Test runner
 //------------------------------------------------------------------------------
@@ -317,6 +367,8 @@ bool TestOrderEngineRetry_RunAll()
    bool linear_retry = ExecuteOrderWithRetry_LinearRetrySuccess();
    bool exponential_stop = ExecuteOrderWithRetry_ExponentialRetriesStop();
    bool fail_fast_exec = ExecuteOrderWithRetry_FailFastStopsImmediately();
+   bool cancel_retry = OE_RequestCancel_RetriesOnTransientFailure();
+   bool modify_failfast = OE_RequestModify_WithRetryStopsOnFailFast();
 
    bool all_passed = (fail_fast_policy &&
                       backoff_profiles &&
@@ -324,6 +376,8 @@ bool TestOrderEngineRetry_RunAll()
                       linear_retry &&
                       exponential_stop &&
                       fail_fast_exec &&
+                      cancel_retry &&
+                      modify_failfast &&
                       g_test_failed == 0);
 
    PrintFormat("Test Summary: %d passed, %d failed", g_test_passed, g_test_failed);

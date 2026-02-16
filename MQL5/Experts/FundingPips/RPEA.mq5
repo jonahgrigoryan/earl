@@ -305,7 +305,7 @@ int OnInit()
 
    // 5c) Initialize SLO monitoring (M7 Task 08)
    SLO_OnInit();
-   Print("[SLO] Metrics initialized (stub defaults)");
+   Print("[SLO] Metrics initialized");
    Telemetry_InitKpis();
    Print("[Telemetry] KPI metrics initialized");
    Learning_LoadCalibration();

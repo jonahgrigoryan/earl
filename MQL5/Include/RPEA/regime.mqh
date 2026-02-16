@@ -92,9 +92,4 @@ string Regime_Label(const string symbol)
    return Regime_LabelCtx(g_ctx, symbol);
 }
 
-void Regime_Features(const string symbol)
-{
-   if(symbol == "")
-      return;
-}
 #endif // RPEA_REGIME_MQH

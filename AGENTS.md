@@ -16,7 +16,7 @@ alwaysApply: true
 > that changed, and the **Recent Changes** list at the bottom of this section.
 > This keeps future agents current without a full codebase scan.
 
-**Last Updated**: Post-M7 Phase 5 walk-forward hardening complete (2026-02-15). M7 milestone complete; post-M7 closeout artifacts generated.
+**Last Updated**: M7 RC cleanup and execution-hardening update complete (2026-02-16). M7 milestone complete; post-M7 closeout artifacts generated.
 
 ### Module Inventory
 
@@ -26,11 +26,11 @@ avoid unintended coupling.
 
 | Module | Lines | Layer | Responsibility |
 |--------|------:|-------|----------------|
-| `order_engine.mqh` | ~5550 | Execution | OCO, market fallback, retries, trailing, two-leg atomic ops, partial fills. **Largest module; edit with care.** |
+| `order_engine.mqh` | ~6153 | Execution | OCO, market fallback, retries, trailing, two-leg atomic ops, partial fills. Includes ORDER_DELETE OCO cleanup and cancel/modify retry wrappers. **Largest module; edit with care.** |
 | `persistence.mqh` | ~2020 | Support | File-backed state recovery, intent queue, challenge state persistence. |
 | `equity_guardian.mqh` | ~1350 | Risk | Baseline tracking, daily/overall floors, kill-switch, MicroMode activation (+10% target), giveback protection. |
 | `queue.mqh` | ~1250 | Execution | Action queueing during news windows, TTL expiry, post-news revalidation. |
-| `config.mqh` | ~1308 | Support | EA inputs, validation, clamping. Includes test overrides and runtime getters for adaptive-risk toggles/bounds (`EnableAdaptiveRisk`, min/max multipliers). |
+| `config.mqh` | ~1291 | Support | EA inputs, validation, clamping. Includes test overrides and runtime getters for adaptive-risk toggles/bounds (`EnableAdaptiveRisk`, min/max multipliers). |
 | `news.mqh` | ~875 | Support | Calendar API + CSV fallback, T +/-300s window, `News_IsEntryBlocked`, `News_GetWindowStateDetailed`. |
 | `synthetic.mqh` | ~650 | Execution | XAUEUR proxy/replication manager (XAUUSD-only or two-leg XAUUSD+EURUSD). |
 | `allocator.mqh` | ~675 | Risk | Builds `OrderPlan` for **BWISC + MR**, strategy-specific risk sizing, adaptive-risk multiplier integration behind runtime toggle, proxy-distance mapping guard for MR, budget gate, and strategy-tagged comments. |
@@ -52,7 +52,7 @@ avoid unintended coupling.
 | `m7_helpers.mqh` | ~497 | M7 Ensemble | Wrapper functions (ATR, spread, session helpers) plus rolling spread buffer + full ATR percentile helpers used by policy/regime paths. |
 | `scheduler.mqh` | ~291 | Orchestration | Main tick handler. Calls signals -> meta-policy -> allocator -> order engine, with `PLAN_REJECT`/`PLACE_OK`/`PLACE_FAIL` telemetry. Includes MR time-stop enforcement + SLO periodic checks. |
 | `symbol_bridge.mqh` | ~85 | Support | XAUEUR -> XAUUSD mapping. `SymbolBridge_GetExecutionSymbol()`. |
-| `regime.mqh` | ~81 | M7 Ensemble | Regime detection (trending/ranging/volatile). ADX + ATR percentile. |
+| `regime.mqh` | ~95 | M7 Ensemble | Regime detection (trending/ranging/volatile). ADX + ATR percentile. |
 | `telemetry.mqh` | ~743 | Support | Rolling KPI state/update pipeline + `LogMetaPolicyDecision`; includes position-level close tracking to avoid partial-close overcount, robust strategy attribution fallback, hold-minute capture, canonical friction tax in R-units using entry-side risk basis capture + final-close aggregation (`Telemetry_OnPositionExitWithTheory`), and bandit shadow delta telemetry (`Telemetry_LogBanditShadowDelta`). |
 | `adaptive.mqh` | ~96 | Risk | Deterministic adaptive multiplier by regime + efficiency with strict bound clamping and invalid-input fallback to neutral risk. |
 | `slo_monitor.mqh` | ~463 | M7 Ensemble | SLO closed-trade ingestion + rolling metric engine (win rate, hold median/p80, efficiency/friction medians), staged warn/throttle/disable policy, and deterministic periodic recompute hooks (`SLO_OnTradeClosed`, `SLO_CheckAndThrottle`, `SLO_IsMRThrottled`, `SLO_IsMRDisabled`). |
@@ -114,6 +114,7 @@ g_last_bwisc_context.entry_price = ask; // or bid based on direction
 
 Update this list when completing a task. Helps agents understand what just changed.
 
+- **M7 RC cleanup hardening (2026-02-16)**: Implemented OCO relationship cleanup on `TRADE_TRANSACTION_ORDER_DELETE` in `order_engine.mqh` (`OCO_CLEANUP` decision log + pending-link cleanup), added retry-capable wrappers for cancel/modify operations (`OE_RequestCancelWithRetry`, `OE_RequestModifyWithRetry`) and routed existing helpers through those paths. Removed stale dead stubs/comments in `config.mqh`, `timeutils.mqh`, and `regime.mqh`, and refreshed regression coverage in `test_order_engine_oco.mqh` (ORDER_DELETE cleanup case) and `test_order_engine_retry.mqh` (cancel/modify retry behavior). Validation: EA compile `0 errors, 5 warnings`; test-runner compile `0 errors, 2 warnings`; automated suites `40/40` passing.
 - **Post-M7 Phase 5 walk-forward hardening (2026-02-15)**: Resolved Task16 report-generation reliability in `scripts/walk_forward.ps1` by enforcing clean MT5 process ownership per run, adding expected report resolution, and writing deterministic copied report artifacts into `post_m7` output. Re-ran full Task16 family configs (`confidence`, `liquidity`, `time_stop`, `adaptive`) with real execution and refreshed `step4_tuning_report.json` + `task16_walkforward_summary.json` from generated CSV/report artifacts. Final Task16 state is no longer blocked (`full_walkforward_report_generation=completed`), with explicit outcome `completed_no_eligible_candidates` for selected windows.
 - **Post-M7 Phase 5 complete (2026-02-15)**: Executed tasks 16-17 on `feat/m7-postfix-phase5-tuning-closeout`: finalized `TODO[M7*]` closure by implementing deterministic `Telemetry_AutoThrottle()` final hook in `telemetry.mqh` (no placeholder markers remain), added reproducible tuning artifacts (`step4_tuning_report.json`, `task16_walkforward_summary.json`, family config/set snapshots + dry-run logs), and produced final closeout bundle (`todo_scan_post.txt` empty, `final_summary.json`). Final gates: EA compile `0 errors, 5 warnings`; test-runner compile `0 errors, 6 warnings`; automated suites `40/40` passing including `M7Task07_AllocatorMR`, `M7Task08_EndToEnd`, and post-M7 suites.
 - **Post-M7 Phase 4 test isolation hardening (2026-02-15)**: Closed cross-suite state leakage in `test_bandit.mqh` and `test_learning.mqh` by adding explicit setup/teardown cleanup (posterior/calibration file cleanup + runtime state resets) and introducing `Liquidity_TestResetState()` in `liquidity.mqh` (`#ifdef RPEA_TEST_RUNNER`) to clear rolling quantile buffers between tests. Validation rerun: EA compile `0 errors, 5 warnings`; automated suites `40/40` passing with `PostM7Task14_15_Bandit` gate.
