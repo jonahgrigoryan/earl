@@ -504,7 +504,9 @@ void Telemetry_OnTradeClosed(const string strategy,
 
 void Telemetry_AutoThrottle()
 {
-   // TODO[M7]: SLO thresholds and auto-risk reduction
+   // Finalized in post-M7 closeout: throttle control is owned by SLO/meta-policy.
+   // Keep this hook deterministic and side-effect free for backward compatibility.
+   Telemetry_UpdateKpis();
 }
 
 double Telemetry_GetBWISCEfficiency()

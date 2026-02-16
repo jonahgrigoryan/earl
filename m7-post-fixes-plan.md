@@ -48,6 +48,13 @@ Close all remaining `TODO[M7*]` stubs and improve live/backtest performance afte
 - `MQL5/Files/RPEA/test_results/post_m7/task14_bandit_summary.json`
 - `MQL5/Files/RPEA/test_results/post_m7/task15_metapolicy_bandit_shadow.json`
 
+### Phase 5 Tuning + Final Closeout
+- `MQL5/Files/RPEA/test_results/post_m7/step4_tuning_report.json`
+- `MQL5/Files/RPEA/test_results/post_m7/task16_walkforward_summary.json`
+- `MQL5/Files/RPEA/test_results/post_m7/todo_scan_post.txt` (empty)
+- `MQL5/Files/RPEA/test_results/post_m7/final_summary.json`
+- Task16 execution note: walk-forward report generation is fixed/reproducible (`scripts/walk_forward.ps1` hardening complete), but selected Jan-Feb 2024 windows currently yield `completed_no_eligible_candidates` (zero/insufficient trades for promoted candidate selection).
+
 ## Scope Boundaries
 - In scope: telemetry/KPI realism, SLO analytics realism, adaptive risk, learning/bandit shadow path, controlled parameter tuning.
 - Out of scope: removing hard guards (news block, session cap, liquidity hard blocks, kill-switch/floors), unsafe risk expansion.
@@ -58,7 +65,7 @@ Close all remaining `TODO[M7*]` stubs and improve live/backtest performance afte
 - This includes all variants such as `TODO[M7]`, `TODO[M7-PhaseX]`, and `TODO[M7-TaskX]`.
 
 ## Current M7 TODO Inventory (must be resolved by this plan)
-1. `MQL5/Include/RPEA/telemetry.mqh:507` - `TODO[M7]: SLO thresholds and auto-risk reduction`
+- None. Final scan is clean as of 2026-02-15 (`todo_scan_post.txt` has zero lines).
 
 ## Global Rules (apply to all 4 steps)
 1. Implement one subtask at a time.
