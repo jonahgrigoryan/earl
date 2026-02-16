@@ -107,6 +107,151 @@ bool TestTelemetry_Smoke()
 }
 
 //+------------------------------------------------------------------+
+//| Test: KPI updates respect minimum sample threshold               |
+//+------------------------------------------------------------------+
+bool TestTelemetry_KpiThreshold()
+{
+   int f = TestRegimeTelemetry_Begin("TestTelemetry_KpiThreshold");
+
+   Telemetry_TestReset();
+   Telemetry_TestSetMinSamples(3);
+   Telemetry_TestRecordOutcome("BWISC", 1.0);
+   Telemetry_TestRecordOutcome("BWISC", -0.5);
+
+   ASSERT_TRUE(MathAbs(Telemetry_GetBWISCEfficiency()) < 1e-9,
+               "efficiency is zero below sample threshold");
+   ASSERT_TRUE(MathAbs(Telemetry_GetBWISCExpectancy()) < 1e-9,
+               "expectancy is zero below sample threshold");
+
+   Telemetry_TestRecordOutcome("BWISC", 0.5);
+   ASSERT_TRUE(Telemetry_GetBWISCSamples() == 3, "sample count tracks outcomes");
+   ASSERT_TRUE(MathAbs(Telemetry_GetBWISCExpectancy() - (1.0 / 3.0)) < 1e-6,
+               "expectancy is computed after threshold is reached");
+   ASSERT_TRUE(MathAbs(Telemetry_GetBWISCEfficiency() - 0.75) < 1e-6,
+               "efficiency ratio uses positive/(positive+negative)");
+
+   return TestRegimeTelemetry_End(f);
+}
+
+//+------------------------------------------------------------------+
+//| Test: BWISC and MR KPI state remain strategy-scoped             |
+//+------------------------------------------------------------------+
+bool TestTelemetry_StrategyIsolation()
+{
+   int f = TestRegimeTelemetry_Begin("TestTelemetry_StrategyIsolation");
+
+   Telemetry_TestReset();
+   Telemetry_TestSetMinSamples(2);
+   Telemetry_TestRecordOutcome("MR", 2.0);
+   Telemetry_TestRecordOutcome("MR", -1.0);
+
+   ASSERT_TRUE(Telemetry_GetBWISCSamples() == 0, "BWISC sample count unaffected by MR updates");
+   ASSERT_TRUE(MathAbs(Telemetry_GetBWISCEfficiency()) < 1e-9, "BWISC efficiency stays zero");
+   ASSERT_TRUE(Telemetry_GetMRSamples() == 2, "MR sample count updates independently");
+   ASSERT_TRUE(MathAbs(Telemetry_GetMRExpectancy() - 0.5) < 1e-6, "MR expectancy computed correctly");
+   ASSERT_TRUE(MathAbs(Telemetry_GetMREfficiency() - (2.0 / 3.0)) < 1e-6,
+               "MR efficiency computed correctly");
+
+   return TestRegimeTelemetry_End(f);
+}
+
+//+------------------------------------------------------------------+
+//| Test: Partial exits are aggregated and counted once on close     |
+//+------------------------------------------------------------------+
+bool TestTelemetry_PositionExitFinalization()
+{
+   int f = TestRegimeTelemetry_Begin("TestTelemetry_PositionExitFinalization");
+
+   Telemetry_TestReset();
+   Telemetry_TestSetMinSamples(1);
+
+   datetime t0 = D'2024.01.01 00:00';
+   Telemetry_TestProcessPositionEntry(10001, "PX MR-MR b=0.70", t0);
+   ASSERT_TRUE(Telemetry_TestGetTrackedPositionCount() == 1,
+               "position tracker created on entry");
+
+   bool emitted_partial = Telemetry_TestProcessPositionExit(10001, "PX MR-MR", -0.25, t0 + 600, false);
+   ASSERT_FALSE(emitted_partial, "partial close does not emit KPI sample");
+   ASSERT_TRUE(Telemetry_GetMRSamples() == 0, "MR samples remain unchanged on partial close");
+
+   bool emitted_final = Telemetry_TestProcessPositionExit(10001, "PX MR-MR", 0.75, t0 + 1200, true);
+   ASSERT_TRUE(emitted_final, "final close emits KPI sample");
+   ASSERT_TRUE(Telemetry_GetMRSamples() == 1, "MR samples increment exactly once");
+   ASSERT_TRUE(MathAbs(Telemetry_GetMRExpectancy() - 0.50) < 1e-6,
+               "aggregated outcome across partial+final close is used");
+   ASSERT_TRUE(Telemetry_TestGetTrackedPositionCount() == 0,
+               "position tracker removed after final close");
+
+   return TestRegimeTelemetry_End(f);
+}
+
+//+------------------------------------------------------------------+
+//| Test: Entry strategy tracking wins over ambiguous exit comment    |
+//+------------------------------------------------------------------+
+bool TestTelemetry_PositionExitStrategyAttribution()
+{
+   int f = TestRegimeTelemetry_Begin("TestTelemetry_PositionExitStrategyAttribution");
+
+   Telemetry_TestReset();
+   Telemetry_TestSetMinSamples(1);
+
+   datetime t0 = D'2024.01.01 01:00';
+   Telemetry_TestProcessPositionEntry(20002, "PX BWISC-BC b=0.60", t0);
+
+   string out_strategy = "";
+   double out_total_outcome = 0.0;
+   int out_hold_minutes = 0;
+   bool emitted = Telemetry_TestProcessPositionExitDetailed(20002,
+                                                            "PX MR-MR b=0.80",
+                                                            -0.40,
+                                                            t0 + 300,
+                                                            true,
+                                                            out_strategy,
+                                                            out_total_outcome,
+                                                            out_hold_minutes);
+
+   ASSERT_TRUE(emitted, "final close emits KPI sample");
+   ASSERT_TRUE(out_strategy == "BWISC", "tracked entry strategy overrides conflicting exit hint");
+   ASSERT_TRUE(Telemetry_GetBWISCSamples() == 1, "BWISC sample incremented");
+   ASSERT_TRUE(Telemetry_GetMRSamples() == 0, "MR sample not incremented");
+
+   return TestRegimeTelemetry_End(f);
+}
+
+//+------------------------------------------------------------------+
+//| Test: Hold minutes are captured from entry and final exit times   |
+//+------------------------------------------------------------------+
+bool TestTelemetry_PositionExitHoldMinutes()
+{
+   int f = TestRegimeTelemetry_Begin("TestTelemetry_PositionExitHoldMinutes");
+
+   Telemetry_TestReset();
+   Telemetry_TestSetMinSamples(1);
+
+   datetime t0 = D'2024.01.01 02:00';
+   Telemetry_TestProcessPositionEntry(30003, "PX MR-MR b=0.90", t0);
+
+   string out_strategy = "";
+   double out_total_outcome = 0.0;
+   int out_hold_minutes = 0;
+   bool emitted = Telemetry_TestProcessPositionExitDetailed(30003,
+                                                            "PX MR-MR b=0.90",
+                                                            0.30,
+                                                            t0 + (61 * 60),
+                                                            true,
+                                                            out_strategy,
+                                                            out_total_outcome,
+                                                            out_hold_minutes);
+
+   ASSERT_TRUE(emitted, "final close emits KPI sample");
+   ASSERT_TRUE(out_strategy == "MR", "MR strategy preserved");
+   ASSERT_TRUE(MathAbs(out_total_outcome - 0.30) < 1e-6, "outcome forwarded unchanged on single-close trade");
+   ASSERT_TRUE(out_hold_minutes == 61, "hold minutes derived from entry and exit timestamps");
+
+   return TestRegimeTelemetry_End(f);
+}
+
+//+------------------------------------------------------------------+
 //| Suite runner                                                     |
 //+------------------------------------------------------------------+
 bool TestRegimeTelemetry_RunAll()
@@ -118,8 +263,13 @@ bool TestRegimeTelemetry_RunAll()
    bool ok1 = TestRegime_DefaultRanging();
    bool ok2 = TestLiquidity_DefaultQuantiles();
    bool ok3 = TestTelemetry_Smoke();
+   bool ok4 = TestTelemetry_KpiThreshold();
+   bool ok5 = TestTelemetry_StrategyIsolation();
+   bool ok6 = TestTelemetry_PositionExitFinalization();
+   bool ok7 = TestTelemetry_PositionExitStrategyAttribution();
+   bool ok8 = TestTelemetry_PositionExitHoldMinutes();
 
-   return (ok1 && ok2 && ok3);
+   return (ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8);
 }
 
 #endif // TEST_REGIME_TELEMETRY_MQH

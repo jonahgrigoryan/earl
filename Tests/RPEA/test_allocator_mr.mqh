@@ -206,6 +206,7 @@ bool TestAllocatorMR_SLOInit()
 {
    int f = TestAllocMR_Begin("TestAllocatorMR_SLOInit");
 
+   SLO_OnInit();
    SLO_Metrics metrics;
    SLO_InitMetrics(metrics);
 
@@ -223,10 +224,12 @@ bool TestAllocatorMR_SLOBreach()
 {
    int f = TestAllocMR_Begin("TestAllocatorMR_SLOBreach");
 
+   SLO_OnInit();
    SLO_Metrics metrics;
    SLO_InitMetrics(metrics);
 
    metrics.mr_win_rate_30d = 0.50;
+   metrics.rolling_samples = SLO_DEFAULT_MIN_SAMPLES;
    SLO_CheckAndThrottle(metrics);
 
    ASSERT_TRUE(metrics.warn_only, "warn_only set when win_rate < 0.55");
@@ -269,6 +272,116 @@ bool TestAllocatorMR_RespectsMicroMode()
 }
 
 //+------------------------------------------------------------------+
+//| Test: Adaptive risk disabled keeps baseline risk                 |
+//+------------------------------------------------------------------+
+bool TestAllocatorMR_AdaptiveRiskDisabledBaseline()
+{
+   int f = TestAllocMR_Begin("TestAllocatorMR_AdaptiveRiskDisabledBaseline");
+
+   Config_Test_ClearEnableAdaptiveRiskOverride();
+   Config_Test_ClearAdaptiveRiskBoundsOverride();
+
+   AppContext ctx = MakeAllocatorTestContext();
+   string regime = "";
+   double efficiency = 0.0;
+   double multiplier = 0.0;
+   bool applied = true;
+   double base_risk = Config_GetMRRiskPctDefault();
+   double effective_risk = Allocator_ApplyAdaptiveRiskPct(ctx,
+                                                          "MR",
+                                                          "EURUSD",
+                                                          base_risk,
+                                                          regime,
+                                                          efficiency,
+                                                          multiplier,
+                                                          applied);
+
+   ASSERT_FALSE(applied, "adaptive risk is not applied by default");
+   ASSERT_TRUE(MathAbs(effective_risk - base_risk) < 1e-9,
+               "default-disabled adaptive risk preserves baseline risk");
+
+   return TestAllocMR_End(f);
+}
+
+//+------------------------------------------------------------------+
+//| Test: Adaptive risk enabled remains inside configured clamps     |
+//+------------------------------------------------------------------+
+bool TestAllocatorMR_AdaptiveRiskEnabledRespectsClamp()
+{
+   int f = TestAllocMR_Begin("TestAllocatorMR_AdaptiveRiskEnabledRespectsClamp");
+
+   Config_Test_SetEnableAdaptiveRiskOverride(true, true);
+   Config_Test_SetAdaptiveRiskBoundsOverride(true, 0.90, 1.10);
+   Telemetry_TestReset();
+
+   AppContext ctx = MakeAllocatorTestContext();
+   string regime = "";
+   double efficiency = 0.0;
+   double multiplier = 0.0;
+   bool applied = false;
+   double base_risk = Config_GetMRRiskPctDefault();
+   double effective_risk = Allocator_ApplyAdaptiveRiskPct(ctx,
+                                                          "MR",
+                                                          "EURUSD",
+                                                          base_risk,
+                                                          regime,
+                                                          efficiency,
+                                                          multiplier,
+                                                          applied);
+
+   double min_allowed = base_risk * Config_GetAdaptiveRiskMinMult();
+   double max_allowed = base_risk * Config_GetAdaptiveRiskMaxMult();
+   ASSERT_TRUE(applied, "adaptive risk applies when toggle is enabled");
+   ASSERT_TRUE(effective_risk >= min_allowed - 1e-9 && effective_risk <= max_allowed + 1e-9,
+               "effective risk stays inside configured adaptive clamps");
+
+   Config_Test_ClearEnableAdaptiveRiskOverride();
+   Config_Test_ClearAdaptiveRiskBoundsOverride();
+
+   return TestAllocMR_End(f);
+}
+
+//+------------------------------------------------------------------+
+//| Test: MicroMode overrides adaptive risk scaling                  |
+//+------------------------------------------------------------------+
+bool TestAllocatorMR_AdaptiveRiskMicroModePrecedence()
+{
+   int f = TestAllocMR_Begin("TestAllocatorMR_AdaptiveRiskMicroModePrecedence");
+
+   ChallengeState orig_st = State_Get();
+   ChallengeState st = orig_st;
+   st.micro_mode = true;
+   st.micro_mode_activated_at = TimeCurrent();
+   State_Set(st);
+
+   Config_Test_SetEnableAdaptiveRiskOverride(true, true);
+
+   AppContext ctx = MakeAllocatorTestContext();
+   string regime = "";
+   double efficiency = 0.0;
+   double multiplier = 0.0;
+   bool applied = true;
+   double base_risk = Config_GetMicroRiskPct();
+   double effective_risk = Allocator_ApplyAdaptiveRiskPct(ctx,
+                                                          "MR",
+                                                          "EURUSD",
+                                                          base_risk,
+                                                          regime,
+                                                          efficiency,
+                                                          multiplier,
+                                                          applied);
+
+   ASSERT_FALSE(applied, "adaptive risk skipped when MicroMode is active");
+   ASSERT_TRUE(MathAbs(effective_risk - base_risk) < 1e-9,
+               "MicroMode base risk is preserved");
+
+   Config_Test_ClearEnableAdaptiveRiskOverride();
+   State_Set(orig_st);
+
+   return TestAllocMR_End(f);
+}
+
+//+------------------------------------------------------------------+
 //| Run all tests                                                    |
 //+------------------------------------------------------------------+
 bool TestAllocatorMR_RunAll()
@@ -285,8 +398,11 @@ bool TestAllocatorMR_RunAll()
    bool ok6 = TestAllocatorMR_SLOInit();
    bool ok7 = TestAllocatorMR_SLOBreach();
    bool ok8 = TestAllocatorMR_RespectsMicroMode();
+   bool ok9 = TestAllocatorMR_AdaptiveRiskDisabledBaseline();
+   bool ok10 = TestAllocatorMR_AdaptiveRiskEnabledRespectsClamp();
+   bool ok11 = TestAllocatorMR_AdaptiveRiskMicroModePrecedence();
 
-   return (ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8);
+   return (ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10 && ok11);
 }
 
 #endif // TEST_ALLOCATOR_MR_MQH

@@ -85,6 +85,15 @@ function Find-MT5Terminal {
     throw "MT5 terminal64.exe not found. Set mt5_path in wf_config.json or MT5_PATH env var."
 }
 
+function Stop-MT5Processes {
+    $names = @("terminal64", "metatester64", "metatester")
+    $procs = Get-Process -Name $names -ErrorAction SilentlyContinue
+    if ($procs) {
+        $procs | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+    }
+}
+
 function Read-IniValue {
     param(
         [string]$Path,
@@ -103,6 +112,34 @@ function Read-IniValue {
         }
     }
     return $Default
+}
+
+function Get-ExpectedReportPaths {
+    param(
+        [string]$IniPath,
+        [string]$ProfileRoot,
+        [string]$ReportsDir
+    )
+
+    $paths = New-Object System.Collections.Generic.List[string]
+    $reportValue = Read-IniValue -Path $IniPath -Key "Report" -Default ""
+    if ([string]::IsNullOrWhiteSpace($reportValue)) {
+        return @()
+    }
+
+    $normalized = $reportValue.Trim().Replace("/", "\")
+    if ([System.IO.Path]::IsPathRooted($normalized)) {
+        $paths.Add($normalized)
+    } else {
+        $paths.Add((Join-Path $ProfileRoot $normalized))
+        $leaf = Split-Path $normalized -Leaf
+        if (-not [string]::IsNullOrWhiteSpace($leaf)) {
+            $paths.Add((Join-Path $ReportsDir $leaf))
+            $paths.Add((Join-Path $ProfileRoot $leaf))
+        }
+    }
+
+    return @($paths | Select-Object -Unique)
 }
 
 function Get-OptimizationCriterion {
@@ -576,8 +613,18 @@ function Get-NewReportFile {
     param(
         [string[]]$SearchDirs,
         [string[]]$Patterns,
-        [datetime]$Since
+        [datetime]$Since,
+        [string[]]$ExpectedPaths = @()
     )
+    foreach ($path in $ExpectedPaths) {
+        if (-not $path) { continue }
+        if (-not (Test-Path $path)) { continue }
+        $item = Get-Item $path -ErrorAction SilentlyContinue
+        if ($item -and $item.LastWriteTime -ge $Since) {
+            return $item
+        }
+    }
+
     $candidates = New-Object System.Collections.Generic.List[System.IO.FileInfo]
     foreach ($dir in $SearchDirs) {
         if (-not (Test-Path $dir)) { continue }
@@ -615,24 +662,37 @@ function Invoke-MT5Run {
         [string]$IniPath,
         [string[]]$ReportSearchDirs,
         [string[]]$ReportPatterns,
+        [string[]]$ExpectedReportPaths = @(),
         [int]$TimeoutSeconds
     )
+    Stop-MT5Processes
     $start = Get-Date
     $iniPathArg = "/config:$IniPath"
-    $proc = Start-Process -FilePath $TerminalPath -ArgumentList @("/tester", $iniPathArg) -PassThru
+    # Prefer direct /config launch to match the stable run_tests.ps1 path.
+    $proc = Start-Process -FilePath $TerminalPath -ArgumentList $iniPathArg -PassThru
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 5
-        $report = Get-NewReportFile -SearchDirs $ReportSearchDirs -Patterns $ReportPatterns -Since $start
+        $report = Get-NewReportFile -SearchDirs $ReportSearchDirs -Patterns $ReportPatterns -Since $start -ExpectedPaths $ExpectedReportPaths
         if ($report) {
             return $report.FullName
         }
         if ($proc.HasExited) {
             Start-Sleep -Seconds 2
-            $report = Get-NewReportFile -SearchDirs $ReportSearchDirs -Patterns $ReportPatterns -Since $start
+            $report = Get-NewReportFile -SearchDirs $ReportSearchDirs -Patterns $ReportPatterns -Since $start -ExpectedPaths $ExpectedReportPaths
             if ($report) {
                 return $report.FullName
+            }
+            # When a second terminal instance forwards config to an existing process,
+            # the spawned process exits quickly while testing is still running.
+            $mt5Active = @(Get-Process -Name "terminal64", "metatester64", "metatester" -ErrorAction SilentlyContinue).Count -gt 0
+            if ($mt5Active) {
+                continue
+            }
+            # No MT5 process is alive and no report is present.
+            if (((Get-Date) - $start).TotalSeconds -ge 20) {
+                break
             }
         }
     }
@@ -640,7 +700,8 @@ function Invoke-MT5Run {
     if (-not $proc.HasExited) {
         Stop-Process -Id $proc.Id -Force
     }
-    throw "MT5 run timed out without report: $IniPath"
+    $exitCode = if ($proc.HasExited) { $proc.ExitCode } else { -1 }
+    throw "MT5 run timed out or exited without report (exit=$exitCode): $IniPath"
 }
 
 function Parse-OptimizationReport {
@@ -892,6 +953,7 @@ $runId = Get-ConfigValue -Config $config -Name "run_id" -Default ""
 if ([string]::IsNullOrWhiteSpace($runId)) {
     $runId = Get-Date -Format "yyyyMMdd-HHmmss"
 }
+$safeRunId = ($runId -replace '[^A-Za-z0-9_-]', '_')
 $allowProfileWrite = [bool](Get-ConfigValue -Config $config -Name "allow_profile_write" -Default $true)
 $copySets = [bool](Get-ConfigValue -Config $config -Name "copy_sets" -Default $true)
 $copyNews = [bool](Get-ConfigValue -Config $config -Name "copy_news" -Default $true)
@@ -1033,22 +1095,21 @@ foreach ($symbol in $symbolList) {
         $oosStart = $window.OOSStart.ToString("yyyy.MM.dd")
         $oosEnd = $window.OOSEnd.ToString("yyyy.MM.dd")
 
-        $optIniName = "wf_opt_$($symbol)_$($window.Index).ini"
+        $optIniName = "wf_opt_${safeRunId}_$($symbol)_$($window.Index).ini"
         $optIniPath = Join-Path $configOutputDir $optIniName
         $optSetName = $optimizeSetName
 
-        $optReportName = "wf_opt_${symbol}_$($window.Index).xml"
+        $optReportName = "wf_opt_${safeRunId}_${symbol}_$($window.Index).xml"
         $optUpdates = @{
             Symbol = $symbol
             Period = $period
             FromDate = $isStart
             ToDate = $isEnd
             ExpertParameters = $optSetName
-            Report = (Join-Path "Tester\\reports" $optReportName)
+            Report = $optReportName
         }
         if ($useQuickModel) {
             # Speed up optimization runs while keeping OOS tests on Model=4
-            $optUpdates["Optimization"] = 1
             $optUpdates["Model"] = 1
         }
         if ($optLeverage) {
@@ -1057,6 +1118,7 @@ foreach ($symbol in $symbolList) {
 
         Write-IniFile -BasePath $optIniTemplate -Updates $optUpdates -OutPath $optIniPath
         Ensure-CommonSection -IniPath $optIniPath -CommonIniPath $commonIniPath
+        $optExpectedReports = Get-ExpectedReportPaths -IniPath $optIniPath -ProfileRoot $profileInfo.ProfileRoot -ReportsDir $profileInfo.ReportsDir
 
         if ($DryRun) {
             Write-Host "DryRun: Optimization $symbol $isStart-$isEnd" -ForegroundColor Cyan
@@ -1068,7 +1130,16 @@ foreach ($symbol in $symbolList) {
         $optReport = Invoke-MT5Run -TerminalPath $terminalPath -IniPath $optIniPath `
             -ReportSearchDirs @($profileInfo.ReportsDir, $profileInfo.ProfileRoot) `
             -ReportPatterns @("RPEA*.xml", "report*.xml", "optimization*.xml", "*.xml") `
+            -ExpectedReportPaths $optExpectedReports `
             -TimeoutSeconds $terminalTimeoutSeconds
+        $optReportExt = [System.IO.Path]::GetExtension($optReport)
+        if ([string]::IsNullOrWhiteSpace($optReportExt)) {
+            $optReportExt = ".xml"
+        }
+        $optReportCopyName = "wf_opt_${safeRunId}_${symbol}_$($window.Index)$optReportExt"
+        $optReportCopyPath = Join-Path (Split-Path $outputCsvPath -Parent) $optReportCopyName
+        Copy-Item -Path $optReport -Destination $optReportCopyPath -Force
+        $optReport = $optReportCopyPath
 
         $optRows = Parse-OptimizationReport -XmlPath $optReport
         foreach ($row in $optRows) {
@@ -1149,16 +1220,16 @@ foreach ($symbol in $symbolList) {
             $candidateSetPath = Join-Path $profileInfo.TesterProfiles $candidateSetName
             Write-SetFile -Path $candidateSetPath -Order $defaultSet.Order -Values $candidateValues
 
-            $singleIniName = "wf_single_$($symbol)_$($window.Index)_$rank.ini"
+            $singleIniName = "wf_single_${safeRunId}_$($symbol)_$($window.Index)_$rank.ini"
             $singleIniPath = Join-Path $configOutputDir $singleIniName
-            $singleReportName = "wf_single_${symbol}_$($window.Index)_$rank.xml"
+            $singleReportName = "wf_single_${safeRunId}_${symbol}_$($window.Index)_$rank.xml"
             $singleUpdates = @{
                 Symbol = $symbol
                 Period = $period
                 FromDate = $oosStart
                 ToDate = $oosEnd
                 ExpertParameters = $candidateSetName
-                Report = (Join-Path "Tester\\reports" $singleReportName)
+                Report = $singleReportName
             }
             if ($singleLeverage) {
                 $singleUpdates["Leverage"] = $singleLeverage
@@ -1166,13 +1237,23 @@ foreach ($symbol in $symbolList) {
 
             Write-IniFile -BasePath $singleIniTemplatePath -Updates $singleUpdates -OutPath $singleIniPath
             Ensure-CommonSection -IniPath $singleIniPath -CommonIniPath $commonIniPath
+            $singleExpectedReports = Get-ExpectedReportPaths -IniPath $singleIniPath -ProfileRoot $profileInfo.ProfileRoot -ReportsDir $profileInfo.ReportsDir
 
             # MT5 may generate reports with various names if Report= is not set in .ini
             # Check for common patterns: RPEA*.htm/html/xml, report*.htm/html/xml, or most recent report
             $testReport = Invoke-MT5Run -TerminalPath $terminalPath -IniPath $singleIniPath `
                 -ReportSearchDirs @($profileInfo.ReportsDir, $profileInfo.ProfileRoot) `
                 -ReportPatterns @("RPEA*.htm", "RPEA*.html", "RPEA*.xml", "report*.htm", "report*.html", "report*.xml", "*.htm", "*.html", "*.xml") `
+                -ExpectedReportPaths $singleExpectedReports `
                 -TimeoutSeconds $terminalTimeoutSeconds
+            $singleReportExt = [System.IO.Path]::GetExtension($testReport)
+            if ([string]::IsNullOrWhiteSpace($singleReportExt)) {
+                $singleReportExt = ".xml"
+            }
+            $singleReportCopyName = "wf_single_${safeRunId}_${symbol}_$($window.Index)_$rank$singleReportExt"
+            $singleReportCopyPath = Join-Path (Split-Path $outputCsvPath -Parent) $singleReportCopyName
+            Copy-Item -Path $testReport -Destination $singleReportCopyPath -Force
+            $testReport = $singleReportCopyPath
 
             $metrics = Parse-TestReport -Path $testReport
             $criteria = Compute-PassCriteria -Metrics $metrics -Config $config

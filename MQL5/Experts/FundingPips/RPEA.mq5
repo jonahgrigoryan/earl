@@ -144,6 +144,9 @@ input double MR_EMRTWeight              = 0.60;    // Confidence weight on EMRT 
 input int    EMRT_FastThresholdPct      = 40;
 input double CorrelationFallbackRho     = 0.50;    // Assumed correlation if unknown
 input double MR_RiskPct_Default         = 0.90;
+input bool   EnableAdaptiveRisk         = DEFAULT_EnableAdaptiveRisk;
+input double AdaptiveRiskMinMult        = DEFAULT_AdaptiveRiskMinMult;
+input double AdaptiveRiskMaxMult        = DEFAULT_AdaptiveRiskMaxMult;
 input int    MR_TimeStopMin             = 60;
 input int    MR_TimeStopMax             = 90;
 input bool   MR_LongOnly                = false;
@@ -303,6 +306,10 @@ int OnInit()
    // 5c) Initialize SLO monitoring (M7 Task 08)
    SLO_OnInit();
    Print("[SLO] Metrics initialized (stub defaults)");
+   Telemetry_InitKpis();
+   Print("[Telemetry] KPI metrics initialized");
+   Learning_LoadCalibration();
+   Print("[Learning] Calibration loaded");
 
    // M4-Task01: Initialize News Stabilization
    string news_symbols[];
@@ -550,6 +557,32 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
          string deal_symbol = HistoryDealGetString(trans.deal, DEAL_SYMBOL);
          if(deal_symbol == "") deal_symbol = trans.symbol;
          if(deal_symbol == "") deal_symbol = "XAUUSD";
+         string deal_comment = HistoryDealGetString(trans.deal, DEAL_COMMENT);
+
+         if(OrderEngine_IsOurMagic(deal_magic))
+         {
+            double entry_price = HistoryDealGetDouble(trans.deal, DEAL_PRICE);
+            double entry_volume = HistoryDealGetDouble(trans.deal, DEAL_VOLUME);
+            double sl_price = HistoryDealGetDouble(trans.deal, DEAL_SL);
+            double tp_price = HistoryDealGetDouble(trans.deal, DEAL_TP);
+
+            if(position_id > 0 && PositionSelectByTicket(position_id))
+            {
+               if(sl_price <= 0.0)
+                  sl_price = PositionGetDouble(POSITION_SL);
+               if(tp_price <= 0.0)
+                  tp_price = PositionGetDouble(POSITION_TP);
+            }
+
+            Telemetry_OnPositionEntryDetailed(position_id,
+                                              deal_comment,
+                                              deal_time,
+                                              deal_symbol,
+                                              entry_price,
+                                              sl_price,
+                                              tp_price,
+                                              entry_volume);
+         }
 
          if(M7_ShouldCountEntry(position_id, deal_magic))
          {
@@ -562,6 +595,57 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
             LogDecision("M7", "ENTRY_COUNTED",
                StringFormat("{\"position\":%I64u,\"entries\":%d}",
                   position_id, M7_GetEntriesThisSession(ctx, deal_symbol)));
+         }
+      }
+      else if(entry == DEAL_ENTRY_OUT)
+      {
+         long deal_magic = (long)HistoryDealGetInteger(trans.deal, DEAL_MAGIC);
+         if(OrderEngine_IsOurMagic(deal_magic))
+         {
+            datetime deal_time = (datetime)HistoryDealGetInteger(trans.deal, DEAL_TIME);
+            if(deal_time <= 0)
+               deal_time = TimeCurrent();
+
+            ulong position_id = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
+            string comment = HistoryDealGetString(trans.deal, DEAL_COMMENT);
+            double profit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT);
+            double swap = HistoryDealGetDouble(trans.deal, DEAL_SWAP);
+            double commission = HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
+            double net_outcome = profit + swap + commission;
+
+            bool position_closed = true;
+            if(position_id > 0 && PositionSelectByTicket(position_id))
+            {
+               double remaining_volume = PositionGetDouble(POSITION_VOLUME);
+               position_closed = (remaining_volume <= 1e-8);
+            }
+
+            string telemetry_strategy = "";
+            double telemetry_outcome = 0.0;
+            int telemetry_hold_minutes = 0;
+            double telemetry_friction_r = 0.0;
+            bool telemetry_emitted = Telemetry_OnPositionExitWithTheory(position_id,
+                                                                        comment,
+                                                                        net_outcome,
+                                                                        0.0,
+                                                                        deal_time,
+                                                                        position_closed,
+                                                                        telemetry_strategy,
+                                                                        telemetry_outcome,
+                                                                        telemetry_hold_minutes,
+                                                                        telemetry_friction_r);
+            if(telemetry_emitted)
+            {
+               SLO_OnTradeClosed(trans.deal,
+                                 position_id,
+                                 telemetry_strategy,
+                                 telemetry_outcome,
+                                 telemetry_hold_minutes,
+                                 telemetry_friction_r,
+                                 deal_time);
+               Bandit_RecordTradeOutcome(telemetry_strategy, telemetry_outcome);
+               Learning_Update();
+            }
          }
       }
    }
