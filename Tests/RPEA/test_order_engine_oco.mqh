@@ -148,6 +148,57 @@ bool OCO_RiskReductionResize()
    return (g_test_failed == 0);
 }
 
+bool OCO_DeletesCleanupRelationship()
+{
+   g_current_test = "OCO_DeletesCleanupRelationship";
+   PrintFormat("[TEST START] %s", g_current_test);
+
+   g_order_engine.Init();
+   OE_Test_EnableDecisionCapture();
+   OE_Test_EnableCancelModifyOverride();
+   OE_Test_ForceCancelFail(false);
+
+   const ulong primary = 15001;
+   const ulong sibling = 15002;
+   bool established = g_order_engine.EstablishOCO(primary, sibling, "XAUUSD", 0.10, 0.10, TimeCurrent()+3600);
+   ASSERT_TRUE(established, "EstablishOCO returns true");
+
+   // Simulate broker sending delete for one leg
+   MqlTradeTransaction trans;
+   ZeroMemory(trans);
+   trans.type  = TRADE_TRANSACTION_ORDER_DELETE;
+   trans.order = primary;
+
+   MqlTradeRequest req;
+   MqlTradeResult result;
+   ZeroMemory(req);
+   ZeroMemory(result);
+
+   g_order_engine.OnTradeTxn(trans, req, result);
+
+   bool still_active = g_order_engine.OE_Test_ProcessOCOFill(primary);
+   ASSERT_FALSE(still_active, "Deleted OCO order can no longer be processed");
+
+   // Ensure cleanup event is emitted
+   string event, json;
+   datetime ts;
+   bool found_cleanup = false;
+   const int decisions = OE_Test_GetCapturedDecisionCount();
+   for(int i = 0; i < decisions; ++i)
+   {
+      if(OE_Test_GetCapturedDecision(i, event, json, ts) &&
+         event == "OCO_CLEANUP")
+      {
+         found_cleanup = true;
+         break;
+      }
+   }
+   ASSERT_TRUE(found_cleanup, "OCO_CLEANUP decision captured");
+
+   PrintFormat("[TEST END] %s", g_current_test);
+   return (g_test_failed == 0);
+}
+
 bool TestOrderEngineOCO_RunAll()
 {
    PrintFormat("=================================================================");
@@ -162,8 +213,9 @@ bool TestOrderEngineOCO_RunAll()
    bool t3 = OCO_RiskReductionResize();
    bool t4 = OCO_ReestablishAfterCancel();
    bool t5 = Test_OCO_ExpiryTriggersCancel();
+   bool t6 = OCO_DeletesCleanupRelationship();
 
-   bool all_passed = (t1 && t2 && t3 && t4 && t5 && g_test_failed == 0);
+   bool all_passed = (t1 && t2 && t3 && t4 && t5 && t6 && g_test_failed == 0);
    PrintFormat("Test Summary: %d passed, %d failed", g_test_passed, g_test_failed);
    if(all_passed)
       PrintFormat("OCO tests PASSED");

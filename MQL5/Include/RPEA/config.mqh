@@ -56,8 +56,6 @@
 #define LOG_WARN  2
 #define LOG_ERROR 3
 
-// TODO[M1]: input range validation to be implemented in M6 (see finalspec.md)
-
 //==============================================================================
 // M3 - Order Engine and Synthetic Cross Support Configuration
 //==============================================================================
@@ -1289,20 +1287,5 @@ inline bool Config_GetUseXAUEURProxy()
 }
 
 #endif // __MQL5__
-
-//==============================================================================
-// M3 TODO: Implementation stubs for Order Engine interfaces
-//==============================================================================
-
-// TODO[M3]: Implement OrderEngine class with complete interface (see design.md)
-// TODO[M3]: Implement SyntheticManager class with proxy/replication logic
-// TODO[M3]: Implement RetryManager with MT5 error code mapping
-// TODO[M3]: Implement AtomicOrderManager with counter-order rollback
-// TODO[M3]: Implement PartialFillManager with OCO volume adjustment
-// TODO[M3]: Implement BoundedQueueManager with news window queuing
-// TODO[M3]: Implement BudgetGateManager with position snapshot locking
-// TODO[M3]: Implement NewsCSVParser with schema validation
-// TODO[M3]: Implement SyntheticPriceManager with quote staleness detection
-// TODO[M3]: Implement ReplicationMarginCalculator with 20% buffer
 
 #endif // CONFIG_MQH
