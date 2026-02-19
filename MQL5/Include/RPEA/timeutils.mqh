@@ -22,12 +22,6 @@ bool TimeUtils_IsNewServerDay(const datetime dt_prev)
    return (prev_mid != cur_mid);
 }
 
-// Alias stub mirroring prompt naming (no namespaces in MQL5)
-bool IsNewServerDay(datetime previousTimestamp)
-{
-   return TimeUtils_IsNewServerDay(previousTimestamp);
-}
-
 //==============================================================================
 // M4-Task02: Server-Day + CEST Reporting Helpers
 //==============================================================================

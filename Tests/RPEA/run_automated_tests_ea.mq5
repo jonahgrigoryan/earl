@@ -54,6 +54,24 @@ input double RiskGateHeadroom           = 0.90;
 #define MarginLevelCritical    50.0
 #define EnableMarginProtection true
 #define TradingEnabledDefault  true
+// M7-Task04: MR signal inputs (defaults for test runner)
+#define EnableMR              true
+#define MR_RiskPct_Default    0.90
+#define MR_TimeStopMin        60
+#define MR_TimeStopMax        90
+#define MR_LongOnly           false
+#define MR_ConfCut            0.80
+#define MR_EMRTWeight         0.60
+#define EnableAdaptiveRisk    false
+#define AdaptiveRiskMinMult   0.80
+#define AdaptiveRiskMaxMult   1.20
+#define MR_UseLogRatio        true
+#define EMRT_FastThresholdPct 40
+#define EMRT_ExtremeThresholdMult 2.0
+#define EMRT_VarCapMult           2.5
+#define EMRT_BetaGridMin          -2.0
+#define EMRT_BetaGridMax          2.0
+#define UseXAUEURProxy        true
 // M6-Task01: Additional macros for config validation tests
 #define MinTradeDaysRequired   3
 #define MinHoldSeconds         120
@@ -131,6 +149,28 @@ bool g_test_gate_force_fail = false;
 #include "test_persistence_recovery.mqh"
 // M6-Task01: Config Validation tests
 #include "test_config_validation.mqh"
+// M7-Task02: RL agent tests
+#include "test_rl_agent.mqh"
+// M7-Task04: SignalMR tests
+#include "test_signals_mr.mqh"
+// M7-Task05: Meta-Policy tests
+#include "test_meta_policy.mqh"
+// M7-Task06: Regime + Telemetry tests
+#include "test_regime_telemetry.mqh"
+// Post-M7 Task02/03: helper data quality tests
+#include "test_m7_helpers.mqh"
+// Post-M7 Task07/08/09: SLO monitor realism tests
+#include "test_slo_monitor.mqh"
+// Post-M7 Task10/11: adaptive risk tests
+#include "test_adaptive_risk.mqh"
+// Post-M7 Task12/13: learning tests
+#include "test_learning.mqh"
+// Post-M7 Task14/15: bandit tests
+#include "test_bandit.mqh"
+// M7-Task07: Allocator MR integration tests
+#include "test_allocator_mr.mqh"
+// M7-Task08: End-to-End tests
+#include "test_m7_end_to_end.mqh"
 
 // Forward declaration to ensure the breakeven suite is visible when compiling.
 bool TestBreakeven_RunAll();
@@ -147,6 +187,28 @@ bool TestPersistenceState_RunAll();
 bool TestPersistenceRecovery_RunAll();
 // M6-Task01 forward declaration
 bool TestConfigValidation_RunAll();
+// M7-Task02 forward declaration
+bool TestRL_RunAll();
+// M7-Task04 forward declaration
+bool TestSignalsMR_RunAll();
+// M7-Task05 forward declaration
+bool TestMetaPolicy_RunAll();
+// M7-Task06 forward declaration
+bool TestRegimeTelemetry_RunAll();
+// Post-M7 Task02/03 forward declaration
+bool TestM7Helpers_RunAll();
+// Post-M7 Task07/08/09 forward declaration
+bool TestSLOMonitor_RunAll();
+// Post-M7 Task10/11 forward declaration
+bool TestAdaptiveRisk_RunAll();
+// Post-M7 Task12/13 forward declaration
+bool TestLearning_RunAll();
+// Post-M7 Task14/15 forward declaration
+bool TestBandit_RunAll();
+// M7-Task07 forward declaration
+bool TestAllocatorMR_RunAll();
+// M7-Task08 forward declaration
+bool TestM7EndToEnd_RunAll();
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -524,6 +586,116 @@ void RunAllTests()
    g_test_reporter.RecordTest(suiteM6a, "TestConfigValidation_RunAll", taskM6a_result,
                                taskM6a_result ? "Config validation tests passed" : "Config validation tests failed");
    g_test_reporter.EndSuite(suiteM6a);
+
+   // M7-Task02: RL Agent Tests
+   Print("=================================================================");
+   Print("M7-Task02: RL Agent Tests");
+   Print("=================================================================");
+   int suiteM7a = g_test_reporter.BeginSuite("M7Task02_RL_Agent");
+   bool taskM7a_result = TestRL_RunAll();
+   g_test_reporter.RecordTest(suiteM7a, "TestRL_RunAll", taskM7a_result,
+                               taskM7a_result ? "RL agent tests passed" : "RL agent tests failed");
+   g_test_reporter.EndSuite(suiteM7a);
+
+   // M7-Task04: SignalMR Tests
+   Print("=================================================================");
+   Print("M7-Task04: SignalMR Tests");
+   Print("=================================================================");
+   int suiteM7b = g_test_reporter.BeginSuite("M7Task04_SignalMR");
+   bool taskM7b_result = TestSignalsMR_RunAll();
+   g_test_reporter.RecordTest(suiteM7b, "TestSignalsMR_RunAll", taskM7b_result,
+                               taskM7b_result ? "SignalMR tests passed" : "SignalMR tests failed");
+   g_test_reporter.EndSuite(suiteM7b);
+
+   // M7-Task05: Meta-Policy Tests
+   Print("=================================================================");
+   Print("M7-Task05: Meta-Policy Tests");
+   Print("=================================================================");
+   int suiteM7c = g_test_reporter.BeginSuite("M7Task05_MetaPolicy");
+   bool taskM7c_result = TestMetaPolicy_RunAll();
+   g_test_reporter.RecordTest(suiteM7c, "TestMetaPolicy_RunAll", taskM7c_result,
+                               taskM7c_result ? "Meta-policy tests passed" : "Meta-policy tests failed");
+   g_test_reporter.EndSuite(suiteM7c);
+
+   // M7-Task06: Regime + Telemetry Tests
+   Print("=================================================================");
+   Print("M7-Task06: Regime + Telemetry Tests");
+   Print("=================================================================");
+   int suiteM7d = g_test_reporter.BeginSuite("M7Task06_RegimeTelemetry");
+   bool taskM7d_result = TestRegimeTelemetry_RunAll();
+   g_test_reporter.RecordTest(suiteM7d, "TestRegimeTelemetry_RunAll", taskM7d_result,
+                               taskM7d_result ? "Regime + telemetry tests passed" : "Regime + telemetry tests failed");
+   g_test_reporter.EndSuite(suiteM7d);
+
+   // Post-M7 Task02/03: M7 helper data quality tests
+   Print("=================================================================");
+   Print("Post-M7 Task02/03: M7 Helpers Tests");
+   Print("=================================================================");
+   int suiteP7a = g_test_reporter.BeginSuite("PostM7Task02_03_M7Helpers");
+   bool taskP7a_result = TestM7Helpers_RunAll();
+   g_test_reporter.RecordTest(suiteP7a, "TestM7Helpers_RunAll", taskP7a_result,
+                              taskP7a_result ? "M7 helpers tests passed" : "M7 helpers tests failed");
+   g_test_reporter.EndSuite(suiteP7a);
+
+   // Post-M7 Task07/08/09: SLO monitor tests
+   Print("=================================================================");
+   Print("Post-M7 Task07/08/09: SLO Monitor Tests");
+   Print("=================================================================");
+   int suiteP7b = g_test_reporter.BeginSuite("PostM7Task07_09_SLOMonitor");
+   bool taskP7b_result = TestSLOMonitor_RunAll();
+   g_test_reporter.RecordTest(suiteP7b, "TestSLOMonitor_RunAll", taskP7b_result,
+                              taskP7b_result ? "SLO monitor tests passed" : "SLO monitor tests failed");
+   g_test_reporter.EndSuite(suiteP7b);
+
+   // Post-M7 Task10/11: Adaptive risk tests
+   Print("=================================================================");
+   Print("Post-M7 Task10/11: Adaptive Risk Tests");
+   Print("=================================================================");
+   int suiteP7c = g_test_reporter.BeginSuite("PostM7Task10_11_AdaptiveRisk");
+   bool taskP7c_result = TestAdaptiveRisk_RunAll();
+   g_test_reporter.RecordTest(suiteP7c, "TestAdaptiveRisk_RunAll", taskP7c_result,
+                              taskP7c_result ? "Adaptive risk tests passed" : "Adaptive risk tests failed");
+   g_test_reporter.EndSuite(suiteP7c);
+
+   // Post-M7 Task12/13: Learning tests
+   Print("=================================================================");
+   Print("Post-M7 Task12/13: Learning Tests");
+   Print("=================================================================");
+   int suiteP7d = g_test_reporter.BeginSuite("PostM7Task12_13_Learning");
+   bool taskP7d_result = TestLearning_RunAll();
+   g_test_reporter.RecordTest(suiteP7d, "TestLearning_RunAll", taskP7d_result,
+                              taskP7d_result ? "Learning tests passed" : "Learning tests failed");
+   g_test_reporter.EndSuite(suiteP7d);
+
+   // Post-M7 Task14/15: Bandit tests
+   Print("=================================================================");
+   Print("Post-M7 Task14/15: Bandit Tests");
+   Print("=================================================================");
+   int suiteP7e = g_test_reporter.BeginSuite("PostM7Task14_15_Bandit");
+   bool taskP7e_result = TestBandit_RunAll();
+   g_test_reporter.RecordTest(suiteP7e, "TestBandit_RunAll", taskP7e_result,
+                              taskP7e_result ? "Bandit tests passed" : "Bandit tests failed");
+   g_test_reporter.EndSuite(suiteP7e);
+
+   // M7-Task07: Allocator MR Integration Tests
+   Print("=================================================================");
+   Print("M7-Task07: Allocator MR Integration Tests");
+   Print("=================================================================");
+   int suiteM7e = g_test_reporter.BeginSuite("M7Task07_AllocatorMR");
+   bool taskM7e_result = TestAllocatorMR_RunAll();
+   g_test_reporter.RecordTest(suiteM7e, "TestAllocatorMR_RunAll", taskM7e_result,
+                               taskM7e_result ? "Allocator MR tests passed" : "Allocator MR tests failed");
+   g_test_reporter.EndSuite(suiteM7e);
+
+   // M7-Task08: End-to-End Tests
+   Print("=================================================================");
+   Print("M7-Task08: End-to-End Tests");
+   Print("=================================================================");
+   int suiteM7f = g_test_reporter.BeginSuite("M7Task08_EndToEnd");
+   bool taskM7f_result = TestM7EndToEnd_RunAll();
+   g_test_reporter.RecordTest(suiteM7f, "TestM7EndToEnd_RunAll", taskM7f_result,
+                              taskM7f_result ? "E2E tests passed" : "E2E tests failed");
+   g_test_reporter.EndSuite(suiteM7f);
 
    Print("Test execution complete.");
 }

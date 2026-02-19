@@ -42,7 +42,7 @@ hive-mind-prompt-*.txt
 # Local automation and helper artifacts (not part of M3 deliverables)
 #CLAUDE.md
 claude-flow.cmd
-docs/
+parallel-review-guide.md
 mt5_test_config.ini
 #run_tests.ps1
 scripts/
@@ -61,3 +61,5 @@ compile_and_test.bat
 verify_compilation.ps1
 knowledge.md
 IMPLEMENTATION_SUMMARY.md
+
+.worktrees

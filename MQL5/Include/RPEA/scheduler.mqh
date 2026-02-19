@@ -4,8 +4,83 @@
 #define SCHEDULER_MQH
 
 #include <RPEA/config.mqh>
+#include <RPEA/order_engine.mqh>
+#include <RPEA/slo_monitor.mqh>
 
 struct AppContext;
+extern OrderEngine g_order_engine;
+
+//+------------------------------------------------------------------+
+//| MR position detection (Task 08)                                  |
+//+------------------------------------------------------------------+
+bool Scheduler_IsMRPosition(const ulong ticket)
+{
+   if(ticket == 0 || !PositionSelectByTicket(ticket))
+      return false;
+
+   // Stage 1: Cheap integer check - is this our EA's position?
+   long magic = PositionGetInteger(POSITION_MAGIC);
+   if(!OrderEngine_IsOurMagic(magic))
+      return false;
+
+   // Stage 2: Comment substring match.
+   // Handles: "MR-MR b=...", "PX MR-MR b=...", truncated at 31 chars.
+   string comment = PositionGetString(POSITION_COMMENT);
+   return (StringFind(comment, "MR-MR") >= 0);
+}
+
+//+------------------------------------------------------------------+
+//| MR time stop enforcement (Task 08)                               |
+//| Closes MR positions exceeding MR_TimeStopMin / MR_TimeStopMax.   |
+//| Uses PositionGetInteger(POSITION_TIME) for elapsed calculation.  |
+//| Anti-spam: checks Queue_FindIndexByTicketAction before re-queue. |
+//| Closes via OrderEngine_RequestProtectiveClose (existing path).   |
+//+------------------------------------------------------------------+
+void Scheduler_CheckMRTimeStops(const datetime server_time)
+{
+   int min_seconds = Config_GetMRTimeStopMin() * 60;
+   int max_seconds = Config_GetMRTimeStopMax() * 60;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+      if(!Scheduler_IsMRPosition(ticket))
+         continue;
+
+      datetime open_time = (datetime)PositionGetInteger(POSITION_TIME);
+      if(open_time <= 0)
+         continue;
+
+      int elapsed = (int)(server_time - open_time);
+      if(elapsed < min_seconds)
+         continue;
+
+      // Anti-spam: skip if close already queued for this ticket.
+      if(Queue_FindIndexByTicketAction((long)ticket, QA_CLOSE) >= 0)
+         continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      string reason = (elapsed >= max_seconds)
+                      ? "mr_timestop_max_force"
+                      : "mr_timestop_min";
+      bool closed = OrderEngine_RequestProtectiveClose(symbol, (long)ticket, reason);
+
+      string fields = StringFormat(
+         "{\"ticket\":%llu,\"symbol\":\"%s\",\"elapsed_sec\":%d,"
+         "\"min_threshold\":%d,\"max_threshold\":%d,"
+         "\"reason\":\"%s\",\"close_requested\":%s}",
+         ticket,
+         symbol,
+         elapsed,
+         min_seconds,
+         max_seconds,
+         reason,
+         closed ? "true" : "false");
+      LogDecision("Scheduler", "MR_TIMESTOP", fields);
+   }
+}
 
 //------------------------------------------------------------------------------
 // M6-Task04: Performance Profiling State (module-scoped)
@@ -34,7 +109,7 @@ void Scheduler_ReportPerfStats()
    g_sched_perf.max_us = 0;
 }
 
-// Main tick orchestrator (logging-only in M1)
+// Main tick orchestrator
 void Scheduler_Tick(const AppContext& ctx)
 {
    // M6-Task04: Start profiling measurement (zero overhead when disabled)
@@ -74,6 +149,9 @@ void Scheduler_Tick(const AppContext& ctx)
       double spread_val = 0.0;
       double spread_thresh = 0.0;
       bool spread_ok = Liquidity_SpreadOK(sym, spread_val, spread_thresh);
+      double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+      double spread_pts = (point > 0.0 ? spread_val / point : (double)SymbolInfoInteger(sym, SYMBOL_SPREAD));
+      Liquidity_UpdateStats(sym, spread_pts, -1.0);
 
       // Session predicates (London/NY OR) and OR window
       bool in_london = Sessions_InLondon(ctx, sym);
@@ -95,7 +173,7 @@ void Scheduler_Tick(const AppContext& ctx)
          continue;
       }
 
-      // 3) Signal proposals (stubs return none)
+      // 3) Signal proposals (if no signal available, booleans remain false)
       bool bw_has=false, mr_has=false; string bw_setup="None", mr_setup="None";
       int bw_sl=0,bw_tp=0,mr_sl=0,mr_tp=0; double bw_bias=0,bw_conf=0,mr_bias=0,mr_conf=0;
 
@@ -103,18 +181,88 @@ void Scheduler_Tick(const AppContext& ctx)
       SignalsMR_Propose(ctx, sym, mr_has, mr_setup, mr_sl, mr_tp, mr_bias, mr_conf);
 
       // 4) Meta-policy
-      string choice = MetaPolicy_Choose(bw_has, bw_conf, mr_has, mr_conf);
+      string choice = MetaPolicy_Choose(ctx, sym, bw_has, bw_conf, mr_has, mr_conf);
 
-      // 5) Allocator plan (no-op)
+      if(choice == "Skip")
+      {
+         string skip_fields = StringFormat("{\"symbol\":\"%s\",\"choice\":\"%s\",\"bw_conf\":%.2f,\"mr_conf\":%.2f,\"reason\":\"policy_skip\"}",
+                                           sym,
+                                           choice,
+                                           bw_conf,
+                                           mr_conf);
+         LogDecision("Scheduler", "EVAL", skip_fields);
+         continue;
+      }
+
+      // 5) Build allocator plan and execute through order engine
       int slPoints = (choice=="BWISC")?bw_sl:mr_sl;
       int tpPoints = (choice=="BWISC")?bw_tp:mr_tp;
       double conf  = (choice=="BWISC")?bw_conf:mr_conf;
       OrderPlan plan = Allocator_BuildOrderPlan(ctx, choice, sym, slPoints, tpPoints, conf);
 
-      // 6) Log decision only
-      string fields = StringFormat("{\"symbol\":\"%s\",\"choice\":\"%s\",\"bw_conf\":%.2f,\"mr_conf\":%.2f}", sym, choice, bw_conf, mr_conf);
-      LogDecision("Scheduler", "EVAL", fields);
+      if(!plan.valid)
+      {
+         string reject_fields = StringFormat("{\"symbol\":\"%s\",\"choice\":\"%s\",\"bw_conf\":%.2f,\"mr_conf\":%.2f,\"reason\":\"%s\"}",
+                                             sym,
+                                             choice,
+                                             bw_conf,
+                                             mr_conf,
+                                             plan.rejection_reason);
+         LogDecision("Scheduler", "PLAN_REJECT", reject_fields);
+         LogDecision("Scheduler", "EVAL", reject_fields);
+         continue;
+      }
+
+      OrderRequest request;
+      ZeroMemory(request);
+      request.symbol = plan.symbol;
+      request.type = plan.order_type;
+      request.volume = plan.volume;
+      request.price = plan.price;
+      request.sl = plan.sl;
+      request.tp = plan.tp;
+      request.magic = plan.magic;
+      request.comment = plan.comment;
+      request.is_oco_primary = false;
+      request.oco_sibling_ticket = 0;
+      request.expiry = 0;
+      request.signal_symbol = plan.signal_symbol;
+      request.is_protective = false;
+      request.is_proxy = plan.is_proxy;
+      request.proxy_rate = plan.proxy_rate;
+      request.proxy_context = plan.proxy_context;
+
+      OrderResult result = g_order_engine.PlaceOrder(request);
+
+      string eval_fields = StringFormat("{\"symbol\":\"%s\",\"choice\":\"%s\",\"setup\":\"%s\",\"bw_conf\":%.2f,\"mr_conf\":%.2f,\"plan_valid\":true,\"order_sent\":%s}",
+                                        sym,
+                                        choice,
+                                        plan.setup_type,
+                                        bw_conf,
+                                        mr_conf,
+                                        result.success ? "true" : "false");
+      LogDecision("Scheduler", "EVAL", eval_fields);
+
+      string place_err = result.error_message;
+      StringReplace(place_err, "\"", "'");
+      string place_fields = StringFormat("{\"symbol\":\"%s\",\"choice\":\"%s\",\"setup\":\"%s\",\"ticket\":%llu,\"retcode\":%d,\"error\":\"%s\"}",
+                                         sym,
+                                         choice,
+                                         plan.setup_type,
+                                         result.ticket,
+                                         result.last_retcode,
+                                         place_err);
+      if(result.success)
+         LogDecision("Scheduler", "PLACE_OK", place_fields);
+      else
+         LogDecision("Scheduler", "PLACE_FAIL", place_fields);
    }
+
+   // MR time stop enforcement (scan all open positions).
+   Scheduler_CheckMRTimeStops(ctx.current_server_time);
+
+   // SLO periodic check (self-throttles to once per minute).
+   SLO_PeriodicCheck(ctx.current_server_time);
 
    // Heartbeat audit
    LogAuditRow("SCHED_TICK", "Scheduler", 1, "heartbeat", "{}");

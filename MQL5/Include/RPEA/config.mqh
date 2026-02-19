@@ -56,8 +56,6 @@
 #define LOG_WARN  2
 #define LOG_ERROR 3
 
-// TODO[M1]: input range validation to be implemented in M6 (see finalspec.md)
-
 //==============================================================================
 // M3 - Order Engine and Synthetic Cross Support Configuration
 //==============================================================================
@@ -99,6 +97,11 @@
 #define DEFAULT_MarginBufferPct              0.20
 #define DEFAULT_ProxyRiskMultiplier          1.0
 #define DEFAULT_EnableReplicationFallback    true
+
+// Adaptive Risk Configuration (Post-M7 Phase 3)
+#define DEFAULT_EnableAdaptiveRisk           false
+#define DEFAULT_AdaptiveRiskMinMult          0.80
+#define DEFAULT_AdaptiveRiskMaxMult          1.20
 
 // News and Queue Configuration
 #define DEFAULT_NewsCSVPath                  "RPEA/news/calendar_high_impact.csv"
@@ -154,6 +157,57 @@
 #endif
 #ifndef DEFAULT_ServerToCEST_OffsetMinutes
 #define DEFAULT_ServerToCEST_OffsetMinutes   0
+#endif
+
+//------------------------------------------------------------------------------
+// M7-Task08: EnableMR test override for BWISC-only regression tests
+//------------------------------------------------------------------------------
+#ifdef RPEA_TEST_RUNNER
+bool   g_test_enable_mr_override_active = false;
+bool   g_test_enable_mr_override_value = true;
+bool   g_test_enable_adaptive_override_active = false;
+bool   g_test_enable_adaptive_override_value = DEFAULT_EnableAdaptiveRisk;
+bool   g_test_adaptive_bounds_override_active = false;
+double g_test_adaptive_min_mult_override = DEFAULT_AdaptiveRiskMinMult;
+double g_test_adaptive_max_mult_override = DEFAULT_AdaptiveRiskMaxMult;
+
+void Config_Test_SetEnableMROverride(bool active, bool value)
+{
+   g_test_enable_mr_override_active = active;
+   g_test_enable_mr_override_value = value;
+}
+
+void Config_Test_ClearEnableMROverride()
+{
+   g_test_enable_mr_override_active = false;
+}
+
+void Config_Test_SetEnableAdaptiveRiskOverride(bool active, bool value)
+{
+   g_test_enable_adaptive_override_active = active;
+   g_test_enable_adaptive_override_value = value;
+}
+
+void Config_Test_ClearEnableAdaptiveRiskOverride()
+{
+   g_test_enable_adaptive_override_active = false;
+}
+
+void Config_Test_SetAdaptiveRiskBoundsOverride(bool active,
+                                               double min_multiplier,
+                                               double max_multiplier)
+{
+   g_test_adaptive_bounds_override_active = active;
+   g_test_adaptive_min_mult_override = min_multiplier;
+   g_test_adaptive_max_mult_override = max_multiplier;
+}
+
+void Config_Test_ClearAdaptiveRiskBoundsOverride()
+{
+   g_test_adaptive_bounds_override_active = false;
+   g_test_adaptive_min_mult_override = DEFAULT_AdaptiveRiskMinMult;
+   g_test_adaptive_max_mult_override = DEFAULT_AdaptiveRiskMaxMult;
+}
 #endif
 //------------------------------------------------------------------------------
 // Task 17 Resilience Config Helpers
@@ -994,21 +1048,244 @@ inline bool Config_ValidateInputs()
 }
 #endif // !RPEA_TEST_RUNNER
 
+//------------------------------------------------------------------------------
+// M7-Phase0: MR/Ensemble Config Getters
+//------------------------------------------------------------------------------
+
+inline bool Config_GetEnableMR()
+{
+#ifdef RPEA_TEST_RUNNER
+   if(g_test_enable_mr_override_active)
+      return g_test_enable_mr_override_value;
+   #ifdef EnableMR
+      return EnableMR;
+   #else
+      return true; // default enabled
+   #endif
+#else
+   return EnableMR;
+#endif
+}
+
+inline bool Config_GetUseBanditMetaPolicy()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef UseBanditMetaPolicy
+      return UseBanditMetaPolicy;
+   #else
+      return true; // default enabled
+   #endif
+#else
+   return UseBanditMetaPolicy;
+#endif
+}
+
+inline bool Config_GetBanditShadowMode()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef BanditShadowMode
+      return BanditShadowMode;
+   #else
+      return true; // default enabled (shadow mode on per workflow)
+   #endif
+#else
+   return BanditShadowMode;
+#endif
+}
+
+inline double Config_ClampAdaptiveRiskMultiplier(const double value, const double fallback)
+{
+   if(!MathIsValidNumber(value) || value <= 0.0)
+      return fallback;
+
+   double clamped = value;
+   if(clamped < 0.25)
+      clamped = 0.25;
+   if(clamped > 2.50)
+      clamped = 2.50;
+   return clamped;
+}
+
+inline bool Config_GetEnableAdaptiveRisk()
+{
+#ifdef RPEA_TEST_RUNNER
+   if(g_test_enable_adaptive_override_active)
+      return g_test_enable_adaptive_override_value;
+   #ifdef EnableAdaptiveRisk
+      return EnableAdaptiveRisk;
+   #else
+      return DEFAULT_EnableAdaptiveRisk;
+   #endif
+#else
+   return EnableAdaptiveRisk;
+#endif
+}
+
+inline double Config_GetAdaptiveRiskMinMult()
+{
+#ifdef RPEA_TEST_RUNNER
+   if(g_test_adaptive_bounds_override_active)
+      return Config_ClampAdaptiveRiskMultiplier(g_test_adaptive_min_mult_override,
+                                                DEFAULT_AdaptiveRiskMinMult);
+   #ifdef AdaptiveRiskMinMult
+      return Config_ClampAdaptiveRiskMultiplier(AdaptiveRiskMinMult,
+                                                DEFAULT_AdaptiveRiskMinMult);
+   #else
+      return DEFAULT_AdaptiveRiskMinMult;
+   #endif
+#else
+   return Config_ClampAdaptiveRiskMultiplier(AdaptiveRiskMinMult,
+                                             DEFAULT_AdaptiveRiskMinMult);
+#endif
+}
+
+inline double Config_GetAdaptiveRiskMaxMult()
+{
+#ifdef RPEA_TEST_RUNNER
+   double configured_max = 0.0;
+   if(g_test_adaptive_bounds_override_active)
+      configured_max = g_test_adaptive_max_mult_override;
+   else
+   {
+      #ifdef AdaptiveRiskMaxMult
+         configured_max = AdaptiveRiskMaxMult;
+      #else
+         configured_max = DEFAULT_AdaptiveRiskMaxMult;
+      #endif
+   }
+#else
+   double configured_max = AdaptiveRiskMaxMult;
+#endif
+
+   double min_mult = Config_GetAdaptiveRiskMinMult();
+   double max_mult = Config_ClampAdaptiveRiskMultiplier(configured_max,
+                                                        DEFAULT_AdaptiveRiskMaxMult);
+   if(max_mult < min_mult)
+      max_mult = min_mult;
+   return max_mult;
+}
+
+inline double Config_GetBWISCConfCut()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef BWISC_ConfCut
+      return BWISC_ConfCut;
+   #else
+      return 0.70; // default
+   #endif
+#else
+   return BWISC_ConfCut;
+#endif
+}
+
+inline double Config_GetMRConfCut()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef MR_ConfCut
+      return MR_ConfCut;
+   #else
+      return 0.80; // default
+   #endif
+#else
+   return MR_ConfCut;
+#endif
+}
+
+inline int Config_GetEMRTFastThresholdPct()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef EMRT_FastThresholdPct
+      return EMRT_FastThresholdPct;
+   #else
+      return 40; // default
+   #endif
+#else
+   return EMRT_FastThresholdPct;
+#endif
+}
+
+inline double Config_GetCorrelationFallbackRho()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef CorrelationFallbackRho
+      return CorrelationFallbackRho;
+   #else
+      return 0.50; // default per workflow
+   #endif
+#else
+   return CorrelationFallbackRho;
+#endif
+}
+
+inline double Config_GetMRRiskPctDefault()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef MR_RiskPct_Default
+      double val = MR_RiskPct_Default;
+   #else
+      double val = 0.90;
+   #endif
+#else
+   double val = MR_RiskPct_Default;
+#endif
+   // Clamp to [0.8, 1.0] per finalspec
+   if(val < 0.8) return 0.8;
+   if(val > 1.0) return 1.0;
+   return val;
+}
+
+inline int Config_GetMRTimeStopMin()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef MR_TimeStopMin
+      return MR_TimeStopMin;
+   #else
+      return 60; // default
+   #endif
+#else
+   return MR_TimeStopMin;
+#endif
+}
+
+inline int Config_GetMRTimeStopMax()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef MR_TimeStopMax
+      return MR_TimeStopMax;
+   #else
+      return 90; // default
+   #endif
+#else
+   return MR_TimeStopMax;
+#endif
+}
+
+inline bool Config_GetMRLongOnly()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef MR_LongOnly
+      return MR_LongOnly;
+   #else
+      return false; // default
+   #endif
+#else
+   return MR_LongOnly;
+#endif
+}
+
+inline bool Config_GetUseXAUEURProxy()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef UseXAUEURProxy
+      return UseXAUEURProxy;
+   #else
+      return true; // default
+   #endif
+#else
+   return UseXAUEURProxy;
+#endif
+}
+
 #endif // __MQL5__
-
-//==============================================================================
-// M3 TODO: Implementation stubs for Order Engine interfaces
-//==============================================================================
-
-// TODO[M3]: Implement OrderEngine class with complete interface (see design.md)
-// TODO[M3]: Implement SyntheticManager class with proxy/replication logic
-// TODO[M3]: Implement RetryManager with MT5 error code mapping
-// TODO[M3]: Implement AtomicOrderManager with counter-order rollback
-// TODO[M3]: Implement PartialFillManager with OCO volume adjustment
-// TODO[M3]: Implement BoundedQueueManager with news window queuing
-// TODO[M3]: Implement BudgetGateManager with position snapshot locking
-// TODO[M3]: Implement NewsCSVParser with schema validation
-// TODO[M3]: Implement SyntheticPriceManager with quote staleness detection
-// TODO[M3]: Implement ReplicationMarginCalculator with 20% buffer
 
 #endif // CONFIG_MQH
