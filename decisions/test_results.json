@@ -1,0 +1,731 @@
+{
+  "timestamp": "2024-01-02T00:00:00Z",
+  "total_suites": 40,
+  "total_tests": 40,
+  "total_passed": 40,
+  "total_failed": 0,
+  "success": true,
+  "suites": [
+    {
+      "name": "Task1_OrderEngine_Scaffolding",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestOrderEngine_RunAll",
+          "passed": true,
+          "message": "All scaffolding tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task2_Idempotency_System",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestOrderEngineIntent_RunAll",
+          "passed": true,
+          "message": "All intent journal tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task3_Volume_Price_Normalization",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestOrderEngineNormalization_RunAll",
+          "passed": true,
+          "message": "All normalization tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task4_Order_Placement_Limits",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestOrderEngineLimits_RunAll",
+          "passed": true,
+          "message": "All position limit tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task5_Retry_Policy_System",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestOrderEngineRetry_RunAll",
+          "passed": true,
+          "message": "All retry policy tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task6_Market_Fallback_Slippage",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestOrderEngineMarket_RunAll",
+          "passed": true,
+          "message": "All market fallback tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task7_OCO_Relationship_Management",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestOrderEngineOCO_RunAll",
+          "passed": true,
+          "message": "All OCO tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task8_Partial_Fill_Handler",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestOrderEnginePartialFills_RunAll",
+          "passed": true,
+          "message": "All partial fill tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task9_Budget_Gate_Snapshot_Locking",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestOrderEngineBudgetGate_RunAll",
+          "passed": true,
+          "message": "All budget gate tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task10_News_CSV_Fallback",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestNewsCsvFallback_RunAll",
+          "passed": true,
+          "message": "News CSV fallback tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task11_Synthetic_Manager",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestSyntheticManager_RunAll",
+          "passed": true,
+          "message": "Synthetic manager tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task12_Queue_Manager",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestQueueManager_RunAll",
+          "passed": true,
+          "message": "Queue manager tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task13_Trailing_Manager",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestTrailing_RunAll",
+          "passed": true,
+          "message": "Trailing manager tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task14_Audit_Logger",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestLogging_RunAll",
+          "passed": true,
+          "message": "Audit logger tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task15_Risk_XAUEUR",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestIntegration_RunAll",
+          "passed": true,
+          "message": "Integration tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task16_State_Recovery",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestRecovery_RunAll",
+          "passed": true,
+          "message": "State recovery tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task17_Error_Handling",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestOrderEngineErrors_RunAll",
+          "passed": true,
+          "message": "Error handling tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task21_Risk_Sizing",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestRiskSizing_RunAll",
+          "passed": true,
+          "message": "All risk sizing tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task22_Liquidity_Filter",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestLiquidity_RunAll",
+          "passed": true,
+          "message": "Liquidity filter tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task23_Breakeven_Manager",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestBreakeven_RunAll",
+          "passed": true,
+          "message": "Breakeven tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "Task24_Pending_Expiry",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestOrderEnginePendingExpiry_RunAll",
+          "passed": true,
+          "message": "Pending expiry tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "M4Task02_Day_Tracking",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestDayTracking_RunAll",
+          "passed": true,
+          "message": "Day tracking tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "M4Task02_MicroMode_HardStop",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestMicroMode_RunAll",
+          "passed": true,
+          "message": "Micro-Mode tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "M4Task01_News_Policy",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestNewsPolicy_RunAll",
+          "passed": true,
+          "message": "News Policy tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "M4Task03_KillSwitch",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestKillswitch_RunAll",
+          "passed": true,
+          "message": "Kill-switch tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "M4Task03_Protective_Exits",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestProtectiveExits_RunAll",
+          "passed": true,
+          "message": "Protective exit tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "M4Task04_Persistence_State",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestPersistenceState_RunAll",
+          "passed": true,
+          "message": "Persistence state tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "M4Task04_Persistence_Recovery",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestPersistenceRecovery_RunAll",
+          "passed": true,
+          "message": "Persistence recovery tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "M6Task01_Config_Validation",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestConfigValidation_RunAll",
+          "passed": true,
+          "message": "Config validation tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "M7Task02_RL_Agent",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestRL_RunAll",
+          "passed": true,
+          "message": "RL agent tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "M7Task04_SignalMR",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestSignalsMR_RunAll",
+          "passed": true,
+          "message": "SignalMR tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "M7Task05_MetaPolicy",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestMetaPolicy_RunAll",
+          "passed": true,
+          "message": "Meta-policy tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "M7Task06_RegimeTelemetry",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestRegimeTelemetry_RunAll",
+          "passed": true,
+          "message": "Regime + telemetry tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "PostM7Task02_03_M7Helpers",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestM7Helpers_RunAll",
+          "passed": true,
+          "message": "M7 helpers tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "PostM7Task07_09_SLOMonitor",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestSLOMonitor_RunAll",
+          "passed": true,
+          "message": "SLO monitor tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "PostM7Task10_11_AdaptiveRisk",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestAdaptiveRisk_RunAll",
+          "passed": true,
+          "message": "Adaptive risk tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "PostM7Task12_13_Learning",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestLearning_RunAll",
+          "passed": true,
+          "message": "Learning tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "PostM7Task14_15_Bandit",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestBandit_RunAll",
+          "passed": true,
+          "message": "Bandit tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "M7Task07_AllocatorMR",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestAllocatorMR_RunAll",
+          "passed": true,
+          "message": "Allocator MR tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    },
+    {
+      "name": "M7Task08_EndToEnd",
+      "total_tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "start_time": "2024-01-02T00:00:00Z",
+      "end_time": "2024-01-02T00:00:00Z",
+      "duration_ms": 0.00,
+      "tests": [
+        {
+          "name": "TestM7EndToEnd_RunAll",
+          "passed": true,
+          "message": "E2E tests passed",
+          "timestamp": "2024-01-02T00:00:00Z",
+          "execution_time_ms": 0.00
+        }
+      ]
+    }
+  ]
+}
+
