@@ -103,6 +103,13 @@
 #define DEFAULT_AdaptiveRiskMinMult          0.80
 #define DEFAULT_AdaptiveRiskMaxMult          1.20
 
+// Anomaly detector configuration (post-release shock detector rollout)
+#define DEFAULT_EnableAnomalyDetector        true
+#define DEFAULT_AnomalyShadowMode            true
+#define DEFAULT_AnomalyShockSigmaThreshold   5.5
+#define DEFAULT_AnomalyEWMAAlpha             0.20
+#define DEFAULT_AnomalyMinSamples            20
+
 // News and Queue Configuration
 #define DEFAULT_NewsCSVPath                  "RPEA/news/calendar_high_impact.csv"
 #define DEFAULT_NewsCSVMaxAgeHours           24
@@ -170,6 +177,12 @@ bool   g_test_enable_adaptive_override_value = DEFAULT_EnableAdaptiveRisk;
 bool   g_test_adaptive_bounds_override_active = false;
 double g_test_adaptive_min_mult_override = DEFAULT_AdaptiveRiskMinMult;
 double g_test_adaptive_max_mult_override = DEFAULT_AdaptiveRiskMaxMult;
+bool   g_test_enable_anomaly_override_active = false;
+bool   g_test_enable_anomaly_override_value = DEFAULT_EnableAnomalyDetector;
+bool   g_test_anomaly_shadow_override_active = false;
+bool   g_test_anomaly_shadow_override_value = DEFAULT_AnomalyShadowMode;
+bool   g_test_anomaly_sigma_override_active = false;
+double g_test_anomaly_sigma_override_value = DEFAULT_AnomalyShockSigmaThreshold;
 
 void Config_Test_SetEnableMROverride(bool active, bool value)
 {
@@ -207,6 +220,40 @@ void Config_Test_ClearAdaptiveRiskBoundsOverride()
    g_test_adaptive_bounds_override_active = false;
    g_test_adaptive_min_mult_override = DEFAULT_AdaptiveRiskMinMult;
    g_test_adaptive_max_mult_override = DEFAULT_AdaptiveRiskMaxMult;
+}
+
+void Config_Test_SetEnableAnomalyOverride(bool active, bool value)
+{
+   g_test_enable_anomaly_override_active = active;
+   g_test_enable_anomaly_override_value = value;
+}
+
+void Config_Test_ClearEnableAnomalyOverride()
+{
+   g_test_enable_anomaly_override_active = false;
+}
+
+void Config_Test_SetAnomalyShadowModeOverride(bool active, bool value)
+{
+   g_test_anomaly_shadow_override_active = active;
+   g_test_anomaly_shadow_override_value = value;
+}
+
+void Config_Test_ClearAnomalyShadowModeOverride()
+{
+   g_test_anomaly_shadow_override_active = false;
+}
+
+void Config_Test_SetAnomalySigmaOverride(bool active, double value)
+{
+   g_test_anomaly_sigma_override_active = active;
+   g_test_anomaly_sigma_override_value = value;
+}
+
+void Config_Test_ClearAnomalySigmaOverride()
+{
+   g_test_anomaly_sigma_override_active = false;
+   g_test_anomaly_sigma_override_value = DEFAULT_AnomalyShockSigmaThreshold;
 }
 #endif
 //------------------------------------------------------------------------------
@@ -1017,6 +1064,27 @@ inline bool Config_ValidateInputs()
       Config_LogClampInt("MaxSpreadPoints", MaxSpreadPoints, 0);
    if(!MathIsValidNumber(SpreadMultATR) || SpreadMultATR <= 0.0)
       Config_LogClampDouble("SpreadMultATR", SpreadMultATR, DEFAULT_SpreadMultATR);
+   if(!MathIsValidNumber(AnomalyShockSigmaThreshold) ||
+      AnomalyShockSigmaThreshold < 2.0 ||
+      AnomalyShockSigmaThreshold > 12.0)
+      Config_LogClampDouble("AnomalyShockSigmaThreshold",
+                            AnomalyShockSigmaThreshold,
+                            DEFAULT_AnomalyShockSigmaThreshold);
+   if(!MathIsValidNumber(AnomalyEWMAAlpha) ||
+      AnomalyEWMAAlpha <= 0.0 ||
+      AnomalyEWMAAlpha > 1.0)
+      Config_LogClampDouble("AnomalyEWMAAlpha",
+                            AnomalyEWMAAlpha,
+                            DEFAULT_AnomalyEWMAAlpha);
+   if(AnomalyMinSamples < 1 || AnomalyMinSamples > 5000)
+   {
+      int clamped_samples = AnomalyMinSamples;
+      if(clamped_samples < 1)
+         clamped_samples = 1;
+      if(clamped_samples > 5000)
+         clamped_samples = 5000;
+      Config_LogClampInt("AnomalyMinSamples", AnomalyMinSamples, clamped_samples);
+   }
    
    // Queue/logging >= 1
    if(MaxQueueSize < 1)
@@ -1090,6 +1158,124 @@ inline bool Config_GetBanditShadowMode()
    #endif
 #else
    return BanditShadowMode;
+#endif
+}
+
+inline double Config_ClampAnomalySigmaThreshold(const double value, const double fallback)
+{
+   if(!MathIsValidNumber(value))
+      return fallback;
+
+   double clamped = value;
+   if(clamped < 2.0)
+      clamped = 2.0;
+   if(clamped > 12.0)
+      clamped = 12.0;
+   return clamped;
+}
+
+inline double Config_ClampAnomalyEWMAAlpha(const double value, const double fallback)
+{
+   if(!MathIsValidNumber(value) || value <= 0.0)
+      return fallback;
+
+   double clamped = value;
+   if(clamped < 0.01)
+      clamped = 0.01;
+   if(clamped > 1.0)
+      clamped = 1.0;
+   return clamped;
+}
+
+inline int Config_ClampAnomalyMinSamples(const int value)
+{
+   int clamped = value;
+   if(clamped < 1)
+      clamped = 1;
+   if(clamped > 5000)
+      clamped = 5000;
+   return clamped;
+}
+
+inline bool Config_GetEnableAnomalyDetector()
+{
+#ifdef RPEA_TEST_RUNNER
+   if(g_test_enable_anomaly_override_active)
+      return g_test_enable_anomaly_override_value;
+   #ifdef EnableAnomalyDetector
+      return EnableAnomalyDetector;
+   #else
+      return DEFAULT_EnableAnomalyDetector;
+   #endif
+#else
+   return EnableAnomalyDetector;
+#endif
+}
+
+inline bool Config_GetAnomalyShadowMode()
+{
+#ifdef RPEA_TEST_RUNNER
+   if(g_test_anomaly_shadow_override_active)
+      return g_test_anomaly_shadow_override_value;
+   #ifdef AnomalyShadowMode
+      return AnomalyShadowMode;
+   #else
+      return DEFAULT_AnomalyShadowMode;
+   #endif
+#else
+   return AnomalyShadowMode;
+#endif
+}
+
+inline double Config_GetAnomalyShockSigmaThreshold()
+{
+#ifdef RPEA_TEST_RUNNER
+   if(g_test_anomaly_sigma_override_active)
+      return Config_ClampAnomalySigmaThreshold(g_test_anomaly_sigma_override_value,
+                                               DEFAULT_AnomalyShockSigmaThreshold);
+   #ifdef AnomalyShockSigmaThreshold
+      return Config_ClampAnomalySigmaThreshold(AnomalyShockSigmaThreshold,
+                                               DEFAULT_AnomalyShockSigmaThreshold);
+   #else
+      return DEFAULT_AnomalyShockSigmaThreshold;
+   #endif
+#else
+   return Config_ClampAnomalySigmaThreshold(AnomalyShockSigmaThreshold,
+                                            DEFAULT_AnomalyShockSigmaThreshold);
+#endif
+}
+
+inline double Config_GetAnomalyEWMAAlpha()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef AnomalyEWMAAlpha
+      return Config_ClampAnomalyEWMAAlpha(AnomalyEWMAAlpha, DEFAULT_AnomalyEWMAAlpha);
+   #else
+      return DEFAULT_AnomalyEWMAAlpha;
+   #endif
+#else
+   #ifdef AnomalyEWMAAlpha
+      return Config_ClampAnomalyEWMAAlpha(AnomalyEWMAAlpha, DEFAULT_AnomalyEWMAAlpha);
+   #else
+      return DEFAULT_AnomalyEWMAAlpha;
+   #endif
+#endif
+}
+
+inline int Config_GetAnomalyMinSamples()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef AnomalyMinSamples
+      return Config_ClampAnomalyMinSamples(AnomalyMinSamples);
+   #else
+      return DEFAULT_AnomalyMinSamples;
+   #endif
+#else
+   #ifdef AnomalyMinSamples
+      return Config_ClampAnomalyMinSamples(AnomalyMinSamples);
+   #else
+      return DEFAULT_AnomalyMinSamples;
+   #endif
 #endif
 }
 

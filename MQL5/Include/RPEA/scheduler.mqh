@@ -3,9 +3,11 @@
 #ifndef SCHEDULER_MQH
 #define SCHEDULER_MQH
 
+#include <RPEA/anomaly.mqh>
 #include <RPEA/config.mqh>
 #include <RPEA/order_engine.mqh>
 #include <RPEA/slo_monitor.mqh>
+#include <RPEA/symbol_bridge.mqh>
 
 struct AppContext;
 extern OrderEngine g_order_engine;
@@ -80,6 +82,70 @@ void Scheduler_CheckMRTimeStops(const datetime server_time)
          closed ? "true" : "false");
       LogDecision("Scheduler", "MR_TIMESTOP", fields);
    }
+}
+
+int Scheduler_AnomalyCancelPendingsForSymbol(const string symbol, const string reason)
+{
+   int cancelled = 0;
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0)
+         continue;
+
+      string order_symbol = OrderGetString(ORDER_SYMBOL);
+      if(StringCompare(order_symbol, symbol) != 0)
+         continue;
+
+      int type = (int)OrderGetInteger(ORDER_TYPE);
+      if(!Equity_IsPendingOrderType(type))
+         continue;
+
+      long magic = OrderGetInteger(ORDER_MAGIC);
+      if(!OrderEngine_IsOurMagic(magic))
+         continue;
+
+      if(OE_RequestCancel(ticket, reason))
+         cancelled++;
+   }
+   return cancelled;
+}
+
+int Scheduler_AnomalyFlattenPositionsForSymbol(const string symbol, const string reason)
+{
+   int closed = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+
+      string position_symbol = PositionGetString(POSITION_SYMBOL);
+      if(StringCompare(position_symbol, symbol) != 0)
+         continue;
+
+      long magic = PositionGetInteger(POSITION_MAGIC);
+      if(!OrderEngine_IsOurMagic(magic))
+         continue;
+
+      if(OrderEngine_RequestProtectiveClose(symbol, (long)ticket, reason))
+         closed++;
+   }
+   return closed;
+}
+
+bool Scheduler_AnomalyActionHasExecutionHandler(const AnomalyAction action)
+{
+   return (action == ANOMALY_ACTION_CANCEL || action == ANOMALY_ACTION_FLATTEN);
+}
+
+bool Scheduler_AnomalyShouldBlockEntries(const bool active_mode,
+                                         const bool shock,
+                                         const AnomalyAction action)
+{
+   if(!active_mode || !shock)
+      return false;
+   return Scheduler_AnomalyActionHasExecutionHandler(action);
 }
 
 //------------------------------------------------------------------------------
@@ -159,15 +225,91 @@ void Scheduler_Tick(const AppContext& ctx)
       bool in_session = (in_london || in_ny) && !Sessions_CutoffReached(ctx, sym);
       bool in_or = Sessions_InORWindow(ctx, sym);
 
-      string note = StringFormat("{\"news\":%s,\"spread_ok\":%s,\"spread\":%.5f,\"spread_thresh\":%.5f,\"in_session\":%s,\"in_or\":%s}",
+      AnomalySnapshot anomaly_snapshot;
+      bool anomaly_eval_ok = Anomaly_EvaluateSymbol(sym, anomaly_snapshot);
+      string anomaly_action = Anomaly_ActionToString(anomaly_snapshot.action);
+      string anomaly_reason = anomaly_snapshot.reason;
+      StringReplace(anomaly_reason, "\"", "'");
+      string anomaly_fields = StringFormat(
+         "{\"symbol\":\"%s\",\"eval_ok\":%s,\"valid\":%s,\"shock\":%s,"
+         "\"score_sigma\":%.4f,\"threshold_sigma\":%.4f,"
+         "\"return_z\":%.4f,\"spread_z\":%.4f,\"tick_gap_z\":%.4f,"
+         "\"samples\":%d,\"reason\":\"%s\"}",
+         sym,
+         anomaly_eval_ok ? "true" : "false",
+         anomaly_snapshot.valid_input ? "true" : "false",
+         anomaly_snapshot.shock ? "true" : "false",
+         anomaly_snapshot.score_sigma,
+         anomaly_snapshot.threshold_sigma,
+         anomaly_snapshot.return_z,
+         anomaly_snapshot.spread_z,
+         anomaly_snapshot.tick_gap_z,
+         anomaly_snapshot.sample_count,
+         anomaly_reason);
+      LogDecision("Scheduler", "ANOMALY_EVAL", anomaly_fields);
+
+      bool anomaly_blocks_entries = false;
+      if(anomaly_eval_ok &&
+         anomaly_snapshot.valid_input &&
+         anomaly_snapshot.shock &&
+         anomaly_snapshot.action != ANOMALY_ACTION_NONE)
+      {
+         bool active_mode = Anomaly_ShouldRunActiveMode();
+         bool handler_available = Scheduler_AnomalyActionHasExecutionHandler(anomaly_snapshot.action);
+         bool action_executed = false;
+         string mode_label = active_mode ? "active" : "shadow";
+         string execution_symbol = SymbolBridge_GetExecutionSymbol(sym);
+         int cancelled = 0;
+         int flattened = 0;
+         string op_reason = StringFormat("anomaly_%s", anomaly_action);
+
+         anomaly_blocks_entries = Scheduler_AnomalyShouldBlockEntries(active_mode,
+                                                                      anomaly_snapshot.shock,
+                                                                      anomaly_snapshot.action);
+         if(active_mode && handler_available)
+         {
+            action_executed = true;
+            if(anomaly_snapshot.action == ANOMALY_ACTION_CANCEL)
+            {
+               cancelled = Scheduler_AnomalyCancelPendingsForSymbol(execution_symbol, op_reason);
+            }
+            else if(anomaly_snapshot.action == ANOMALY_ACTION_FLATTEN)
+            {
+               cancelled = Scheduler_AnomalyCancelPendingsForSymbol(execution_symbol, op_reason);
+               flattened = Scheduler_AnomalyFlattenPositionsForSymbol(execution_symbol, op_reason);
+            }
+         }
+
+         string action_fields = StringFormat(
+            "{\"symbol\":\"%s\",\"execution_symbol\":\"%s\",\"mode\":\"%s\","
+            "\"action\":\"%s\",\"score_sigma\":%.4f,\"threshold_sigma\":%.4f,"
+            "\"entries_blocked\":%s,\"handler_available\":%s,\"executed\":%s,"
+            "\"cancelled\":%d,\"flattened\":%d}",
+            sym,
+            execution_symbol,
+            mode_label,
+            anomaly_action,
+            anomaly_snapshot.score_sigma,
+            anomaly_snapshot.threshold_sigma,
+            anomaly_blocks_entries ? "true" : "false",
+            handler_available ? "true" : "false",
+            action_executed ? "true" : "false",
+            cancelled,
+            flattened);
+         LogDecision("Scheduler", active_mode ? "ANOMALY_ACTION" : "ANOMALY_SHADOW", action_fields);
+      }
+
+      string note = StringFormat("{\"news\":%s,\"spread_ok\":%s,\"spread\":%.5f,\"spread_thresh\":%.5f,\"in_session\":%s,\"in_or\":%s,\"anomaly_block\":%s,\"anomaly_action\":\"%s\"}",
                                  news_blocked?"true":"false",
                                  spread_ok?"true":"false",
                                  spread_val,
                                  spread_thresh,
                                  in_session?"true":"false",
-                                 in_or?"true":"false");
+                                 in_or?"true":"false",
+                                 anomaly_blocks_entries?"true":"false",
+                                 anomaly_action);
 
-      if(!floors_ok || news_blocked || !spread_ok || !in_session)
+      if(!floors_ok || news_blocked || !spread_ok || !in_session || anomaly_blocks_entries)
       {
          LogDecision("Scheduler", "GATED", note);
          continue;

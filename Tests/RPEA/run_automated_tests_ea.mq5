@@ -72,6 +72,11 @@ input double RiskGateHeadroom           = 0.90;
 #define EMRT_BetaGridMin          -2.0
 #define EMRT_BetaGridMax          2.0
 #define UseXAUEURProxy        true
+#define EnableAnomalyDetector true
+#define AnomalyShadowMode     true
+#define AnomalyShockSigmaThreshold 5.5
+#define AnomalyEWMAAlpha      0.20
+#define AnomalyMinSamples     20
 // M6-Task01: Additional macros for config validation tests
 #define MinTradeDaysRequired   3
 #define MinHoldSeconds         120
@@ -171,6 +176,8 @@ bool g_test_gate_force_fail = false;
 #include "test_allocator_mr.mqh"
 // M7-Task08: End-to-End tests
 #include "test_m7_end_to_end.mqh"
+// Post-release anomaly shock detector tests
+#include "test_anomaly.mqh"
 
 // Forward declaration to ensure the breakeven suite is visible when compiling.
 bool TestBreakeven_RunAll();
@@ -209,6 +216,8 @@ bool TestBandit_RunAll();
 bool TestAllocatorMR_RunAll();
 // M7-Task08 forward declaration
 bool TestM7EndToEnd_RunAll();
+// Post-release anomaly detector forward declaration
+bool TestAnomaly_RunAll();
 
 #ifndef EQUITY_GUARDIAN_MQH
 // Mock functions for testing (only when equity guardian not included)
@@ -696,6 +705,16 @@ void RunAllTests()
    g_test_reporter.RecordTest(suiteM7f, "TestM7EndToEnd_RunAll", taskM7f_result,
                               taskM7f_result ? "E2E tests passed" : "E2E tests failed");
    g_test_reporter.EndSuite(suiteM7f);
+
+   // Post-release anomaly detector tests
+   Print("=================================================================");
+   Print("Post-release: Anomaly Shock Detector Tests");
+   Print("=================================================================");
+   int suiteP7f = g_test_reporter.BeginSuite("PostRelease_AnomalyShockNow");
+   bool taskP7f_result = TestAnomaly_RunAll();
+   g_test_reporter.RecordTest(suiteP7f, "TestAnomaly_RunAll", taskP7f_result,
+                              taskP7f_result ? "Anomaly detector tests passed" : "Anomaly detector tests failed");
+   g_test_reporter.EndSuite(suiteP7f);
 
    Print("Test execution complete.");
 }

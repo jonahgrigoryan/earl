@@ -16,7 +16,7 @@ alwaysApply: true
 > that changed, and the **Recent Changes** list at the bottom of this section.
 > This keeps future agents current without a full codebase scan.
 
-**Last Updated**: M7 RC cleanup and execution-hardening update complete (2026-02-16). M7 milestone complete; post-M7 closeout artifacts generated.
+**Last Updated**: Post-release anomaly shock-detector follow-up fixes complete (2026-02-23). Widen semantics, runtime tuning, and scheduler-policy tests are now aligned for staged rollout.
 
 ### Module Inventory
 
@@ -30,11 +30,12 @@ avoid unintended coupling.
 | `persistence.mqh` | ~2020 | Support | File-backed state recovery, intent queue, challenge state persistence. |
 | `equity_guardian.mqh` | ~1350 | Risk | Baseline tracking, daily/overall floors, kill-switch, MicroMode activation (+10% target), giveback protection. |
 | `queue.mqh` | ~1250 | Execution | Action queueing during news windows, TTL expiry, post-news revalidation. |
-| `config.mqh` | ~1291 | Support | EA inputs, validation, clamping. Includes test overrides and runtime getters for adaptive-risk toggles/bounds (`EnableAdaptiveRisk`, min/max multipliers). |
+| `config.mqh` | ~1340 | Support | EA inputs, validation, clamping. Includes test overrides/runtime getters for adaptive-risk and anomaly rollout/tuning inputs (`EnableAnomalyDetector`, `AnomalyShadowMode`, sigma, EWMA alpha, min-samples). |
 | `news.mqh` | ~875 | Support | Calendar API + CSV fallback, T +/-300s window, `News_IsEntryBlocked`, `News_GetWindowStateDetailed`. |
 | `synthetic.mqh` | ~650 | Execution | XAUEUR proxy/replication manager (XAUUSD-only or two-leg XAUUSD+EURUSD). |
 | `allocator.mqh` | ~675 | Risk | Builds `OrderPlan` for **BWISC + MR**, strategy-specific risk sizing, adaptive-risk multiplier integration behind runtime toggle, proxy-distance mapping guard for MR, budget gate, and strategy-tagged comments. |
 | `sessions.mqh` | ~445 | Support | Session windows (LO, NY), OR snapshot. |
+| `anomaly.mqh` | ~370 | Risk | EWMA shock detector on returns/spread/tick-gap with guardrails, deterministic scoring, and staged action recommendation (`widen`/`cancel`/`flatten`) for safe rollout. |
 | `logging.mqh` | ~415 | Support | CSV audit rows (`LogAuditRow`), structured `LogDecision`. |
 | `indicators.mqh` | ~403 | Support | Indicator snapshots (ATR, MA, Bollinger, etc.). |
 | `emrt.mqh` | ~377 | M7 Ensemble | EMRT formation (rank, P50, beta). Used by MR signals. |
@@ -50,7 +51,7 @@ avoid unintended coupling.
 | `liquidity.mqh` | ~220 | Support | Rolling spread/slippage stats, quantile getters, `Liquidity_SpreadOK`, plus test-only state reset helper (`Liquidity_TestResetState`) for suite isolation. |
 | `risk.mqh` | ~192 | Risk | `Risk_SizingByATRDistanceForSymbol`, `Risk_GetEffectiveRiskPct` (handles MicroMode). |
 | `m7_helpers.mqh` | ~497 | M7 Ensemble | Wrapper functions (ATR, spread, session helpers) plus rolling spread buffer + full ATR percentile helpers used by policy/regime paths. |
-| `scheduler.mqh` | ~291 | Orchestration | Main tick handler. Calls signals -> meta-policy -> allocator -> order engine, with `PLAN_REJECT`/`PLACE_OK`/`PLACE_FAIL` telemetry. Includes MR time-stop enforcement + SLO periodic checks. |
+| `scheduler.mqh` | ~380 | Orchestration | Main tick handler. Evaluates anomaly detector per symbol, logs detect/no-detect + staged action telemetry, and only hard-blocks entries for active-mode actions with handlers (`cancel`/`flatten`); `widen` stays non-blocking until explicit implementation. Includes MR time-stop enforcement + SLO periodic checks. |
 | `symbol_bridge.mqh` | ~85 | Support | XAUEUR -> XAUUSD mapping. `SymbolBridge_GetExecutionSymbol()`. |
 | `regime.mqh` | ~95 | M7 Ensemble | Regime detection (trending/ranging/volatile). ADX + ATR percentile. |
 | `telemetry.mqh` | ~743 | Support | Rolling KPI state/update pipeline + `LogMetaPolicyDecision`; includes position-level close tracking to avoid partial-close overcount, robust strategy attribution fallback, hold-minute capture, canonical friction tax in R-units using entry-side risk basis capture + final-close aggregation (`Telemetry_OnPositionExitWithTheory`), and bandit shadow delta telemetry (`Telemetry_LogBanditShadowDelta`). |
@@ -81,12 +82,14 @@ avoid unintended coupling.
 
 ```
 scheduler.mqh tick loop:
-  1. Gate checks (floors, news, spread, session)
-  2. SignalsBWISC_Propose() -> populates g_last_bwisc_context
-  3. SignalsMR_Propose()    -> populates output params + g_last_mr_context
-  4. MetaPolicy_Choose()    -> returns "BWISC" | "MR" | "Skip"
-  5. Allocator_BuildOrderPlan(strategy, symbol, sl, tp, conf) -> OrderPlan
-  6. If plan.valid -> OrderEngine places order (execution enabled)
+  1. Floors/room checks
+  2. Per-symbol anomaly evaluation (`ANOMALY_EVAL`) with staged action (`ANOMALY_SHADOW`/`ANOMALY_ACTION`)
+  3. Core gates (news, spread, session, anomaly active-mode block)
+  4. SignalsBWISC_Propose() -> populates g_last_bwisc_context
+  5. SignalsMR_Propose()    -> populates output params + g_last_mr_context
+  6. MetaPolicy_Choose()    -> returns "BWISC" | "MR" | "Skip"
+  7. Allocator_BuildOrderPlan(strategy, symbol, sl, tp, conf) -> OrderPlan
+  8. If plan.valid -> OrderEngine places order (execution enabled)
 ```
 
 **MicroMode Integration**:
@@ -114,6 +117,8 @@ g_last_bwisc_context.entry_price = ask; // or bid based on direction
 
 Update this list when completing a task. Helps agents understand what just changed.
 
+- **Post-release anomaly rollout follow-up (2026-02-23)**: Corrected scheduler active-mode semantics so `ANOMALY_ACTION_WIDEN` no longer hard-blocks entries (only `cancel`/`flatten` block and execute), added scheduler anomaly policy helpers + deterministic scheduler-level anomaly semantics assertions in `test_anomaly.mqh`, exposed runtime-configurable anomaly tuning (`AnomalyEWMAAlpha`, `AnomalyMinSamples`) via `RPEA.mq5` + `config.mqh` getters/validation, and reverted adaptive-risk EA input defaults to `DEFAULT_AdaptiveRiskMinMult`/`DEFAULT_AdaptiveRiskMaxMult`. Validation: EA compile `0 errors, 2 warnings`; test-runner compile `0 errors, 2 warnings`; automated suites `41/41` passing (`success=true`, `total_failed=0`).
+- **Post-release anomaly shock rollout (2026-02-23)**: Implemented full `Anomaly_IsShockNow` engine in `anomaly.mqh` (EWMA z-scores for returns/spread/tick-gap, invalid/insufficient-sample guardrails, deterministic action selection), wired scheduler anomaly evaluation + safe shadow/active staging in `scheduler.mqh` (`ANOMALY_EVAL`, `ANOMALY_SHADOW`, `ANOMALY_ACTION` logs), added anomaly rollout inputs/getters/overrides in `config.mqh` + `RPEA.mq5`, and introduced deterministic suite `test_anomaly.mqh` registered as `PostRelease_AnomalyShockNow` in `run_automated_tests_ea.mq5`. Validation: EA compile `0 errors, 2 warnings`; test-runner compile `0 errors, 2 warnings`; automated suites `41/41` passing (`success=true`, `total_failed=0`).
 - **M7 RC cleanup hardening (2026-02-16)**: Implemented OCO relationship cleanup on `TRADE_TRANSACTION_ORDER_DELETE` in `order_engine.mqh` (`OCO_CLEANUP` decision log + pending-link cleanup), added retry-capable wrappers for cancel/modify operations (`OE_RequestCancelWithRetry`, `OE_RequestModifyWithRetry`) and routed existing helpers through those paths. Removed stale dead stubs/comments in `config.mqh`, `timeutils.mqh`, and `regime.mqh`, and refreshed regression coverage in `test_order_engine_oco.mqh` (ORDER_DELETE cleanup case) and `test_order_engine_retry.mqh` (cancel/modify retry behavior). Validation: EA compile `0 errors, 5 warnings`; test-runner compile `0 errors, 2 warnings`; automated suites `40/40` passing.
 - **Post-M7 Phase 5 walk-forward hardening (2026-02-15)**: Resolved Task16 report-generation reliability in `scripts/walk_forward.ps1` by enforcing clean MT5 process ownership per run, adding expected report resolution, and writing deterministic copied report artifacts into `post_m7` output. Re-ran full Task16 family configs (`confidence`, `liquidity`, `time_stop`, `adaptive`) with real execution and refreshed `step4_tuning_report.json` + `task16_walkforward_summary.json` from generated CSV/report artifacts. Final Task16 state is no longer blocked (`full_walkforward_report_generation=completed`), with explicit outcome `completed_no_eligible_candidates` for selected windows.
 - **Post-M7 Phase 5 complete (2026-02-15)**: Executed tasks 16-17 on `feat/m7-postfix-phase5-tuning-closeout`: finalized `TODO[M7*]` closure by implementing deterministic `Telemetry_AutoThrottle()` final hook in `telemetry.mqh` (no placeholder markers remain), added reproducible tuning artifacts (`step4_tuning_report.json`, `task16_walkforward_summary.json`, family config/set snapshots + dry-run logs), and produced final closeout bundle (`todo_scan_post.txt` empty, `final_summary.json`). Final gates: EA compile `0 errors, 5 warnings`; test-runner compile `0 errors, 6 warnings`; automated suites `40/40` passing including `M7Task07_AllocatorMR`, `M7Task08_EndToEnd`, and post-M7 suites.
