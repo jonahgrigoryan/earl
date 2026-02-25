@@ -196,3 +196,42 @@ Update this list when completing a task. Helps agents understand what just chang
 - Use `rg` for search and keep edits ASCII unless the file already uses other encodings.
 - Validate queueing, synthetic pricing, and risk behaviors against `.kiro/specs/rpea-m3/{tasks.md, design.md, requirements.md}` whenever updating those systems.
 - Git Status Commands: When checking git status for task work, use PowerShell in the repo root (not WSL) and run `git status --short` (without filtering) to see all changes including both untracked (`??`) and modified (`M`) files. This ensures you see both new untracked task files (e.g., `m6-task01.md`) and any files modified during the current work session (e.g., `AGENTS.md`). When reporting or focusing, prioritize untracked milestone task markdown files (`m[0-9]-task*.md`), but do not filter out modified files entirely as they may include important changes made during the task. To see only untracked task files, use `git status --short | Select-String \"^\\?\\?.*m[0-9]-task\"`.
+
+## Cursor Cloud specific instructions
+
+### Platform Constraint
+
+This is a **pure MQL5 project** targeting MetaTrader 5 on Windows. The MQL5 compiler (`metaeditor64.exe`), Strategy Tester, and MT5 terminal are all Windows-only binaries with no Linux-native equivalents. **Compilation, automated testing, and EA execution are not possible on a Linux cloud VM.**
+
+### What Cloud Agents Can Do
+
+- **Code review and editing**: All `.mq5`/`.mqh` source files are plain text; editing, searching (`rg`), and reviewing diffs works normally.
+- **Structural validation**: Verify module inventory against the AGENTS.md table, check include guards, confirm test files are registered in `Tests/RPEA/run_automated_tests_ea.mq5`, and validate bracket balance.
+- **Documentation and task tracking**: Update `AGENTS.md`, task docs, and markdown files.
+- **Git operations**: Branching, committing, pushing, and PR management work normally.
+
+### What Cloud Agents Cannot Do
+
+- **Compile** MQL5 (requires `metaeditor64.exe` — Windows only).
+- **Run tests** (the 40+ test suites execute inside MT5 Strategy Tester — Windows only).
+- **Run the EA** (requires MT5 terminal attached to a broker — Windows only).
+- **Run PowerShell build scripts** (`run_tests.ps1`, `SyncRepoToTerminal.ps1`) — they reference Windows-specific MT5 data folder paths.
+
+### Recommended Cloud Agent Workflow
+
+1. Make code changes following the style/patterns in the existing AGENTS.md sections.
+2. Run structural checks: verify include guards, bracket balance, module inventory, and test registration.
+3. Commit and push to the appropriate branch.
+4. Defer compilation and test execution to the user's Windows/MT5 environment.
+
+### Key File Locations (for reference on Linux)
+
+| Purpose | Path |
+|---------|------|
+| EA entry point | `MQL5/Experts/FundingPips/RPEA.mq5` |
+| Core modules | `MQL5/Include/RPEA/*.mqh` (36 files) |
+| Test suites | `Tests/RPEA/test_*.mqh` (41 files) |
+| Test runner | `Tests/RPEA/run_automated_tests_ea.mq5` |
+| News CSV (prod) | `Files/RPEA/news/calendar_high_impact.csv` |
+| News CSV fixtures | `Tests/RPEA/fixtures/news/` |
+| Build/test scripts | `*.ps1` (root) and `scripts/*.ps1` |
