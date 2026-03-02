@@ -56,6 +56,7 @@ input double RiskGateHeadroom           = 0.90;
 #define TradingEnabledDefault  true
 // M7-Task04: MR signal inputs (defaults for test runner)
 #define EnableMR              true
+#define EnableMRBypassOnRLUnloaded false
 #define MR_RiskPct_Default    0.90
 #define MR_TimeStopMin        60
 #define MR_TimeStopMax        90

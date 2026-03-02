@@ -251,9 +251,10 @@ void Persistence_EnsurePlaceholderFiles()
          FileWrite(h, "[]");
       FileClose(h);
    }
-   // EMRT, Q-table, bandit, liquidity, calibration
+   // EMRT, bandit, liquidity, calibration.
+   // NOTE: FILE_QTABLE_BIN is binary and must not be initialized as text.
    string files_to_touch[] = {
-      FILE_EMRT_CACHE, FILE_EMRT_BETA_GRID, FILE_QTABLE_BIN,
+      FILE_EMRT_CACHE, FILE_EMRT_BETA_GRID,
       FILE_BANDIT_POSTERIOR, FILE_LIQUIDITY_STATS, FILE_CALIBRATION,
       FILE_AUDIT_REPORT
    };

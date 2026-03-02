@@ -110,6 +110,9 @@
 #define DEFAULT_AnomalyEWMAAlpha             0.20
 #define DEFAULT_AnomalyMinSamples            20
 
+// MR diagnostics configuration
+#define DEFAULT_EnableMRBypassOnRLUnloaded   false
+
 // News and Queue Configuration
 #define DEFAULT_NewsCSVPath                  "RPEA/news/calendar_high_impact.csv"
 #define DEFAULT_NewsCSVMaxAgeHours           24
@@ -172,6 +175,8 @@
 #ifdef RPEA_TEST_RUNNER
 bool   g_test_enable_mr_override_active = false;
 bool   g_test_enable_mr_override_value = true;
+bool   g_test_enable_mr_rl_bypass_override_active = false;
+bool   g_test_enable_mr_rl_bypass_override_value = DEFAULT_EnableMRBypassOnRLUnloaded;
 bool   g_test_enable_adaptive_override_active = false;
 bool   g_test_enable_adaptive_override_value = DEFAULT_EnableAdaptiveRisk;
 bool   g_test_adaptive_bounds_override_active = false;
@@ -193,6 +198,17 @@ void Config_Test_SetEnableMROverride(bool active, bool value)
 void Config_Test_ClearEnableMROverride()
 {
    g_test_enable_mr_override_active = false;
+}
+
+void Config_Test_SetEnableMRBypassOnRLUnloadedOverride(bool active, bool value)
+{
+   g_test_enable_mr_rl_bypass_override_active = active;
+   g_test_enable_mr_rl_bypass_override_value = value;
+}
+
+void Config_Test_ClearEnableMRBypassOnRLUnloadedOverride()
+{
+   g_test_enable_mr_rl_bypass_override_active = false;
 }
 
 void Config_Test_SetEnableAdaptiveRiskOverride(bool active, bool value)
@@ -1132,6 +1148,21 @@ inline bool Config_GetEnableMR()
    #endif
 #else
    return EnableMR;
+#endif
+}
+
+inline bool Config_GetEnableMRBypassOnRLUnloaded()
+{
+#ifdef RPEA_TEST_RUNNER
+   if(g_test_enable_mr_rl_bypass_override_active)
+      return g_test_enable_mr_rl_bypass_override_value;
+   #ifdef EnableMRBypassOnRLUnloaded
+      return EnableMRBypassOnRLUnloaded;
+   #else
+      return DEFAULT_EnableMRBypassOnRLUnloaded;
+   #endif
+#else
+   return EnableMRBypassOnRLUnloaded;
 #endif
 }
 

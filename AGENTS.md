@@ -16,7 +16,7 @@ alwaysApply: true
 > that changed, and the **Recent Changes** list at the bottom of this section.
 > This keeps future agents current without a full codebase scan.
 
-**Last Updated**: Post-release anomaly shock-detector follow-up fixes complete (2026-02-23). Widen semantics, runtime tuning, and scheduler-policy tests are now aligned for staged rollout.
+**Last Updated**: Post-release diagnostic rollback and MR RL-bypass hardening complete (2026-03-02). Allocator/BWISC debug forcing removed, Q-table persistence remains safe, and MR RL bypass is now explicitly runtime-gated.
 
 ### Module Inventory
 
@@ -27,10 +27,10 @@ avoid unintended coupling.
 | Module | Lines | Layer | Responsibility |
 |--------|------:|-------|----------------|
 | `order_engine.mqh` | ~6153 | Execution | OCO, market fallback, retries, trailing, two-leg atomic ops, partial fills. Includes ORDER_DELETE OCO cleanup and cancel/modify retry wrappers. **Largest module; edit with care.** |
-| `persistence.mqh` | ~2020 | Support | File-backed state recovery, intent queue, challenge state persistence. |
+| `persistence.mqh` | ~2020 | Support | File-backed state recovery, intent queue, challenge state persistence. Ensures binary Q-table payloads are not text-initialized. |
 | `equity_guardian.mqh` | ~1350 | Risk | Baseline tracking, daily/overall floors, kill-switch, MicroMode activation (+10% target), giveback protection. |
 | `queue.mqh` | ~1250 | Execution | Action queueing during news windows, TTL expiry, post-news revalidation. |
-| `config.mqh` | ~1340 | Support | EA inputs, validation, clamping. Includes test overrides/runtime getters for adaptive-risk and anomaly rollout/tuning inputs (`EnableAnomalyDetector`, `AnomalyShadowMode`, sigma, EWMA alpha, min-samples). |
+| `config.mqh` | ~1340 | Support | EA inputs, validation, clamping. Includes test overrides/runtime getters for adaptive-risk, anomaly rollout/tuning inputs, and MR diagnostic RL-bypass toggle (`EnableMRBypassOnRLUnloaded`). |
 | `news.mqh` | ~875 | Support | Calendar API + CSV fallback, T +/-300s window, `News_IsEntryBlocked`, `News_GetWindowStateDetailed`. |
 | `synthetic.mqh` | ~650 | Execution | XAUEUR proxy/replication manager (XAUUSD-only or two-leg XAUUSD+EURUSD). |
 | `allocator.mqh` | ~675 | Risk | Builds `OrderPlan` for **BWISC + MR**, strategy-specific risk sizing, adaptive-risk multiplier integration behind runtime toggle, proxy-distance mapping guard for MR, budget gate, and strategy-tagged comments. |
@@ -47,7 +47,7 @@ avoid unintended coupling.
 | `state.mqh` | ~237 | Support | `ChallengeState` struct, `State_Get()`/`State_Set()` accessors. |
 | `signals_bwisc.mqh` | ~230 | Signal | BWISC signals (BC/MSC). Populates `g_last_bwisc_context` (`BWISC_Context`). |
 | `rl_agent.mqh` | ~220 | M7 Ensemble | Q-learning table, `RL_StateFromSpread`, `RL_GetQAdvantage`. |
-| `signals_mr.mqh` | ~282 | Signal | MR signals (mean reversion, EMRT + RL). Populates `g_last_mr_context` with execution-symbol entry price and direction. |
+| `signals_mr.mqh` | ~282 | Signal | MR signals (mean reversion, EMRT + RL). Populates `g_last_mr_context` with execution-symbol entry price and direction; RL-unloaded bypass is guarded by runtime toggle for diagnostics only. |
 | `liquidity.mqh` | ~220 | Support | Rolling spread/slippage stats, quantile getters, `Liquidity_SpreadOK`, plus test-only state reset helper (`Liquidity_TestResetState`) for suite isolation. |
 | `risk.mqh` | ~192 | Risk | `Risk_SizingByATRDistanceForSymbol`, `Risk_GetEffectiveRiskPct` (handles MicroMode). |
 | `m7_helpers.mqh` | ~497 | M7 Ensemble | Wrapper functions (ATR, spread, session helpers) plus rolling spread buffer + full ATR percentile helpers used by policy/regime paths. |
@@ -117,6 +117,7 @@ g_last_bwisc_context.entry_price = ask; // or bid based on direction
 
 Update this list when completing a task. Helps agents understand what just changed.
 
+- **Post-release diagnostic rollback + MR gate hardening (2026-03-02)**: Reverted branch-only debug forcing in `allocator.mqh` and restored standard `signals_bwisc.mqh` thresholds/flow so strategy behavior is controlled by `.set` inputs rather than hardcoded diagnostics. Kept the persistence safety fix in `persistence.mqh` that prevents binary `FILE_QTABLE_BIN` from being text-initialized. Added runtime-gated MR RL bypass (`EnableMRBypassOnRLUnloaded`) through `RPEA.mq5` + `config.mqh` + `signals_mr.mqh`; default is strict (`false`), with probe `.set` files opting in (`true`) for diagnostic runs when qtable loading is unstable. Validation: EA compile `0 errors`; automated suites pass (`41/41`).
 - **Post-release anomaly rollout follow-up (2026-02-23)**: Corrected scheduler active-mode semantics so `ANOMALY_ACTION_WIDEN` no longer hard-blocks entries (only `cancel`/`flatten` block and execute), added scheduler anomaly policy helpers + deterministic scheduler-level anomaly semantics assertions in `test_anomaly.mqh`, exposed runtime-configurable anomaly tuning (`AnomalyEWMAAlpha`, `AnomalyMinSamples`) via `RPEA.mq5` + `config.mqh` getters/validation, and reverted adaptive-risk EA input defaults to `DEFAULT_AdaptiveRiskMinMult`/`DEFAULT_AdaptiveRiskMaxMult`. Validation: EA compile `0 errors, 2 warnings`; test-runner compile `0 errors, 2 warnings`; automated suites `41/41` passing (`success=true`, `total_failed=0`).
 - **Post-release anomaly shock rollout (2026-02-23)**: Implemented full `Anomaly_IsShockNow` engine in `anomaly.mqh` (EWMA z-scores for returns/spread/tick-gap, invalid/insufficient-sample guardrails, deterministic action selection), wired scheduler anomaly evaluation + safe shadow/active staging in `scheduler.mqh` (`ANOMALY_EVAL`, `ANOMALY_SHADOW`, `ANOMALY_ACTION` logs), added anomaly rollout inputs/getters/overrides in `config.mqh` + `RPEA.mq5`, and introduced deterministic suite `test_anomaly.mqh` registered as `PostRelease_AnomalyShockNow` in `run_automated_tests_ea.mq5`. Validation: EA compile `0 errors, 2 warnings`; test-runner compile `0 errors, 2 warnings`; automated suites `41/41` passing (`success=true`, `total_failed=0`).
 - **M7 RC cleanup hardening (2026-02-16)**: Implemented OCO relationship cleanup on `TRADE_TRANSACTION_ORDER_DELETE` in `order_engine.mqh` (`OCO_CLEANUP` decision log + pending-link cleanup), added retry-capable wrappers for cancel/modify operations (`OE_RequestCancelWithRetry`, `OE_RequestModifyWithRetry`) and routed existing helpers through those paths. Removed stale dead stubs/comments in `config.mqh`, `timeutils.mqh`, and `regime.mqh`, and refreshed regression coverage in `test_order_engine_oco.mqh` (ORDER_DELETE cleanup case) and `test_order_engine_retry.mqh` (cancel/modify retry behavior). Validation: EA compile `0 errors, 5 warnings`; test-runner compile `0 errors, 2 warnings`; automated suites `40/40` passing.

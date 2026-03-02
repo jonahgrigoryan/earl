@@ -146,7 +146,21 @@ bool SignalsMR_CheckEntryConditions(
    SignalsMR_GetSpreadChanges(emrt_symbol, spread_changes, RL_NUM_PERIODS);
    int state = RL_StateFromSpread(spread_changes, RL_NUM_PERIODS);
    int action = RL_ActionForState(state);
-   if(action != RL_ACTION_ENTER)
+   if(!g_qtable_loaded)
+   {
+      if(Config_GetEnableMRBypassOnRLUnloaded())
+      {
+         SignalsMR_LogGate(symbol, "rl_bypass_unloaded",
+                           StringFormat("\"state\":%d,\"action\":%d", state, action), now);
+      }
+      else
+      {
+         SignalsMR_LogGate(symbol, "rl_qtable_unloaded",
+                           StringFormat("\"state\":%d,\"action\":%d", state, action), now);
+         return false;
+      }
+   }
+   else if(action != RL_ACTION_ENTER)
    {
       SignalsMR_LogGate(symbol, "rl_action",
                         StringFormat("\"state\":%d,\"action\":%d", state, action), now);
