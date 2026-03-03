@@ -286,6 +286,32 @@ bool Indicators_CopyLatestValue(const int handle, double &out_value)
    return true;
 }
 
+// D1 ATR can occasionally return zero/EMPTY on shift 0 around day boundaries.
+// Fall back to previous completed daily bars to keep risk sizing deterministic.
+bool Indicators_CopyLatestATRValue(const int handle, double &out_value)
+{
+   out_value = 0.0;
+   if(handle == INVALID_HANDLE)
+      return false;
+
+   double values[];
+   ArraySetAsSeries(values, true);
+   int copied = CopyBuffer(handle, 0, 0, 3, values);
+   if(copied < 1)
+      return false;
+
+   for(int i = 0; i < copied && i < 3; ++i)
+   {
+      double v = values[i];
+      if(!MathIsValidNumber(v) || v == EMPTY_VALUE || v <= 0.0)
+         continue;
+      out_value = v;
+      return true;
+   }
+
+   return false;
+}
+
 // Initialize indicator handles and per-symbol cache
 void Indicators_Init(const AppContext &ctx)
 {
@@ -366,15 +392,23 @@ void Indicators_Refresh(const AppContext &ctx, const string symbol)
     }
 
    double value = 0.0;
-   if(Indicators_CopyLatestValue(g_indicator_slots[idx].handle_ATR_D1, value))
+   if(Indicators_CopyLatestATRValue(g_indicator_slots[idx].handle_ATR_D1, value))
    {
       g_indicator_slots[idx].atr_d1 = value;
       g_indicator_slots[idx].has_atr = true;
    }
    else
    {
-      g_indicator_slots[idx].atr_d1 = 0.0;
-      g_indicator_slots[idx].has_atr = false;
+      // Preserve the previous non-zero ATR sample when the latest D1 bar is temporarily unavailable.
+      if(g_indicator_slots[idx].atr_d1 > 0.0 && MathIsValidNumber(g_indicator_slots[idx].atr_d1))
+      {
+         g_indicator_slots[idx].has_atr = true;
+      }
+      else
+      {
+         g_indicator_slots[idx].atr_d1 = 0.0;
+         g_indicator_slots[idx].has_atr = false;
+      }
    }
 
    if(Indicators_CopyLatestValue(g_indicator_slots[idx].handle_MA20_H1, value))
