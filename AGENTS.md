@@ -16,7 +16,7 @@ alwaysApply: true
 > that changed, and the **Recent Changes** list at the bottom of this section.
 > This keeps future agents current without a full codebase scan.
 
-**Last Updated**: OrderEngine filling-mode compatibility fallback complete (2026-03-02). Market-order retcode `10030` now rotates supported fill policies (`IOC`/`FOK`/`RETURN`) before fail-fast, with deterministic retry coverage.
+**Last Updated**: Config/script compile fallback hardening complete (2026-03-03). `config.mqh` runtime getters now guard missing non-EA input symbols, and script default macros in `rl_pretrain_inputs.mqh` keep tooling compile targets stable.
 
 ### Module Inventory
 
@@ -30,7 +30,7 @@ avoid unintended coupling.
 | `persistence.mqh` | ~2020 | Support | File-backed state recovery, intent queue, challenge state persistence. Ensures binary Q-table payloads are not text-initialized. |
 | `equity_guardian.mqh` | ~1350 | Risk | Baseline tracking, daily/overall floors, kill-switch, MicroMode activation (+10% target), giveback protection. |
 | `queue.mqh` | ~1250 | Execution | Action queueing during news windows, TTL expiry, post-news revalidation. |
-| `config.mqh` | ~1340 | Support | EA inputs, validation, clamping. Includes test overrides/runtime getters for adaptive-risk, anomaly rollout/tuning inputs, and MR diagnostic RL-bypass toggle (`EnableMRBypassOnRLUnloaded`). |
+| `config.mqh` | ~1535 | Support | EA inputs, validation, clamping. Includes test overrides/runtime getters for adaptive-risk, anomaly rollout/tuning inputs, and MR diagnostic RL-bypass toggle (`EnableMRBypassOnRLUnloaded`), with non-EA fallback guards for script/tooling compile targets. |
 | `news.mqh` | ~875 | Support | Calendar API + CSV fallback, T +/-300s window, `News_IsEntryBlocked`, `News_GetWindowStateDetailed`. |
 | `synthetic.mqh` | ~650 | Execution | XAUEUR proxy/replication manager (XAUUSD-only or two-leg XAUUSD+EURUSD). |
 | `allocator.mqh` | ~675 | Risk | Builds `OrderPlan` for **BWISC + MR**, strategy-specific risk sizing, adaptive-risk multiplier integration behind runtime toggle, proxy-distance mapping guard for MR, budget gate, and strategy-tagged comments. |
@@ -41,7 +41,7 @@ avoid unintended coupling.
 | `emrt.mqh` | ~377 | M7 Ensemble | EMRT formation (rank, P50, beta). Used by MR signals. |
 | `breakeven.mqh` | ~312 | Execution | Breakeven at +0.5R. |
 | `trailing.mqh` | ~288 | Execution | Trailing stop logic (ATR-based, activates at +1R). |
-| `rl_pretrain_inputs.mqh` | ~277 | M7 Ensemble | Pre-training parameter defaults (MR_RiskPct_Default, TimeStopMin/Max, etc.). |
+| `rl_pretrain_inputs.mqh` | ~306 | M7 Ensemble | Pre-training parameter defaults (MR_RiskPct_Default, TimeStopMin/Max, etc.) plus script-safe defaults for post-release runtime toggles (anomaly/adaptive/MR RL-bypass). |
 | `learning.mqh` | ~337 | M7 Ensemble | File-backed calibration state loader/updater with schema validation, atomic persistence, and SLO-breach freeze gate (`Learning_LoadCalibration`, `Learning_Update`). |
 | `meta_policy.mqh` | ~333 | Signal | Strategy chooser (BWISC vs MR vs Skip). Deterministic rules + optional bandit with persisted posterior readiness check and shadow delta logging. Includes deterministic SLO override helper for MR throttle fallback. **`M7_DECISION_ONLY` is 0 (execution enabled).** |
 | `state.mqh` | ~237 | Support | `ChallengeState` struct, `State_Get()`/`State_Set()` accessors. |
@@ -117,6 +117,8 @@ g_last_bwisc_context.entry_price = ask; // or bid based on direction
 
 Update this list when completing a task. Helps agents understand what just changed.
 
+- **OrderEngine filling-mode compatibility fallback (2026-03-02)**: Hardened market execution in `order_engine.mqh` for unsupported filling-mode retcode `10030` by introducing deterministic fill-policy rotation (`IOC`/`FOK`/`RETURN`) with explicit `FILLING_MODE_FALLBACK` decision telemetry and richer `ORDER_SEND_ATTEMPT` payloads (`filling`). Also mapped retcode `10030` into retry/error taxonomy (`RETRY_POLICY_LINEAR`, recoverable class, gating reason `unsupported_filling`) and added regression test `ExecuteOrderWithRetry_FillingModeFallbackOn10030` in `Tests/RPEA/test_order_engine_retry.mqh`. Validation: EA compile `0 errors, 2 warnings`; test-runner compile `0 errors, 2 warnings`; automated suites `41/41` passing.
+- **Config/script compile fallback hardening (2026-03-03)**: Fixed non-EA compile-path breaks by adding guarded fallback branches in `config.mqh` runtime getters (`Config_GetEnableMRBypassOnRLUnloaded`, anomaly/adaptive getters) and extending `rl_pretrain_inputs.mqh` with default macros for post-release toggles used by scripts (`EnableMRBypassOnRLUnloaded`, anomaly, adaptive inputs). Validation: `emrt_refresh.mq5` compile `0 errors, 0 warnings`; EA compile `0 errors, 2 warnings`; automated suites `41/41` passing.
 - **OrderEngine filling-mode compatibility fallback (2026-03-02)**: Hardened market execution in `order_engine.mqh` for unsupported filling-mode retcode `10030` by introducing deterministic fill-policy rotation (`IOC`/`FOK`/`RETURN`) with explicit `FILLING_MODE_FALLBACK` decision telemetry and richer `ORDER_SEND_ATTEMPT` payloads (`filling`). Also mapped retcode `10030` into retry/error taxonomy (`RETRY_POLICY_LINEAR`, recoverable class, gating reason `unsupported_filling`) and added regression test `ExecuteOrderWithRetry_FillingModeFallbackOn10030` in `Tests/RPEA/test_order_engine_retry.mqh`. Validation: EA compile `0 errors, 2 warnings`; test-runner compile `0 errors, 2 warnings`; automated suites `41/41` passing.
 - **Post-release diagnostic rollback + MR gate hardening (2026-03-02)**: Reverted branch-only debug forcing in `allocator.mqh` and restored standard `signals_bwisc.mqh` thresholds/flow so strategy behavior is controlled by `.set` inputs rather than hardcoded diagnostics. Kept the persistence safety fix in `persistence.mqh` that prevents binary `FILE_QTABLE_BIN` from being text-initialized. Added runtime-gated MR RL bypass (`EnableMRBypassOnRLUnloaded`) through `RPEA.mq5` + `config.mqh` + `signals_mr.mqh`; default is strict (`false`), with probe `.set` files opting in (`true`) for diagnostic runs when qtable loading is unstable. Validation: EA compile `0 errors`; automated suites pass (`41/41`).
 - **Post-release anomaly rollout follow-up (2026-02-23)**: Corrected scheduler active-mode semantics so `ANOMALY_ACTION_WIDEN` no longer hard-blocks entries (only `cancel`/`flatten` block and execute), added scheduler anomaly policy helpers + deterministic scheduler-level anomaly semantics assertions in `test_anomaly.mqh`, exposed runtime-configurable anomaly tuning (`AnomalyEWMAAlpha`, `AnomalyMinSamples`) via `RPEA.mq5` + `config.mqh` getters/validation, and reverted adaptive-risk EA input defaults to `DEFAULT_AdaptiveRiskMinMult`/`DEFAULT_AdaptiveRiskMaxMult`. Validation: EA compile `0 errors, 2 warnings`; test-runner compile `0 errors, 2 warnings`; automated suites `41/41` passing (`success=true`, `total_failed=0`).

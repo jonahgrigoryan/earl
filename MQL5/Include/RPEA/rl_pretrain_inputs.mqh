@@ -215,11 +215,38 @@
 #ifndef EnableMR
 #define EnableMR true
 #endif
+#ifndef EnableMRBypassOnRLUnloaded
+#define EnableMRBypassOnRLUnloaded false
+#endif
 #ifndef UseBanditMetaPolicy
 #define UseBanditMetaPolicy true
 #endif
 #ifndef BanditShadowMode
 #define BanditShadowMode true
+#endif
+#ifndef EnableAnomalyDetector
+#define EnableAnomalyDetector true
+#endif
+#ifndef AnomalyShadowMode
+#define AnomalyShadowMode true
+#endif
+#ifndef AnomalyShockSigmaThreshold
+#define AnomalyShockSigmaThreshold 5.5
+#endif
+#ifndef AnomalyEWMAAlpha
+#define AnomalyEWMAAlpha 0.20
+#endif
+#ifndef AnomalyMinSamples
+#define AnomalyMinSamples 20
+#endif
+#ifndef EnableAdaptiveRisk
+#define EnableAdaptiveRisk false
+#endif
+#ifndef AdaptiveRiskMinMult
+#define AdaptiveRiskMinMult 0.80
+#endif
+#ifndef AdaptiveRiskMaxMult
+#define AdaptiveRiskMaxMult 1.20
 #endif
 #ifndef BWISC_ConfCut
 #define BWISC_ConfCut 0.70

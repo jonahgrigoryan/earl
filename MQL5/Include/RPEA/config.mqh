@@ -1162,7 +1162,11 @@ inline bool Config_GetEnableMRBypassOnRLUnloaded()
       return DEFAULT_EnableMRBypassOnRLUnloaded;
    #endif
 #else
-   return EnableMRBypassOnRLUnloaded;
+   #ifdef EnableMRBypassOnRLUnloaded
+      return EnableMRBypassOnRLUnloaded;
+   #else
+      return DEFAULT_EnableMRBypassOnRLUnloaded;
+   #endif
 #endif
 }
 
@@ -1239,7 +1243,11 @@ inline bool Config_GetEnableAnomalyDetector()
       return DEFAULT_EnableAnomalyDetector;
    #endif
 #else
-   return EnableAnomalyDetector;
+   #ifdef EnableAnomalyDetector
+      return EnableAnomalyDetector;
+   #else
+      return DEFAULT_EnableAnomalyDetector;
+   #endif
 #endif
 }
 
@@ -1254,7 +1262,11 @@ inline bool Config_GetAnomalyShadowMode()
       return DEFAULT_AnomalyShadowMode;
    #endif
 #else
-   return AnomalyShadowMode;
+   #ifdef AnomalyShadowMode
+      return AnomalyShadowMode;
+   #else
+      return DEFAULT_AnomalyShadowMode;
+   #endif
 #endif
 }
 
@@ -1271,8 +1283,12 @@ inline double Config_GetAnomalyShockSigmaThreshold()
       return DEFAULT_AnomalyShockSigmaThreshold;
    #endif
 #else
-   return Config_ClampAnomalySigmaThreshold(AnomalyShockSigmaThreshold,
-                                            DEFAULT_AnomalyShockSigmaThreshold);
+   #ifdef AnomalyShockSigmaThreshold
+      return Config_ClampAnomalySigmaThreshold(AnomalyShockSigmaThreshold,
+                                               DEFAULT_AnomalyShockSigmaThreshold);
+   #else
+      return DEFAULT_AnomalyShockSigmaThreshold;
+   #endif
 #endif
 }
 
@@ -1334,7 +1350,11 @@ inline bool Config_GetEnableAdaptiveRisk()
       return DEFAULT_EnableAdaptiveRisk;
    #endif
 #else
-   return EnableAdaptiveRisk;
+   #ifdef EnableAdaptiveRisk
+      return EnableAdaptiveRisk;
+   #else
+      return DEFAULT_EnableAdaptiveRisk;
+   #endif
 #endif
 }
 
@@ -1351,8 +1371,12 @@ inline double Config_GetAdaptiveRiskMinMult()
       return DEFAULT_AdaptiveRiskMinMult;
    #endif
 #else
-   return Config_ClampAdaptiveRiskMultiplier(AdaptiveRiskMinMult,
-                                             DEFAULT_AdaptiveRiskMinMult);
+   #ifdef AdaptiveRiskMinMult
+      return Config_ClampAdaptiveRiskMultiplier(AdaptiveRiskMinMult,
+                                                DEFAULT_AdaptiveRiskMinMult);
+   #else
+      return DEFAULT_AdaptiveRiskMinMult;
+   #endif
 #endif
 }
 
@@ -1371,7 +1395,10 @@ inline double Config_GetAdaptiveRiskMaxMult()
       #endif
    }
 #else
-   double configured_max = AdaptiveRiskMaxMult;
+   double configured_max = DEFAULT_AdaptiveRiskMaxMult;
+   #ifdef AdaptiveRiskMaxMult
+      configured_max = AdaptiveRiskMaxMult;
+   #endif
 #endif
 
    double min_mult = Config_GetAdaptiveRiskMinMult();
