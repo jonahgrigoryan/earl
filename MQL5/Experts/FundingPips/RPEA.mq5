@@ -136,6 +136,7 @@ input int    MaxPendingsPerSymbol       = 2;
 
 // MR/Ensemble Inputs
 input bool   EnableMR                   = true;    // Enable MR strategy
+input bool   EnableMRBypassOnRLUnloaded = DEFAULT_EnableMRBypassOnRLUnloaded; // Diagnostic bypass when Q-table is unavailable
 input bool   UseBanditMetaPolicy        = true;    // Enable contextual bandit for strategy selection
 input bool   BanditShadowMode           = true;    // Log bandit decisions without executing
 input bool   EnableAnomalyDetector      = DEFAULT_EnableAnomalyDetector;      // Enable anomaly shock detector

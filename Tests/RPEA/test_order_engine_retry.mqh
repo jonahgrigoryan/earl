@@ -258,6 +258,53 @@ bool ExecuteOrderWithRetry_ExponentialRetriesStop()
    return (g_test_failed == 0);
 }
 
+bool ExecuteOrderWithRetry_FillingModeFallbackOn10030()
+{
+   g_current_test = "ExecuteOrderWithRetry_FillingModeFallbackOn10030";
+   PrintFormat("[TEST START] %s", g_current_test);
+
+   OE_Test_ClearOverrides();
+   g_order_engine.Init();
+   OE_Test_ResetIntentJournal();
+   OE_Test_SetRiskOverride(true, 25.0);
+   OE_Test_SetPriceOverride("XAUUSD", 0.01, 2, 1900.00, 1900.10, 0);
+
+   OE_Test_EnableOrderSendOverride();
+   OE_Test_EnqueueOrderSendResponse(false,
+                                    OE_RETCODE_UNSUPPORTED_FILLING,
+                                    0,
+                                    0,
+                                    0.0,
+                                    0.0,
+                                    "unsupported-filling");
+   OE_Test_EnqueueOrderSendResponse(true,
+                                    TRADE_RETCODE_DONE,
+                                    998877,
+                                    0,
+                                    1900.10,
+                                    0.10,
+                                    "filled-after-fallback");
+   OE_Test_BeginRetryDelayCapture(true);
+
+   OrderRequest request;
+   RetryTests_BuildOrderRequest(request, ORDER_TYPE_BUY);
+   request.price = 0.0;
+
+   OrderResult result = g_order_engine.PlaceOrder(request);
+
+   ASSERT_TRUE(result.success, "Order succeeds after filling-mode fallback");
+   ASSERT_EQUALS(1, result.retry_count, "One additional send attempt performed");
+   ASSERT_EQUALS((int)TRADE_RETCODE_DONE, result.last_retcode, "Last retcode captures success");
+   ASSERT_EQUALS(2, OE_Test_GetOrderSendCallCount(), "Two OrderSend attempts executed");
+   ASSERT_EQUALS(0, OE_Test_GetCapturedDelayCount(), "No retry delay for immediate filling-mode fallback");
+
+   OE_Test_EndRetryDelayCapture();
+   OE_Test_ClearOverrides();
+
+   PrintFormat("[TEST END] %s", g_current_test);
+   return (g_test_failed == 0);
+}
+
 bool ExecuteOrderWithRetry_FailFastStopsImmediately()
 {
    g_current_test = "ExecuteOrderWithRetry_FailFastStopsImmediately";
@@ -366,6 +413,7 @@ bool TestOrderEngineRetry_RunAll()
    bool success_immediate = ExecuteOrderWithRetry_SuccessImmediate();
    bool linear_retry = ExecuteOrderWithRetry_LinearRetrySuccess();
    bool exponential_stop = ExecuteOrderWithRetry_ExponentialRetriesStop();
+   bool filling_fallback = ExecuteOrderWithRetry_FillingModeFallbackOn10030();
    bool fail_fast_exec = ExecuteOrderWithRetry_FailFastStopsImmediately();
    bool cancel_retry = OE_RequestCancel_RetriesOnTransientFailure();
    bool modify_failfast = OE_RequestModify_WithRetryStopsOnFailFast();
@@ -375,6 +423,7 @@ bool TestOrderEngineRetry_RunAll()
                       success_immediate &&
                       linear_retry &&
                       exponential_stop &&
+                      filling_fallback &&
                       fail_fast_exec &&
                       cancel_retry &&
                       modify_failfast &&

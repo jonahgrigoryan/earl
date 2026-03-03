@@ -46,6 +46,7 @@ static OERecoveryBrokerOverrideState g_oe_recovery_override;
 
 #define OE_INTENT_TTL_MINUTES   1440
 #define OE_ACTION_TTL_MINUTES   1440
+#define OE_RETCODE_UNSUPPORTED_FILLING 10030
 
 #ifdef RPEA_TEST_RUNNER
 bool OE_Test_Modify(const QueuedAction &qa);
@@ -339,6 +340,7 @@ public:
          case TRADE_RETCODE_REQUOTE:
          case TRADE_RETCODE_PRICE_CHANGED:
          case TRADE_RETCODE_PRICE_OFF:
+         case OE_RETCODE_UNSUPPORTED_FILLING:
             return RETRY_POLICY_LINEAR;
       }
 
@@ -416,6 +418,7 @@ OrderErrorClass OE_ClassifyRetcode(const int retcode)
       case TRADE_RETCODE_REQUOTE:
       case TRADE_RETCODE_PRICE_CHANGED:
       case TRADE_RETCODE_PRICE_OFF:
+      case OE_RETCODE_UNSUPPORTED_FILLING:
          return ERRORCLASS_RECOVERABLE;
    }
    return ERRORCLASS_UNKNOWN;
@@ -463,6 +466,8 @@ string OE_GatingReasonForRetcode(const int retcode)
          return "position_closed";
       case TRADE_RETCODE_PRICE_CHANGED:
          return "price_changed";
+      case OE_RETCODE_UNSUPPORTED_FILLING:
+         return "unsupported_filling";
    }
    return "unknown_error";
 }
@@ -3258,6 +3263,102 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
    if(base_deviation < 0)
       base_deviation = 0;
 
+   ENUM_ORDER_TYPE_FILLING filling_candidates[];
+   ArrayResize(filling_candidates, 0);
+
+   if(is_pending_request)
+   {
+      const int pending_size = ArraySize(filling_candidates);
+      ArrayResize(filling_candidates, pending_size + 1);
+      filling_candidates[pending_size] = ORDER_FILLING_RETURN;
+   }
+   else
+   {
+      long filling_flags = 0;
+      bool has_filling_flags = false;
+      ResetLastError();
+      has_filling_flags = SymbolInfoInteger(request.symbol, SYMBOL_FILLING_MODE, filling_flags);
+      if(!has_filling_flags)
+      {
+         const int fill_err = GetLastError();
+         LogOE(StringFormat("ExecuteOrderWithRetry: SymbolInfoInteger(%s,SYMBOL_FILLING_MODE) failed (err=%d), using fallback filling candidates",
+                            request.symbol,
+                            fill_err));
+         ResetLastError();
+      }
+
+      if(has_filling_flags)
+      {
+         if((filling_flags & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+         {
+            const int ioc_size = ArraySize(filling_candidates);
+            ArrayResize(filling_candidates, ioc_size + 1);
+            filling_candidates[ioc_size] = ORDER_FILLING_IOC;
+         }
+         if((filling_flags & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+         {
+            const int fok_size = ArraySize(filling_candidates);
+            ArrayResize(filling_candidates, fok_size + 1);
+            filling_candidates[fok_size] = ORDER_FILLING_FOK;
+         }
+      }
+
+      bool has_return = false;
+      for(int i = 0; i < ArraySize(filling_candidates); ++i)
+      {
+         if(filling_candidates[i] == ORDER_FILLING_RETURN)
+         {
+            has_return = true;
+            break;
+         }
+      }
+      if(!has_return)
+      {
+         const int return_size = ArraySize(filling_candidates);
+         ArrayResize(filling_candidates, return_size + 1);
+         filling_candidates[return_size] = ORDER_FILLING_RETURN;
+      }
+
+      bool has_ioc = false;
+      for(int j = 0; j < ArraySize(filling_candidates); ++j)
+      {
+         if(filling_candidates[j] == ORDER_FILLING_IOC)
+         {
+            has_ioc = true;
+            break;
+         }
+      }
+      if(!has_ioc)
+      {
+         const int ioc_fallback_size = ArraySize(filling_candidates);
+         ArrayResize(filling_candidates, ioc_fallback_size + 1);
+         filling_candidates[ioc_fallback_size] = ORDER_FILLING_IOC;
+      }
+
+      bool has_fok = false;
+      for(int k = 0; k < ArraySize(filling_candidates); ++k)
+      {
+         if(filling_candidates[k] == ORDER_FILLING_FOK)
+         {
+            has_fok = true;
+            break;
+         }
+      }
+      if(!has_fok)
+      {
+         const int fok_fallback_size = ArraySize(filling_candidates);
+         ArrayResize(filling_candidates, fok_fallback_size + 1);
+         filling_candidates[fok_fallback_size] = ORDER_FILLING_FOK;
+      }
+   }
+
+   if(ArraySize(filling_candidates) <= 0)
+   {
+      ArrayResize(filling_candidates, 1);
+      filling_candidates[0] = ORDER_FILLING_RETURN;
+   }
+   int filling_mode_index = 0;
+
    MqlTradeRequest trade_request;
    ZeroMemory(trade_request);
    trade_request.action = is_pending_request ? TRADE_ACTION_PENDING : TRADE_ACTION_DEAL;
@@ -3270,7 +3371,7 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
    trade_request.deviation = base_deviation;
    trade_request.magic = request.magic;
    trade_request.comment = request.comment;
-   trade_request.type_filling = ORDER_FILLING_RETURN;
+   trade_request.type_filling = filling_candidates[filling_mode_index];
    if(is_pending_request)
    {
       trade_request.type_time = (request.expiry > 0 ? ORDER_TIME_SPECIFIED : ORDER_TIME_GTC);
@@ -3433,14 +3534,15 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
       const double attempt_slippage = (is_market_request ? last_slippage_points : 0.0);
 
       string attempt_fields = StringFormat(
-         "{\"attempt\":%d,\"symbol\":\"%s\",\"retcode\":%d,\"send_ok\":%s,\"requested\":%.5f,\"submitted\":%.5f,\"slippage_pts\":%.2f}",
+         "{\"attempt\":%d,\"symbol\":\"%s\",\"retcode\":%d,\"send_ok\":%s,\"requested\":%.5f,\"submitted\":%.5f,\"slippage_pts\":%.2f,\"filling\":\"%s\"}",
          attempt,
          request.symbol,
          trade_result.retcode,
          send_ok ? "true" : "false",
          requested_price,
          trade_request.price,
-         attempt_slippage);
+         attempt_slippage,
+         EnumToString(trade_request.type_filling));
       LogDecision("OrderEngine", "ORDER_SEND_ATTEMPT", attempt_fields);
 
       const bool order_done = (send_ok && trade_result.retcode == TRADE_RETCODE_DONE);
@@ -3480,6 +3582,28 @@ bool OrderEngine::ExecuteOrderWithRetry(const OrderRequest &request,
                                   executed_slippage_pts));
          success = true;
          break;
+      }
+
+      if(is_market_request &&
+         (int)trade_result.retcode == OE_RETCODE_UNSUPPORTED_FILLING &&
+         (filling_mode_index + 1) < ArraySize(filling_candidates))
+      {
+         const ENUM_ORDER_TYPE_FILLING previous_mode = trade_request.type_filling;
+         filling_mode_index++;
+         trade_request.type_filling = filling_candidates[filling_mode_index];
+         LogOE(StringFormat("ExecuteOrderWithRetry filling fallback: %s -> %s after retcode=%d",
+                            EnumToString(previous_mode),
+                            EnumToString(trade_request.type_filling),
+                            trade_result.retcode));
+         LogDecision("OrderEngine",
+                     "FILLING_MODE_FALLBACK",
+                     StringFormat("{\"symbol\":\"%s\",\"attempt\":%d,\"retcode\":%d,\"from\":\"%s\",\"to\":\"%s\"}",
+                                  request.symbol,
+                                  attempt,
+                                  trade_result.retcode,
+                                  EnumToString(previous_mode),
+                                  EnumToString(trade_request.type_filling)));
+         continue;
       }
 
       OrderError err((int)trade_result.retcode);
