@@ -16,7 +16,7 @@ alwaysApply: true
 > that changed, and the **Recent Changes** list at the bottom of this section.
 > This keeps future agents current without a full codebase scan.
 
-**Last Updated**: Runtime input-honor fix complete (2026-03-03). `config.mqh` non-test getters now honor EA inputs again; script compile safety remains via `rl_pretrain_inputs.mqh` defaults.
+**Last Updated**: FundingPips profitability run documented (2026-03-03). Runtime getter fix is in place and robustness/long-run evidence is recorded for next-session tuning handoff.
 
 ### Module Inventory
 
@@ -117,6 +117,7 @@ g_last_bwisc_context.entry_price = ask; // or bid based on direction
 
 Update this list when completing a task. Helps agents understand what just changed.
 
+- **FundingPips profitability evidence bundle (2026-03-03)**: Recorded branch-level tuning outcomes in `docs/fundingpips-profitability-run-2026-03-03.md`, including 3-window robustness comparison (`B` vs `E`) and long-window validation of selected candidate `B` (`2025-06-03..2025-11-21`). Key outcomes: true median net for `B` beats `E` with lower worst DD; long-window run remained low-frequency (`2` trades) with modest positive net (`+23.70`), so strategy is execution-capable but still not challenge-pass ready.
 - **FundingPips profitability branch runtime fix (2026-03-03)**: Fixed a non-test getter regression in `config.mqh` where macro guards caused EA runtime inputs to be ignored in live/tester runs (notably `EnableMRBypassOnRLUnloaded`, anomaly/adaptive toggles). Restored direct variable reads for non-test builds while retaining script/tooling compile compatibility through `rl_pretrain_inputs.mqh` defaults. Validation: EA compile `0 errors, 2 warnings`; `emrt_refresh.mq5` compile `0 errors, 0 warnings`; automated suites `41/41` passing. Probe reruns (`2025-06-03..2025-07-03`) now place trades again with positive net on candidate profiles.
 - **OrderEngine filling-mode compatibility fallback (2026-03-02)**: Hardened market execution in `order_engine.mqh` for unsupported filling-mode retcode `10030` by introducing deterministic fill-policy rotation (`IOC`/`FOK`/`RETURN`) with explicit `FILLING_MODE_FALLBACK` decision telemetry and richer `ORDER_SEND_ATTEMPT` payloads (`filling`). Also mapped retcode `10030` into retry/error taxonomy (`RETRY_POLICY_LINEAR`, recoverable class, gating reason `unsupported_filling`) and added regression test `ExecuteOrderWithRetry_FillingModeFallbackOn10030` in `Tests/RPEA/test_order_engine_retry.mqh`. Validation: EA compile `0 errors, 2 warnings`; test-runner compile `0 errors, 2 warnings`; automated suites `41/41` passing.
 - **Config/script compile fallback hardening (2026-03-03)**: Fixed non-EA compile-path breaks by adding guarded fallback branches in `config.mqh` runtime getters (`Config_GetEnableMRBypassOnRLUnloaded`, anomaly/adaptive getters) and extending `rl_pretrain_inputs.mqh` with default macros for post-release toggles used by scripts (`EnableMRBypassOnRLUnloaded`, anomaly, adaptive inputs). Validation: `emrt_refresh.mq5` compile `0 errors, 0 warnings`; EA compile `0 errors, 2 warnings`; automated suites `41/41` passing.
