@@ -35,6 +35,7 @@
 #include <RPEA/persistence.mqh>
 #include <RPEA/logging.mqh>
 #include <RPEA/telemetry.mqh>
+#include <RPEA/evaluation_report.mqh>
 #include <RPEA/slo_monitor.mqh>
 // sessions.mqh and scheduler.mqh are included after AppContext is defined
 
@@ -326,6 +327,7 @@ int OnInit()
    News_LoadEvents();
 
    LogAuditRow("BOOT", "RPEA", 1, "EA boot", "{}");
+   EvaluationReport_Init(g_ctx);
 
     // 6) Initialize Order Engine (M3 Task 1)
     if(!g_order_engine.Init())
@@ -385,6 +387,7 @@ void OnDeinit(const int reason)
 
    EventKillTimer();
    Persistence_Flush();
+   EvaluationReport_WriteArtifacts(g_ctx, reason);
    LogAuditRow("SHUTDOWN", "RPEA", 1, "EA deinit", "{}");
    AuditLogger_Shutdown();
 }
@@ -446,6 +449,8 @@ void OnTimer()
    
    // M4-Task02: Check hard-stop conditions (floor breach or challenge complete)
    Equity_CheckHardStopConditions(g_ctx);
+   EvaluationReport_Update(g_ctx);
+   EvaluationReport_MaybeWriteTesterSnapshot(g_ctx);
    
    if(profiling) t_eq_end = GetMicrosecondCount();
 
@@ -529,6 +534,8 @@ void OnTick()
    {
       Equity_CheckAndExecuteKillswitch(g_ctx);
    }
+   EvaluationReport_Update(g_ctx);
+   EvaluationReport_MaybeWriteTesterSnapshot(g_ctx);
    g_order_engine.OnTick();
 }
 
@@ -655,4 +662,8 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
          }
       }
    }
+
+   g_ctx.current_server_time = TimeCurrent();
+   EvaluationReport_Update(g_ctx);
+   EvaluationReport_MaybeWriteTesterSnapshot(g_ctx);
 }
