@@ -6,6 +6,11 @@ MQL5/Files/RPEA/strategy_tester/
 
 # Local scratch files
 temp.txt
+.tmp/fundingpips_hpo_runs/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
 
 # Claude Flow generated files

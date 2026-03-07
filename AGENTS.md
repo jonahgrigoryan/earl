@@ -16,7 +16,7 @@ alwaysApply: true
 > that changed, and the **Recent Changes** list at the bottom of this section.
 > This keeps future agents current without a full codebase scan.
 
-**Last Updated**: FundingPips Phase 0 evaluation reporting implemented and validated (2026-03-07). The HPO workstream baseline is `feat/hpo-pipeline`; active Phase 0 work is on `feat/hpo-phase0-metrics-exports` with compile/tests green and tester artifact generation verified.
+**Last Updated**: FundingPips Phase 1 MT5 runner stale-artifact guard hardened for reruns (2026-03-07). The HPO workstream baseline is `feat/hpo-pipeline`; Phase 0 is merged and active work is on `feat/hpo-phase1-mt5-runner` with PR `#48` open into the baseline branch.
 
 ### Module Inventory
 
@@ -34,6 +34,7 @@ avoid unintended coupling.
 | `news.mqh` | ~875 | Support | Calendar API + CSV fallback, T +/-300s window, `News_IsEntryBlocked`, `News_GetWindowStateDetailed`. |
 | `synthetic.mqh` | ~650 | Execution | XAUEUR proxy/replication manager (XAUUSD-only or two-leg XAUUSD+EURUSD). |
 | `evaluation_report.mqh` | ~548 | Support | FundingPips Phase 0 evaluation artifact writer. Tracks per-run summary metrics and per-day DD records, handles stale-vs-fresh rollover baselines, and writes deterministic `fundingpips_eval_summary.json` plus `fundingpips_eval_daily.csv` outputs for tester/HPO consumption. |
+| `tools/fundingpips_mt5_runner.py` | ~787 | Tooling | FundingPips Phase 1 MT5 automation runner. Generates `.ini`/`.set` files, syncs repo code to the MT5 data folder, compiles the EA before execution, launches headless tester runs, caches runs by scenario plus EA hash, waits for strictly fresh artifacts on reruns, and collects summary/daily/report artifacts into structured run folders under `.tmp/fundingpips_hpo_runs/`. |
 | `allocator.mqh` | ~675 | Risk | Builds `OrderPlan` for **BWISC + MR**, strategy-specific risk sizing, adaptive-risk multiplier integration behind runtime toggle, proxy-distance mapping guard for MR, budget gate, and strategy-tagged comments. |
 | `sessions.mqh` | ~445 | Support | Session windows (LO, NY), OR snapshot. |
 | `anomaly.mqh` | ~370 | Risk | EWMA shock detector on returns/spread/tick-gap with guardrails, deterministic scoring, and staged action recommendation (`widen`/`cancel`/`flatten`) for safe rollout. |
@@ -118,6 +119,8 @@ g_last_bwisc_context.entry_price = ask; // or bid based on direction
 
 Update this list when completing a task. Helps agents understand what just changed.
 
+- **FundingPips Phase 1 stale-artifact mtime guard hardening (2026-03-07)**: Tightened artifact freshness checks in `tools/fundingpips_mt5_runner.py` so summary/daily/report files must have `mtime >= started_at` with no 2-second grace window. This prevents back-to-back `--force` reruns from reusing stale prior-run artifacts and terminating MT5 early. Added Python regressions in `Tests/python/test_fundingpips_mt5_runner.py` for stale-vs-fresh `locate_recent_file` behavior at run-start boundaries. Validation: `python -m py_compile` passed; Python unit tests `9/9` passing; two consecutive forced probe runs for `EURUSD` (`2024.01.02..2024.01.05`) completed successfully; EA compile `0 errors, 2 warnings`; automated suites `42/42` passing.
+- **FundingPips Phase 1 MT5 runner (2026-03-07)**: Added `tools/fundingpips_mt5_runner.py` plus `tools/__init__.py` and Python regression coverage in `Tests/python/test_fundingpips_mt5_runner.py`. The runner generates per-run `.ini` and `.set` files, prepends the terminal `[Common]` config section, compiles the EA before execution, launches MT5 headlessly, caches by run spec plus the full repo-controlled EA dependency tree (`MQL5/Experts/FundingPips` and `MQL5/Include/RPEA`), and collects the FundingPips summary/daily artifacts together with the tester report, including MT5 `.xml.htm` report-name handling. Batch defaults now merge `set_overrides` correctly so per-run tweaks do not drop shared parameters. Validation: `python -m py_compile` passed; Python unit tests `7/7` passing; runner probe for `EURUSD` (`2024.01.02..2024.01.05`) completed successfully; EA compile `0 errors, 2 warnings`; automated suites `42/42` passing. Packaging state: pushed on `feat/hpo-phase1-mt5-runner`, PR `#48` open into `feat/hpo-pipeline`.
 - **FundingPips Phase 0 evaluation reporting (2026-03-07)**: Added `evaluation_report.mqh` to produce deterministic FundingPips-style summary/daily artifacts, wired lifecycle updates and final report writing into `RPEA.mq5`, added `FundingPips_Phase0_EvaluationReport` coverage in `test_evaluation_report.mqh` plus runner registration, and fixed the stale-rollover expectation so tests match production fallback behavior. Validation: EA compile `0 errors, 5 warnings`; automated suites `42/42` passing; tester probe artifacts verified at `RPEA/reports/fundingpips_eval_summary.json` and `RPEA/reports/fundingpips_eval_daily.csv`.
 - **FundingPips HPO implementation outline (2026-03-07)**: Added `docs/fundingpips-hpo-implementation-outline.md` as the canonical end-to-end plan for the profitability/HPO workstream. It restructures the earlier rough rule/optimization note into a phased implementation document covering branch topology, v0/v1 delivery, phase deliverables and merge gates, artifact design, validation, overfitting defenses, and first/next/last execution order.
 - **FundingPips HPO handoff scaffold (2026-03-07)**: Added `docs/fundingpips-hpo-handoff.md` as the active cross-session tracker for the new profitability/HPO workstream. It records the repo-specific branch correction (`master` instead of `main`), locked planning decisions, planned phase branches, and now the active Phase 0 execution/validation state for future handoffs.
@@ -166,6 +169,7 @@ Update this list when completing a task. Helps agents understand what just chang
 ## Current Baseline & Workflow
 - Milestones M3-M6 complete (order engine, compliance, strategy tester, hardening).
 - **M7 milestone status**: Tasks 01-08 complete. M7 core integration baseline is `feat/m7-ensemble-integration`.
+- **FundingPips HPO stream**: Phase 0 is merged into `feat/hpo-pipeline`; the active branch is `feat/hpo-phase1-mt5-runner`, which contains the validated MT5 runner and is under review in PR `#48`. Do not cut Phase 2 until that PR is squash-merged and the baseline branch is updated locally.
 - **Active execution stream**: Post-M7 TODO closure + hardening on `feat/m7-post-fixes`.
 - **Post-M7 phase status**: Phase 0 baseline complete, Phase 1 data/policy complete, Phase 2 SLO realism complete, Phase 3 adaptive risk complete, Phase 4 learning+bandit complete, Phase 5 tuning+closeout complete.
 - **Post-M7 source of truth**: `m7-post-fixes-plan.md`, `post-m7-task-index.md`, and `post-m7-task01.md` .. `post-m7-task17.md`.
@@ -186,6 +190,7 @@ Update this list when completing a task. Helps agents understand what just chang
   cd "C:\Users\AWCS\AppData\Roaming\MetaQuotes\Terminal\D0E8209F77C8CF37AD8BF550E51FF075" && "C:\Program Files\MetaTrader 5\metaeditor64.exe" /compile:MQL5\Experts\FundingPips\RPEA.mq5 /log:MQL5\Experts\FundingPips\compile_rpea.log
   ```
 - **Run tests** (from repo root): `powershell -ExecutionPolicy Bypass -File run_tests.ps1` - launches Strategy Tester, writes results to `MQL5/Files/RPEA/test_results/test_results.json`.
+- **FundingPips Phase 1 runner smoke test** (from repo root): `python tools\fundingpips_mt5_runner.py run --name phase1_probe --symbol EURUSD --from-date 2024.01.02 --to-date 2024.01.05 --stop-existing --force`
 - Strategy Tester manual reruns: attach `Tests/RPEA/run_automated_tests_ea.mq5` to the tester to exercise suites such as `Task10_News_CSV_Fallback`.
 - Troubleshooting `run_tests.ps1` stalls: first compile test runner separately (from MT5 data folder): `"C:\Program Files\MetaTrader 5\metaeditor64.exe" /compile:MQL5\Experts\Tests\RPEA\run_automated_tests_ea.mq5 /log:MQL5\Experts\Tests\RPEA\compile_automated_tests.log`; if compile fails, fix runner before retrying tests.
 - Fallback when script still stalls: run terminal with explicit config (`terminal64.exe /config:<ini>`) using `Expert=Tests\RPEA\run_automated_tests_ea`, `ExpertParameters=Tests\RPEA\run_automated_tests.set`, `ShutdownTerminal=1`; then verify latest tester-agent result at `%APPDATA%\MetaQuotes\Tester\...\Agent-*\MQL5\Files\RPEA\test_results\test_results.json`.
