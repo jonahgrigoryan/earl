@@ -245,6 +245,9 @@ def compute_cache_key(
       "optimization": spec.optimization,
       "optimization_criterion": spec.optimization_criterion,
       "forward_mode": spec.forward_mode,
+      "use_local": spec.use_local,
+      "use_remote": spec.use_remote,
+      "use_cloud": spec.use_cloud,
       "scenario": spec.scenario,
       "rules_profile": spec.rules_profile,
       "set_overrides": spec.set_overrides,
@@ -295,10 +298,10 @@ def load_text(path: Path) -> str:
    return path.read_text(encoding="ascii")
 
 
-def load_ini_text(path: Path) -> str:
+def load_ini_text_with_encoding(path: Path) -> tuple[str, str]:
    for encoding in ("ascii", "utf-8-sig", "utf-16", "utf-16-le", "utf-16-be"):
       try:
-         return path.read_text(encoding=encoding).lstrip("\ufeff")
+         return path.read_text(encoding=encoding).lstrip("\ufeff"), encoding
       except UnicodeDecodeError:
          continue
    raise UnicodeDecodeError("unknown", b"", 0, 1, f"Could not decode INI text: {path}")
@@ -626,20 +629,7 @@ def run_single_backtest(
    force: bool,
    stop_existing: bool,
 ) -> dict[str, Any]:
-   if sync_before_run:
-      sync_repo(paths.repo_root)
-
-   compile_log_path = None
-   if compile_before_run and not dry_run:
-      compile_log_path = compile_ea(paths)
-
-   if stop_existing:
-      stop_existing_mt5()
-   else:
-      assert_no_running_mt5()
-
    base_set_path = resolve_repo_path(paths.repo_root, spec.base_set)
-   template_ini_path = resolve_repo_path(paths.repo_root, spec.template_ini)
    base_set_text = load_text(base_set_path)
    terminal_info = terminal_fingerprint(paths.terminal_exe)
    expert_dependency_hash = compute_ea_dependency_hash(paths.repo_root)
@@ -670,6 +660,18 @@ def run_single_backtest(
          "daily_path": str(cached_daily),
       }
 
+   if sync_before_run:
+      sync_repo(paths.repo_root)
+
+   compile_log_path = None
+   if compile_before_run and not dry_run:
+      compile_log_path = compile_ea(paths)
+
+   if stop_existing:
+      stop_existing_mt5()
+   else:
+      assert_no_running_mt5()
+
    generated_set_path = inputs_dir / f"{run_name}.set"
    write_single_run_set(base_set_text, spec.set_overrides, generated_set_path)
 
@@ -683,13 +685,16 @@ def run_single_backtest(
 
    generated_ini_path = inputs_dir / f"{run_name}.ini"
    common_ini_path = paths.config_dir / "common.ini"
-   common_ini_text = load_ini_text(common_ini_path) if common_ini_path.exists() else None
+   common_ini_text = None
+   generated_ini_encoding = "ascii"
+   if common_ini_path.exists():
+      common_ini_text, generated_ini_encoding = load_ini_text_with_encoding(common_ini_path)
    generated_ini_path.write_text(
       prepend_common_section(
          build_tester_ini(spec, profile_set_name, report_relative_path),
          common_ini_text,
       ),
-      encoding="ascii",
+      encoding=generated_ini_encoding,
    )
 
    manifest: dict[str, Any] = {

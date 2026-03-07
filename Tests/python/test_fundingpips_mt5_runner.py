@@ -45,6 +45,18 @@ class FundingPipsMt5RunnerTests(unittest.TestCase):
 
       self.assertNotEqual(key_a, key_b)
 
+   def test_compute_cache_key_changes_when_agent_modes_change(self) -> None:
+      spec_a = runner.build_spec({"name": "local_only", "use_local": 1, "use_remote": 0, "use_cloud": 0})
+      spec_b = runner.build_spec({"name": "remote_enabled", "use_local": 0, "use_remote": 1, "use_cloud": 0})
+      base_text = "RiskPct=1.5\nEnableMR=1\n"
+      terminal = {"path": "C:/MT5/terminal64.exe", "size": 1, "mtime_ns": 2}
+      dependency_hash = "dep_hash_v1"
+
+      key_a = runner.compute_cache_key(spec_a, base_text, terminal, dependency_hash)
+      key_b = runner.compute_cache_key(spec_b, base_text, terminal, dependency_hash)
+
+      self.assertNotEqual(key_a, key_b)
+
    def test_compute_ea_dependency_hash_changes_when_include_file_changes(self) -> None:
       with tempfile.TemporaryDirectory() as tmp_dir:
          repo_root = Path(tmp_dir)
@@ -89,6 +101,92 @@ class FundingPipsMt5RunnerTests(unittest.TestCase):
             "EnableMR": "1",
          },
       )
+
+   def test_run_single_backtest_returns_cache_hit_before_preflight(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         root = Path(tmp_dir)
+         repo_root = root / "repo"
+         output_root = root / "output"
+         tester_profiles_dir = root / "tester_profiles"
+         config_dir = root / "config"
+         terminal_data_path = root / "terminal_data"
+         terminal_exe = root / "terminal64.exe"
+         metaeditor_exe = root / "metaeditor64.exe"
+         base_set_path = repo_root / "Tests" / "RPEA" / "RPEA_10k_default.set"
+         expert_dir = repo_root / "MQL5" / "Experts" / "FundingPips"
+         include_dir = repo_root / "MQL5" / "Include" / "RPEA"
+
+         base_set_path.parent.mkdir(parents=True)
+         expert_dir.mkdir(parents=True)
+         include_dir.mkdir(parents=True)
+         output_root.mkdir(parents=True)
+         tester_profiles_dir.mkdir(parents=True)
+         config_dir.mkdir(parents=True)
+         terminal_data_path.mkdir(parents=True)
+         terminal_exe.write_text("terminal", encoding="ascii")
+         metaeditor_exe.write_text("metaeditor", encoding="ascii")
+         base_set_path.write_text("RiskPct=1.5\n", encoding="ascii")
+         (expert_dir / "RPEA.mq5").write_text("#property strict\n", encoding="ascii")
+         (include_dir / "dummy.mqh").write_text("#property strict\n", encoding="ascii")
+
+         paths = runner.RunnerPaths(
+            repo_root=repo_root,
+            terminal_exe=terminal_exe,
+            metaeditor_exe=metaeditor_exe,
+            terminal_data_path=terminal_data_path,
+            tester_root=root / "tester_root",
+            tester_profiles_dir=tester_profiles_dir,
+            config_dir=config_dir,
+            output_root=output_root,
+         )
+         spec = runner.build_spec({"name": "cache_hit_probe"})
+         terminal_info = {"path": str(terminal_exe), "size": 1, "mtime_ns": 2}
+         dependency_hash = "dep_hash_v1"
+         base_set_text = base_set_path.read_text(encoding="ascii")
+         cache_key = runner.compute_cache_key(spec, base_set_text, terminal_info, dependency_hash)
+         run_dir = output_root / f"cache_hit_probe__{cache_key}"
+         collected_dir = run_dir / "collected"
+         collected_dir.mkdir(parents=True)
+         (run_dir / "run_manifest.json").write_text("{}", encoding="ascii")
+         (collected_dir / runner.SUMMARY_FILENAME).write_text("summary", encoding="ascii")
+         (collected_dir / runner.DAILY_FILENAME).write_text("daily", encoding="ascii")
+
+         original_terminal_fingerprint = runner.terminal_fingerprint
+         original_dependency_hash = runner.compute_ea_dependency_hash
+         original_sync_repo = runner.sync_repo
+         original_compile_ea = runner.compile_ea
+         original_stop_existing_mt5 = runner.stop_existing_mt5
+         original_assert_no_running_mt5 = runner.assert_no_running_mt5
+
+         def fail(*args, **kwargs):
+            raise AssertionError("preflight should not run on cache hit")
+
+         try:
+            runner.terminal_fingerprint = lambda _: terminal_info
+            runner.compute_ea_dependency_hash = lambda _: dependency_hash
+            runner.sync_repo = fail
+            runner.compile_ea = fail
+            runner.stop_existing_mt5 = fail
+            runner.assert_no_running_mt5 = fail
+
+            result = runner.run_single_backtest(
+               spec,
+               paths,
+               dry_run=False,
+               sync_before_run=True,
+               compile_before_run=True,
+               force=False,
+               stop_existing=False,
+            )
+         finally:
+            runner.terminal_fingerprint = original_terminal_fingerprint
+            runner.compute_ea_dependency_hash = original_dependency_hash
+            runner.sync_repo = original_sync_repo
+            runner.compile_ea = original_compile_ea
+            runner.stop_existing_mt5 = original_stop_existing_mt5
+            runner.assert_no_running_mt5 = original_assert_no_running_mt5
+
+      self.assertEqual(result["status"], "cache_hit")
 
    def test_write_single_run_set_sanitizes_optimize_syntax(self) -> None:
       base_text = "\n".join(
@@ -157,6 +255,22 @@ class FundingPipsMt5RunnerTests(unittest.TestCase):
       self.assertIn("Login=123456", merged)
       self.assertIn("[Tester]", merged)
       self.assertNotIn("[Charts]", merged)
+
+   def test_load_ini_text_with_encoding_round_trips_non_ascii(self) -> None:
+      ini_text = "[Common]\nServer=München-Broker\nAccountName=Jörg\n"
+
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         ini_path = Path(tmp_dir) / "common.ini"
+         output_path = Path(tmp_dir) / "generated.ini"
+         ini_path.write_text(ini_text, encoding="utf-16")
+
+         loaded_text, encoding = runner.load_ini_text_with_encoding(ini_path)
+         output_path.write_text(loaded_text + "\n[Tester]\nExpert=FundingPips\\RPEA\n", encoding=encoding)
+         round_trip = output_path.read_text(encoding="utf-16")
+
+      self.assertEqual(encoding, "utf-16")
+      self.assertIn("München", round_trip)
+      self.assertIn("Jörg", round_trip)
 
    def test_locate_recent_file_ignores_stale_artifacts_before_run_start(self) -> None:
       with tempfile.TemporaryDirectory() as tmp_dir:
