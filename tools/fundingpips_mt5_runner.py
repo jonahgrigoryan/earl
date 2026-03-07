@@ -442,13 +442,12 @@ def locate_recent_file(root: Path, filename: str, not_before: float) -> Path | N
 
    latest: Path | None = None
    latest_mtime = -1.0
-   lower_bound = not_before - 2.0
    for path in root.rglob(filename):
       try:
          mtime = path.stat().st_mtime
       except FileNotFoundError:
          continue
-      if mtime < lower_bound:
+      if mtime < not_before:
          continue
       if mtime > latest_mtime:
          latest = path
@@ -473,14 +472,14 @@ def wait_for_artifacts(
       daily_path = locate_recent_file(tester_root, DAILY_FILENAME, started_at)
       if expected_report_path.exists():
          try:
-            if expected_report_path.stat().st_mtime >= started_at - 2.0:
+            if expected_report_path.stat().st_mtime >= started_at:
                report_path = expected_report_path
          except FileNotFoundError:
             report_path = None
       elif expected_report_path.with_suffix(expected_report_path.suffix + ".htm").exists():
          alt_report = expected_report_path.with_suffix(expected_report_path.suffix + ".htm")
          try:
-            if alt_report.stat().st_mtime >= started_at - 2.0:
+            if alt_report.stat().st_mtime >= started_at:
                report_path = alt_report
          except FileNotFoundError:
             report_path = None

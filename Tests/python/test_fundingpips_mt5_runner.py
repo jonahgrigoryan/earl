@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -156,6 +157,29 @@ class FundingPipsMt5RunnerTests(unittest.TestCase):
       self.assertIn("Login=123456", merged)
       self.assertIn("[Tester]", merged)
       self.assertNotIn("[Charts]", merged)
+
+   def test_locate_recent_file_ignores_stale_artifacts_before_run_start(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         root = Path(tmp_dir)
+         stale = root / runner.SUMMARY_FILENAME
+         stale.write_text("old", encoding="ascii")
+
+         not_before = stale.stat().st_mtime + 0.5
+         found = runner.locate_recent_file(root, runner.SUMMARY_FILENAME, not_before)
+
+      self.assertIsNone(found)
+
+   def test_locate_recent_file_accepts_new_artifacts_after_run_start(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         root = Path(tmp_dir)
+         fresh = root / runner.SUMMARY_FILENAME
+         fresh.write_text("new", encoding="ascii")
+         start = fresh.stat().st_mtime - 0.001
+         os.utime(fresh, (start + 1.0, start + 1.0))
+
+         found = runner.locate_recent_file(root, runner.SUMMARY_FILENAME, start)
+
+      self.assertEqual(found, fresh)
 
 
 if __name__ == "__main__":
