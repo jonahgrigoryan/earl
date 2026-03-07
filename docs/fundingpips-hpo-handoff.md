@@ -43,6 +43,8 @@ It exists so a new agent or a new conversation can resume work without re-scanni
   - controlled tester probe previously wrote:
     - `RPEA/reports/fundingpips_eval_summary.json`
     - `RPEA/reports/fundingpips_eval_daily.csv`
+- Current Phase 0 commit: `0b7d80b` (`FundingPips: add Phase 0 evaluation reporting`)
+- Current Phase 0 PR: `https://github.com/jonahgrigoryan/earl/pull/47`
 - Immediate objective: review/merge Phase 0 into `feat/hpo-pipeline`, then cut Phase 1.
 
 ## Locked Decisions So Far
@@ -91,6 +93,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - 2026-03-07: User approved implementation. Created `feat/hpo-pipeline` from `master` and `feat/hpo-phase0-metrics-exports` from the baseline branch, then implemented Phase 0 evaluation reporting.
 - 2026-03-07: Added `MQL5/Include/RPEA/evaluation_report.mqh`, wired `RPEA.mq5` to initialize/update/write the evaluation artifacts, added `Tests/RPEA/test_evaluation_report.mqh`, and registered `FundingPips_Phase0_EvaluationReport` in the automated runner. Controlled tester evidence was produced at `C:\Users\AWCS\AppData\Roaming\MetaQuotes\Tester\D0E8209F77C8CF37AD8BF550E51FF075\Agent-127.0.0.1-3001\MQL5\Files\RPEA\reports\fundingpips_eval_summary.json` and `C:\Users\AWCS\AppData\Roaming\MetaQuotes\Tester\D0E8209F77C8CF37AD8BF550E51FF075\Agent-127.0.0.1-3001\MQL5\Files\RPEA\reports\fundingpips_eval_daily.csv`.
 - 2026-03-07: Fixed the only remaining red test by updating the stale-rollover expectation in `Tests/RPEA/test_evaluation_report.mqh` to match runtime fallback logic and by keeping a separate fresh-rollover assertion. Final validation: EA compile `0 errors, 5 warnings`; `run_tests.ps1` copied `MQL5/Files/RPEA/test_results/test_results.json` with `total_failed=0` and `success=true`.
+- 2026-03-07: Committed the Phase 0 work on `feat/hpo-phase0-metrics-exports` as `0b7d80b` (`FundingPips: add Phase 0 evaluation reporting`), pushed both `feat/hpo-pipeline` and `feat/hpo-phase0-metrics-exports` to `origin`, and opened PR `#47` targeting `feat/hpo-pipeline` for the requested squash merge workflow.
 
 ## Next Recommended Action
 
