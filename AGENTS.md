@@ -16,7 +16,7 @@ alwaysApply: true
 > that changed, and the **Recent Changes** list at the bottom of this section.
 > This keeps future agents current without a full codebase scan.
 
-**Last Updated**: FundingPips Phase 1 MT5 runner implemented and locally validated (2026-03-07). The HPO workstream baseline is `feat/hpo-pipeline`; Phase 0 is merged and active work is on `feat/hpo-phase1-mt5-runner` pending commit/push/PR packaging.
+**Last Updated**: FundingPips Phase 1 MT5 runner packaged and pushed for review (2026-03-07). The HPO workstream baseline is `feat/hpo-pipeline`; Phase 0 is merged and active work is on `feat/hpo-phase1-mt5-runner` with PR `#48` open into the baseline branch.
 
 ### Module Inventory
 
@@ -119,7 +119,7 @@ g_last_bwisc_context.entry_price = ask; // or bid based on direction
 
 Update this list when completing a task. Helps agents understand what just changed.
 
-- **FundingPips Phase 1 MT5 runner (2026-03-07)**: Added `tools/fundingpips_mt5_runner.py` plus `tools/__init__.py` and Python regression coverage in `Tests/python/test_fundingpips_mt5_runner.py`. The runner generates per-run `.ini` and `.set` files, prepends the terminal `[Common]` config section, compiles the EA before execution, launches MT5 headlessly, caches by run spec plus EA source hash, and collects the FundingPips summary/daily artifacts together with the tester report, including MT5 `.xml.htm` report-name handling. Validation: `python -m py_compile` passed; Python unit tests `4/4` passing; runner probe for `EURUSD` (`2024.01.02..2024.01.05`) completed successfully; EA compile `0 errors, 2 warnings`; automated suites `42/42` passing.
+- **FundingPips Phase 1 MT5 runner (2026-03-07)**: Added `tools/fundingpips_mt5_runner.py` plus `tools/__init__.py` and Python regression coverage in `Tests/python/test_fundingpips_mt5_runner.py`. The runner generates per-run `.ini` and `.set` files, prepends the terminal `[Common]` config section, compiles the EA before execution, launches MT5 headlessly, caches by run spec plus EA source hash, and collects the FundingPips summary/daily artifacts together with the tester report, including MT5 `.xml.htm` report-name handling. Validation: `python -m py_compile` passed; Python unit tests `4/4` passing; runner probe for `EURUSD` (`2024.01.02..2024.01.05`) completed successfully; EA compile `0 errors, 2 warnings`; automated suites `42/42` passing. Packaging state: committed as `2182b0c`, pushed on `feat/hpo-phase1-mt5-runner`, PR `#48` open into `feat/hpo-pipeline`.
 - **FundingPips Phase 0 evaluation reporting (2026-03-07)**: Added `evaluation_report.mqh` to produce deterministic FundingPips-style summary/daily artifacts, wired lifecycle updates and final report writing into `RPEA.mq5`, added `FundingPips_Phase0_EvaluationReport` coverage in `test_evaluation_report.mqh` plus runner registration, and fixed the stale-rollover expectation so tests match production fallback behavior. Validation: EA compile `0 errors, 5 warnings`; automated suites `42/42` passing; tester probe artifacts verified at `RPEA/reports/fundingpips_eval_summary.json` and `RPEA/reports/fundingpips_eval_daily.csv`.
 - **FundingPips HPO implementation outline (2026-03-07)**: Added `docs/fundingpips-hpo-implementation-outline.md` as the canonical end-to-end plan for the profitability/HPO workstream. It restructures the earlier rough rule/optimization note into a phased implementation document covering branch topology, v0/v1 delivery, phase deliverables and merge gates, artifact design, validation, overfitting defenses, and first/next/last execution order.
 - **FundingPips HPO handoff scaffold (2026-03-07)**: Added `docs/fundingpips-hpo-handoff.md` as the active cross-session tracker for the new profitability/HPO workstream. It records the repo-specific branch correction (`master` instead of `main`), locked planning decisions, planned phase branches, and now the active Phase 0 execution/validation state for future handoffs.
@@ -168,7 +168,7 @@ Update this list when completing a task. Helps agents understand what just chang
 ## Current Baseline & Workflow
 - Milestones M3-M6 complete (order engine, compliance, strategy tester, hardening).
 - **M7 milestone status**: Tasks 01-08 complete. M7 core integration baseline is `feat/m7-ensemble-integration`.
-- **FundingPips HPO stream**: Phase 0 is merged into `feat/hpo-pipeline`; the active branch is `feat/hpo-phase1-mt5-runner`, which contains the locally validated MT5 runner and must be commit/push/PR packaged before Phase 2 is cut.
+- **FundingPips HPO stream**: Phase 0 is merged into `feat/hpo-pipeline`; the active branch is `feat/hpo-phase1-mt5-runner`, which contains the validated MT5 runner and is under review in PR `#48`. Do not cut Phase 2 until that PR is squash-merged and the baseline branch is updated locally.
 - **Active execution stream**: Post-M7 TODO closure + hardening on `feat/m7-post-fixes`.
 - **Post-M7 phase status**: Phase 0 baseline complete, Phase 1 data/policy complete, Phase 2 SLO realism complete, Phase 3 adaptive risk complete, Phase 4 learning+bandit complete, Phase 5 tuning+closeout complete.
 - **Post-M7 source of truth**: `m7-post-fixes-plan.md`, `post-m7-task-index.md`, and `post-m7-task01.md` .. `post-m7-task17.md`.

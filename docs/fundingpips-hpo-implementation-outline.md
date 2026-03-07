@@ -439,12 +439,13 @@ Use these throughout the pipeline, not just at the end:
 - Phase 0 is complete and squash-merged into `feat/hpo-pipeline`.
 - Phase 1 is implemented locally on `feat/hpo-phase1-mt5-runner`.
 - Phase 1 currently includes generated `.ini` and `.set` support, compile-before-run MT5 orchestration, cache-aware run folders, and deterministic collection of summary, daily, and tester report artifacts.
+- Phase 1 is packaged on `feat/hpo-phase1-mt5-runner` and is awaiting review in PR `#48`.
 - Latest validation for Phase 1:
   - Python syntax check passed
   - Python unit tests: `4/4` passing
   - MT5 probe run completed successfully for `EURUSD` from `2024.01.02` to `2024.01.05`
   - EA compile: `0 errors, 2 warnings`
   - automated suites: `42/42` passing
-- Next execution step: commit/push `feat/hpo-phase1-mt5-runner`, open the PR into `feat/hpo-pipeline`, then wait for squash merge before cutting Phase 2.
+- Next execution step: squash-merge PR `#48` into `feat/hpo-pipeline`, then wait to cut Phase 2 from the updated baseline branch.
 
 Use `docs/fundingpips-hpo-handoff.md` as the session-by-session execution tracker.

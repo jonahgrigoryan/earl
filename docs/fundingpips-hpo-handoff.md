@@ -24,7 +24,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 
 ## Current Snapshot
 
-- Status: Phase 0 is merged into `feat/hpo-pipeline`; Phase 1 implementation is locally validated on `feat/hpo-phase1-mt5-runner` and is ready to be packaged into a PR.
+- Status: Phase 0 is merged into `feat/hpo-pipeline`; Phase 1 is implemented, validated, pushed, and waiting for review on `feat/hpo-phase1-mt5-runner`.
 - User go-ahead to begin edits: granted.
 - Repo default branch: `master`.
 - Baseline branch for this workstream: `feat/hpo-pipeline`.
@@ -49,8 +49,9 @@ It exists so a new agent or a new conversation can resume work without re-scanni
     - `fundingpips_eval_daily.csv`
     - `phase1_probe_dd6fa6165b2ce967.xml.htm`
 - Phase 0 merge result: PR `#47` squash-merged into `feat/hpo-pipeline`
-- Current Phase 1 branch state: local changes only; no commit or PR yet
-- Immediate objective: commit, push, and open the Phase 1 PR from `feat/hpo-phase1-mt5-runner` into `feat/hpo-pipeline`.
+- Current Phase 1 branch state: commit `2182b0c` pushed to `origin/feat/hpo-phase1-mt5-runner`
+- Current Phase 1 PR: `https://github.com/jonahgrigoryan/earl/pull/48`
+- Immediate objective: review and squash-merge the Phase 1 PR into `feat/hpo-pipeline`.
 
 ## Locked Decisions So Far
 
@@ -65,7 +66,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 | Phase | Branch | Goal | Status |
 |---|---|---|---|
 | 0 | `feat/hpo-phase0-metrics-exports` | Deterministic tester metrics for FundingPips-style pass/fail and drawdown tracking | Squash-merged into `feat/hpo-pipeline` via PR `#47` |
-| 1 | `feat/hpo-phase1-mt5-runner` | Python MT5 runner for repeatable single backtests | Implemented locally; probe/tests green; pending commit + PR |
+| 1 | `feat/hpo-phase1-mt5-runner` | Python MT5 runner for repeatable single backtests | Committed, pushed, and awaiting review in PR `#48` |
 | 2 | `feat/hpo-phase2-objective-windows` | Objective function, rolling windows, and baseline Optuna study | Not started |
 | 3 | `feat/hpo-phase3-optuna-search` | Parameter reduction and conditional search | Not started |
 | 4 | `feat/hpo-phase4-wfo-stress` | Walk-forward and stress harness | Not started |
@@ -103,9 +104,10 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - 2026-03-07: User squash-merged Phase 0 PR `#47`. Fast-forwarded local `feat/hpo-pipeline` to the merged baseline, then cut `feat/hpo-phase1-mt5-runner` from the updated baseline branch.
 - 2026-03-07: Implemented the Phase 1 MT5 runner in `tools/fundingpips_mt5_runner.py` with generated `.ini` and `.set` files, explicit MetaEditor compile-before-run behavior, cache keying by run spec plus EA source hash, structured artifact collection, and MT5 report-name fallback for `.xml.htm`. Added Python regression coverage in `Tests/python/test_fundingpips_mt5_runner.py`.
 - 2026-03-07: Validated Phase 1 locally with `py_compile`, `4/4` Python unit tests, a successful probe run for `EURUSD` (`2024.01.02` through `2024.01.05`) that collected summary/daily/report artifacts under `.tmp/fundingpips_hpo_runs/phase1_probe__dd6fa6165b2ce967/`, EA compile `0 errors, 2 warnings`, and automated suites `42/42` passing.
+- 2026-03-07: Committed the Phase 1 work on `feat/hpo-phase1-mt5-runner` as `2182b0c` (`FundingPips: add Phase 1 MT5 runner`), pushed the branch to `origin`, and opened PR `#48` targeting `feat/hpo-pipeline` for the requested squash-merge workflow.
 
 ## Next Recommended Action
 
-- Commit the validated Phase 1 runner changes on `feat/hpo-phase1-mt5-runner`.
-- Push the branch and open a PR into `feat/hpo-pipeline`.
-- After the user squash-merges Phase 1, cut `feat/hpo-phase2-objective-windows` from the updated baseline branch.
+- Review and squash-merge PR `#48` into `feat/hpo-pipeline`.
+- After the Phase 1 merge, fast-forward the local baseline branch.
+- Only then cut `feat/hpo-phase2-objective-windows` from the updated baseline branch.
