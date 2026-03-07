@@ -24,28 +24,33 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 
 ## Current Snapshot
 
-- Status: Phase 0 implementation is in progress and locally validated; not merged to the baseline branch yet.
+- Status: Phase 0 is merged into `feat/hpo-pipeline`; Phase 1 implementation is locally validated on `feat/hpo-phase1-mt5-runner` and is ready to be packaged into a PR.
 - User go-ahead to begin edits: granted.
 - Repo default branch: `master`.
 - Baseline branch for this workstream: `feat/hpo-pipeline`.
-- Active Phase 0 branch: `feat/hpo-phase0-metrics-exports`.
+- Active Phase 1 branch: `feat/hpo-phase1-mt5-runner`.
 - Branches created for this workstream:
   - `feat/hpo-pipeline`
   - `feat/hpo-phase0-metrics-exports`
+  - `feat/hpo-phase1-mt5-runner`
 - Code changes applied in this workstream:
-  - added `MQL5/Include/RPEA/evaluation_report.mqh`
-  - wired evaluation-report lifecycle hooks into `MQL5/Experts/FundingPips/RPEA.mq5`
-  - added `Tests/RPEA/test_evaluation_report.mqh`
-  - registered the new suite in `Tests/RPEA/run_automated_tests_ea.mq5`
+  - Phase 0 merged: `MQL5/Include/RPEA/evaluation_report.mqh`, `MQL5/Experts/FundingPips/RPEA.mq5`, `Tests/RPEA/test_evaluation_report.mqh`, and runner registration in `Tests/RPEA/run_automated_tests_ea.mq5`
+  - Phase 1 added `tools/__init__.py`
+  - Phase 1 added `tools/fundingpips_mt5_runner.py`
+  - Phase 1 added `Tests/python/test_fundingpips_mt5_runner.py`
 - Validation runs executed in this workstream:
-  - EA compile: `0 errors, 5 warnings`
+  - Python syntax check: `python -m py_compile tools\fundingpips_mt5_runner.py Tests\python\test_fundingpips_mt5_runner.py`
+  - Python unit tests: `4/4` passing in `Tests.python.test_fundingpips_mt5_runner`
+  - Phase 1 probe run: `python tools\fundingpips_mt5_runner.py run --name phase1_probe --symbol EURUSD --from-date 2024.01.02 --to-date 2024.01.05 --stop-existing --force`
+  - EA compile: `0 errors, 2 warnings`
   - automated suites: `42/42` passing (`success=true`)
-  - controlled tester probe previously wrote:
-    - `RPEA/reports/fundingpips_eval_summary.json`
-    - `RPEA/reports/fundingpips_eval_daily.csv`
-- Current Phase 0 commit: `0b7d80b` (`FundingPips: add Phase 0 evaluation reporting`)
-- Current Phase 0 PR: `https://github.com/jonahgrigoryan/earl/pull/47`
-- Immediate objective: review/merge Phase 0 into `feat/hpo-pipeline`, then cut Phase 1.
+  - Phase 1 collected artifacts written under `.tmp/fundingpips_hpo_runs/phase1_probe__dd6fa6165b2ce967/collected/`:
+    - `fundingpips_eval_summary.json`
+    - `fundingpips_eval_daily.csv`
+    - `phase1_probe_dd6fa6165b2ce967.xml.htm`
+- Phase 0 merge result: PR `#47` squash-merged into `feat/hpo-pipeline`
+- Current Phase 1 branch state: local changes only; no commit or PR yet
+- Immediate objective: commit, push, and open the Phase 1 PR from `feat/hpo-phase1-mt5-runner` into `feat/hpo-pipeline`.
 
 ## Locked Decisions So Far
 
@@ -59,8 +64,8 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 
 | Phase | Branch | Goal | Status |
 |---|---|---|---|
-| 0 | `feat/hpo-phase0-metrics-exports` | Deterministic tester metrics for FundingPips-style pass/fail and drawdown tracking | Implemented locally; compile/tests green; pending review + merge |
-| 1 | `feat/hpo-phase1-mt5-runner` | Python MT5 runner for repeatable single backtests | Not started |
+| 0 | `feat/hpo-phase0-metrics-exports` | Deterministic tester metrics for FundingPips-style pass/fail and drawdown tracking | Squash-merged into `feat/hpo-pipeline` via PR `#47` |
+| 1 | `feat/hpo-phase1-mt5-runner` | Python MT5 runner for repeatable single backtests | Implemented locally; probe/tests green; pending commit + PR |
 | 2 | `feat/hpo-phase2-objective-windows` | Objective function, rolling windows, and baseline Optuna study | Not started |
 | 3 | `feat/hpo-phase3-optuna-search` | Parameter reduction and conditional search | Not started |
 | 4 | `feat/hpo-phase4-wfo-stress` | Walk-forward and stress harness | Not started |
@@ -84,6 +89,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - FundingPips public sources conflict on exact rules; the purchased dashboard remains the source of truth for target, daily loss, overall loss, minimum trading days, reset clock, leverage, and news policy.
 - MT5 built-in statistics are not sufficient on their own for FundingPips-style daily drawdown tracking; custom run artifacts are expected to be required.
 - The repo already contains a prior profitability branch and evidence bundle; new work should reuse that context where useful but should not assume it already solves Phase 0 measurement.
+- The Phase 1 runner depends on local MT5 terminal state, including `config/common.ini`, terminal authorization, and report naming quirks such as MT5 writing XML reports as `.xml.htm`.
 - Phase 0 solves measurement, not alpha. The verified probe artifact still showed `trades_total=0`, so profitability work now depends on Phase 1+ automation and subsequent search/strategy fixes rather than additional reporting changes.
 
 ## Session Log
@@ -94,8 +100,12 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - 2026-03-07: Added `MQL5/Include/RPEA/evaluation_report.mqh`, wired `RPEA.mq5` to initialize/update/write the evaluation artifacts, added `Tests/RPEA/test_evaluation_report.mqh`, and registered `FundingPips_Phase0_EvaluationReport` in the automated runner. Controlled tester evidence was produced at `C:\Users\AWCS\AppData\Roaming\MetaQuotes\Tester\D0E8209F77C8CF37AD8BF550E51FF075\Agent-127.0.0.1-3001\MQL5\Files\RPEA\reports\fundingpips_eval_summary.json` and `C:\Users\AWCS\AppData\Roaming\MetaQuotes\Tester\D0E8209F77C8CF37AD8BF550E51FF075\Agent-127.0.0.1-3001\MQL5\Files\RPEA\reports\fundingpips_eval_daily.csv`.
 - 2026-03-07: Fixed the only remaining red test by updating the stale-rollover expectation in `Tests/RPEA/test_evaluation_report.mqh` to match runtime fallback logic and by keeping a separate fresh-rollover assertion. Final validation: EA compile `0 errors, 5 warnings`; `run_tests.ps1` copied `MQL5/Files/RPEA/test_results/test_results.json` with `total_failed=0` and `success=true`.
 - 2026-03-07: Committed the Phase 0 work on `feat/hpo-phase0-metrics-exports` as `0b7d80b` (`FundingPips: add Phase 0 evaluation reporting`), pushed both `feat/hpo-pipeline` and `feat/hpo-phase0-metrics-exports` to `origin`, and opened PR `#47` targeting `feat/hpo-pipeline` for the requested squash merge workflow.
+- 2026-03-07: User squash-merged Phase 0 PR `#47`. Fast-forwarded local `feat/hpo-pipeline` to the merged baseline, then cut `feat/hpo-phase1-mt5-runner` from the updated baseline branch.
+- 2026-03-07: Implemented the Phase 1 MT5 runner in `tools/fundingpips_mt5_runner.py` with generated `.ini` and `.set` files, explicit MetaEditor compile-before-run behavior, cache keying by run spec plus EA source hash, structured artifact collection, and MT5 report-name fallback for `.xml.htm`. Added Python regression coverage in `Tests/python/test_fundingpips_mt5_runner.py`.
+- 2026-03-07: Validated Phase 1 locally with `py_compile`, `4/4` Python unit tests, a successful probe run for `EURUSD` (`2024.01.02` through `2024.01.05`) that collected summary/daily/report artifacts under `.tmp/fundingpips_hpo_runs/phase1_probe__dd6fa6165b2ce967/`, EA compile `0 errors, 2 warnings`, and automated suites `42/42` passing.
 
 ## Next Recommended Action
 
-- Review and merge `feat/hpo-phase0-metrics-exports` into `feat/hpo-pipeline`.
-- After the Phase 0 merge, cut `feat/hpo-phase1-mt5-runner` from the updated baseline branch and start the MT5 runner automation work.
+- Commit the validated Phase 1 runner changes on `feat/hpo-phase1-mt5-runner`.
+- Push the branch and open a PR into `feat/hpo-pipeline`.
+- After the user squash-merges Phase 1, cut `feat/hpo-phase2-objective-windows` from the updated baseline branch.
