@@ -225,7 +225,12 @@ def stable_json(data: Any) -> str:
    return json.dumps(data, sort_keys=True, separators=(",", ":"))
 
 
-def compute_cache_key(spec: BacktestSpec, base_set_text: str, terminal_info: dict[str, Any]) -> str:
+def compute_cache_key(
+   spec: BacktestSpec,
+   base_set_text: str,
+   terminal_info: dict[str, Any],
+   expert_dependency_hash: str,
+) -> str:
    payload = {
       "expert": spec.expert,
       "symbol": spec.symbol,
@@ -244,20 +249,45 @@ def compute_cache_key(spec: BacktestSpec, base_set_text: str, terminal_info: dic
       "rules_profile": spec.rules_profile,
       "set_overrides": spec.set_overrides,
       "base_set_text": base_set_text,
+      "expert_dependency_hash": expert_dependency_hash,
       "terminal": terminal_info,
    }
    digest = hashlib.sha256(stable_json(payload).encode("utf-8")).hexdigest()
    return digest[:16]
 
 
-def file_content_hash(path: Path) -> str:
+def compute_directory_tree_hash(root: Path, *, suffixes: tuple[str, ...]) -> str:
    digest = hashlib.sha256()
-   with path.open("rb") as handle:
-      while True:
-         chunk = handle.read(65536)
-         if not chunk:
-            break
-         digest.update(chunk)
+   files = sorted(
+      path
+      for path in root.rglob("*")
+      if path.is_file() and path.suffix.lower() in suffixes
+   )
+   for path in files:
+      relative_path = path.relative_to(root).as_posix()
+      digest.update(relative_path.encode("utf-8"))
+      digest.update(b"\0")
+      with path.open("rb") as handle:
+         while True:
+            chunk = handle.read(65536)
+            if not chunk:
+               break
+            digest.update(chunk)
+      digest.update(b"\0")
+   return digest.hexdigest()
+
+
+def compute_ea_dependency_hash(repo: Path) -> str:
+   digest = hashlib.sha256()
+   roots = [
+      resolve_repo_path(repo, Path("MQL5/Experts/FundingPips")),
+      resolve_repo_path(repo, Path("MQL5/Include/RPEA")),
+   ]
+   for root in roots:
+      digest.update(root.relative_to(repo).as_posix().encode("utf-8"))
+      digest.update(b"\0")
+      digest.update(compute_directory_tree_hash(root, suffixes=(".mq5", ".mqh")).encode("ascii"))
+      digest.update(b"\0")
    return digest.hexdigest()
 
 
@@ -507,12 +537,14 @@ def create_runner_paths(args: argparse.Namespace) -> RunnerPaths:
 def build_spec(run_data: dict[str, Any], defaults: dict[str, Any] | None = None) -> BacktestSpec:
    merged = dict(defaults or {})
    merged.update(run_data)
+   merged_set_overrides = dict((defaults or {}).get("set_overrides") or {})
+   merged_set_overrides.update(run_data.get("set_overrides") or {})
 
    name = merged.get("name") or f"{merged.get('symbol', 'run')}_{merged.get('from_date', '')}_{merged.get('to_date', '')}"
    template_ini = Path(merged.get("template_ini", DEFAULT_TEMPLATE_INI))
    base_set = Path(merged.get("base_set", DEFAULT_BASE_SET))
    report_stem = merged.get("report_stem") or safe_name(name)
-   set_overrides = dict(merged.get("set_overrides") or {})
+   set_overrides = merged_set_overrides
 
    return BacktestSpec(
       name=name,
@@ -611,11 +643,12 @@ def run_single_backtest(
    template_ini_path = resolve_repo_path(paths.repo_root, spec.template_ini)
    base_set_text = load_text(base_set_path)
    terminal_info = terminal_fingerprint(paths.terminal_exe)
-   expert_source_hash = file_content_hash(resolve_repo_path(paths.repo_root, Path("MQL5/Experts/FundingPips/RPEA.mq5")))
+   expert_dependency_hash = compute_ea_dependency_hash(paths.repo_root)
    cache_key = compute_cache_key(
       spec,
-      base_set_text + "\n#expert_source_hash=" + expert_source_hash,
+      base_set_text,
       terminal_info,
+      expert_dependency_hash,
    )
 
    run_name = safe_name(spec.name)
@@ -674,7 +707,7 @@ def run_single_backtest(
       "terminal_data_path": str(paths.terminal_data_path),
       "tester_root": str(paths.tester_root),
       "terminal_fingerprint": terminal_info,
-      "expert_source_hash": expert_source_hash,
+      "expert_dependency_hash": expert_dependency_hash,
       "compile_log_path": str(compile_log_path) if compile_log_path else None,
       "spec": spec_to_manifest_dict(spec),
    }

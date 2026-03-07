@@ -442,7 +442,7 @@ Use these throughout the pipeline, not just at the end:
 - Phase 1 is packaged on `feat/hpo-phase1-mt5-runner` and is awaiting review in PR `#48`.
 - Latest validation for Phase 1:
   - Python syntax check passed
-  - Python unit tests: `4/4` passing
+  - Python unit tests: `7/7` passing
   - MT5 probe run completed successfully for `EURUSD` from `2024.01.02` to `2024.01.05`
   - EA compile: `0 errors, 2 warnings`
   - automated suites: `42/42` passing

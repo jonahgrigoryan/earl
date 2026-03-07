@@ -27,11 +27,67 @@ class FundingPipsMt5RunnerTests(unittest.TestCase):
       )
       base_text = "RiskPct=1.5\nEnableMR=1\n"
       terminal = {"path": "C:/MT5/terminal64.exe", "size": 1, "mtime_ns": 2}
+      dependency_hash = "dep_hash_v1"
 
-      key_a = runner.compute_cache_key(spec_a, base_text, terminal)
-      key_b = runner.compute_cache_key(spec_b, base_text, terminal)
+      key_a = runner.compute_cache_key(spec_a, base_text, terminal, dependency_hash)
+      key_b = runner.compute_cache_key(spec_b, base_text, terminal, dependency_hash)
 
       self.assertEqual(key_a, key_b)
+
+   def test_compute_cache_key_changes_when_dependency_hash_changes(self) -> None:
+      spec = runner.build_spec({"name": "cache_probe"})
+      base_text = "RiskPct=1.5\nEnableMR=1\n"
+      terminal = {"path": "C:/MT5/terminal64.exe", "size": 1, "mtime_ns": 2}
+
+      key_a = runner.compute_cache_key(spec, base_text, terminal, "dep_hash_v1")
+      key_b = runner.compute_cache_key(spec, base_text, terminal, "dep_hash_v2")
+
+      self.assertNotEqual(key_a, key_b)
+
+   def test_compute_ea_dependency_hash_changes_when_include_file_changes(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         repo_root = Path(tmp_dir)
+         expert_dir = repo_root / "MQL5" / "Experts" / "FundingPips"
+         include_dir = repo_root / "MQL5" / "Include" / "RPEA"
+         expert_dir.mkdir(parents=True)
+         include_dir.mkdir(parents=True)
+         (expert_dir / "RPEA.mq5").write_text('#include <RPEA/test_module.mqh>\n', encoding="ascii")
+         module_path = include_dir / "test_module.mqh"
+         module_path.write_text("int TestValue() { return 1; }\n", encoding="ascii")
+
+         hash_a = runner.compute_ea_dependency_hash(repo_root)
+         module_path.write_text("int TestValue() { return 2; }\n", encoding="ascii")
+         hash_b = runner.compute_ea_dependency_hash(repo_root)
+
+      self.assertNotEqual(hash_a, hash_b)
+
+   def test_build_spec_merges_default_and_run_set_overrides(self) -> None:
+      spec = runner.build_spec(
+         {
+            "name": "batch_probe",
+            "set_overrides": {
+               "RiskPct": "0.9",
+               "EnableMR": "1",
+            },
+         },
+         defaults={
+            "symbol": "XAUUSD",
+            "set_overrides": {
+               "RiskPct": "1.2",
+               "EnableQL": "0",
+            },
+         },
+      )
+
+      self.assertEqual(spec.symbol, "XAUUSD")
+      self.assertEqual(
+         spec.set_overrides,
+         {
+            "RiskPct": "0.9",
+            "EnableQL": "0",
+            "EnableMR": "1",
+         },
+      )
 
    def test_write_single_run_set_sanitizes_optimize_syntax(self) -> None:
       base_text = "\n".join(

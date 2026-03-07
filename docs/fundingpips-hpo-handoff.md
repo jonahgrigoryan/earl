@@ -40,16 +40,16 @@ It exists so a new agent or a new conversation can resume work without re-scanni
   - Phase 1 added `Tests/python/test_fundingpips_mt5_runner.py`
 - Validation runs executed in this workstream:
   - Python syntax check: `python -m py_compile tools\fundingpips_mt5_runner.py Tests\python\test_fundingpips_mt5_runner.py`
-  - Python unit tests: `4/4` passing in `Tests.python.test_fundingpips_mt5_runner`
+  - Python unit tests: `7/7` passing in `Tests.python.test_fundingpips_mt5_runner`
   - Phase 1 probe run: `python tools\fundingpips_mt5_runner.py run --name phase1_probe --symbol EURUSD --from-date 2024.01.02 --to-date 2024.01.05 --stop-existing --force`
   - EA compile: `0 errors, 2 warnings`
   - automated suites: `42/42` passing (`success=true`)
-  - Phase 1 collected artifacts written under `.tmp/fundingpips_hpo_runs/phase1_probe__dd6fa6165b2ce967/collected/`:
+  - Phase 1 collected artifacts written under `.tmp/fundingpips_hpo_runs/phase1_probe__ed52d144f0fbd29f/collected/`:
     - `fundingpips_eval_summary.json`
     - `fundingpips_eval_daily.csv`
-    - `phase1_probe_dd6fa6165b2ce967.xml.htm`
+    - `phase1_probe_ed52d144f0fbd29f.xml.htm`
 - Phase 0 merge result: PR `#47` squash-merged into `feat/hpo-pipeline`
-- Current Phase 1 branch state: commit `2182b0c` pushed to `origin/feat/hpo-phase1-mt5-runner`
+- Current Phase 1 branch state: branch updates pending review on `origin/feat/hpo-phase1-mt5-runner`
 - Current Phase 1 PR: `https://github.com/jonahgrigoryan/earl/pull/48`
 - Immediate objective: review and squash-merge the Phase 1 PR into `feat/hpo-pipeline`.
 
@@ -91,6 +91,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - MT5 built-in statistics are not sufficient on their own for FundingPips-style daily drawdown tracking; custom run artifacts are expected to be required.
 - The repo already contains a prior profitability branch and evidence bundle; new work should reuse that context where useful but should not assume it already solves Phase 0 measurement.
 - The Phase 1 runner depends on local MT5 terminal state, including `config/common.ini`, terminal authorization, and report naming quirks such as MT5 writing XML reports as `.xml.htm`.
+- PR review feedback confirmed two correctness risks in the initial runner: cache reuse across include-only EA changes and shallow batch `set_overrides` merging. Both are now fixed on the Phase 1 branch and covered by Python regression tests.
 - Phase 0 solves measurement, not alpha. The verified probe artifact still showed `trades_total=0`, so profitability work now depends on Phase 1+ automation and subsequent search/strategy fixes rather than additional reporting changes.
 
 ## Session Log
@@ -105,6 +106,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - 2026-03-07: Implemented the Phase 1 MT5 runner in `tools/fundingpips_mt5_runner.py` with generated `.ini` and `.set` files, explicit MetaEditor compile-before-run behavior, cache keying by run spec plus EA source hash, structured artifact collection, and MT5 report-name fallback for `.xml.htm`. Added Python regression coverage in `Tests/python/test_fundingpips_mt5_runner.py`.
 - 2026-03-07: Validated Phase 1 locally with `py_compile`, `4/4` Python unit tests, a successful probe run for `EURUSD` (`2024.01.02` through `2024.01.05`) that collected summary/daily/report artifacts under `.tmp/fundingpips_hpo_runs/phase1_probe__dd6fa6165b2ce967/`, EA compile `0 errors, 2 warnings`, and automated suites `42/42` passing.
 - 2026-03-07: Committed the Phase 1 work on `feat/hpo-phase1-mt5-runner` as `2182b0c` (`FundingPips: add Phase 1 MT5 runner`), pushed the branch to `origin`, and opened PR `#48` targeting `feat/hpo-pipeline` for the requested squash-merge workflow.
+- 2026-03-07: Addressed PR `#48` review feedback by changing the runner cache key to hash the full repo-controlled EA source tree (`MQL5/Experts/FundingPips` plus `MQL5/Include/RPEA`) instead of only `RPEA.mq5`, and by deep-merging batch `set_overrides` so run-level overrides no longer drop shared defaults. Expanded Python regression coverage to `7/7` tests and revalidated the real probe run, EA compile, and automated MT5 suite.
 
 ## Next Recommended Action
 
