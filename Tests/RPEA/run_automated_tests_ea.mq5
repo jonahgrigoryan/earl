@@ -145,6 +145,7 @@ bool g_test_gate_force_fail = false;
 // M4-Task02: Day tracking and Micro-Mode tests
 #include "test_day_tracking.mqh"
 #include "test_micro_mode.mqh"
+#include "test_evaluation_report.mqh"
 // M4-Task01: News Policy tests
 #include "test_news_policy.mqh"
 // M4-Task03: Kill-Switch and Protective Exit tests
@@ -186,6 +187,7 @@ bool TestOrderEnginePendingExpiry_RunAll();
 // M4-Task02 forward declarations
 bool TestDayTracking_RunAll();
 bool TestMicroMode_RunAll();
+bool TestEvaluationReport_RunAll();
 bool TestNewsPolicy_RunAll();
 // M4-Task03 forward declarations
 bool TestKillswitch_RunAll();
@@ -526,6 +528,15 @@ void RunAllTests()
    g_test_reporter.RecordTest(suiteM4a, "TestDayTracking_RunAll", taskM4a_result,
                                taskM4a_result ? "Day tracking tests passed" : "Day tracking tests failed");
    g_test_reporter.EndSuite(suiteM4a);
+
+   Print("=================================================================");
+   Print("FundingPips Phase 0: Evaluation Report Tests");
+   Print("=================================================================");
+   int suitePhase0 = g_test_reporter.BeginSuite("FundingPips_Phase0_EvaluationReport");
+   bool phase0_result = TestEvaluationReport_RunAll();
+   g_test_reporter.RecordTest(suitePhase0, "TestEvaluationReport_RunAll", phase0_result,
+                               phase0_result ? "Evaluation report tests passed" : "Evaluation report tests failed");
+   g_test_reporter.EndSuite(suitePhase0);
 
    // M4-Task02: Micro-Mode Tests
    Print("=================================================================");
