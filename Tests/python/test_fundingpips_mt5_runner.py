@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -188,6 +189,59 @@ class FundingPipsMt5RunnerTests(unittest.TestCase):
 
       self.assertEqual(result["status"], "cache_hit")
 
+   def test_run_batch_syncs_first_uncached_run_after_cache_hit(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         batch_path = Path(tmp_dir) / "batch.json"
+         batch_path.write_text(
+            runner.stable_json(
+               {
+                  "defaults": {"symbol": "EURUSD"},
+                  "runs": [
+                     {"name": "cached_run"},
+                     {"name": "uncached_run"},
+                     {"name": "later_run"},
+                  ],
+               }
+            ),
+            encoding="ascii",
+         )
+
+         fake_paths = runner.RunnerPaths(
+            repo_root=Path(tmp_dir),
+            terminal_exe=Path(tmp_dir) / "terminal64.exe",
+            metaeditor_exe=Path(tmp_dir) / "metaeditor64.exe",
+            terminal_data_path=Path(tmp_dir) / "terminal_data",
+            tester_root=Path(tmp_dir) / "tester_root",
+            tester_profiles_dir=Path(tmp_dir) / "tester_profiles",
+            config_dir=Path(tmp_dir) / "config",
+            output_root=Path(tmp_dir) / "output",
+         )
+         call_sync_flags: list[bool] = []
+         statuses = iter(("cache_hit", "completed", "completed"))
+         original_run_single_backtest = runner.run_single_backtest
+
+         def fake_run_single_backtest(spec, paths, **kwargs):
+            self.assertEqual(paths, fake_paths)
+            call_sync_flags.append(kwargs["sync_before_run"])
+            return {"status": next(statuses), "name": spec.name}
+
+         try:
+            runner.run_single_backtest = fake_run_single_backtest
+            result = runner.run_batch(
+               batch_path,
+               fake_paths,
+               dry_run=False,
+               sync_before_run=True,
+               compile_before_run=True,
+               force=False,
+               stop_existing=False,
+            )
+         finally:
+            runner.run_single_backtest = original_run_single_backtest
+
+      self.assertEqual(call_sync_flags, [True, True, False])
+      self.assertEqual(len(result["results"]), 3)
+
    def test_write_single_run_set_sanitizes_optimize_syntax(self) -> None:
       base_text = "\n".join(
          [
@@ -271,6 +325,43 @@ class FundingPipsMt5RunnerTests(unittest.TestCase):
       self.assertEqual(encoding, "utf-16")
       self.assertIn("München", round_trip)
       self.assertIn("Jörg", round_trip)
+
+   def test_wait_for_artifacts_uses_xml_htm_fallback_when_xml_is_stale(self) -> None:
+      class FakeProcess:
+         def poll(self):
+            return None
+
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         root = Path(tmp_dir)
+         tester_root = root / "tester_root"
+         report_root = root / "terminal_data" / "Tester" / "reports"
+         tester_root.mkdir(parents=True)
+         report_root.mkdir(parents=True)
+         summary_path = tester_root / runner.SUMMARY_FILENAME
+         daily_path = tester_root / runner.DAILY_FILENAME
+         expected_report_path = report_root / "probe.xml"
+         alt_report_path = expected_report_path.with_suffix(expected_report_path.suffix + ".htm")
+         started_at = time.time() - 5.0
+
+         summary_path.write_text("summary", encoding="ascii")
+         daily_path.write_text("daily", encoding="ascii")
+         expected_report_path.write_text("stale xml", encoding="ascii")
+         alt_report_path.write_text("fresh html", encoding="ascii")
+
+         os.utime(summary_path, (started_at + 1.0, started_at + 1.0))
+         os.utime(daily_path, (started_at + 1.0, started_at + 1.0))
+         os.utime(expected_report_path, (started_at - 1.0, started_at - 1.0))
+         os.utime(alt_report_path, (started_at + 2.0, started_at + 2.0))
+
+         artifacts = runner.wait_for_artifacts(
+            process=FakeProcess(),
+            tester_root=tester_root,
+            expected_report_path=expected_report_path,
+            timeout_seconds=1,
+            started_at=started_at,
+         )
+
+      self.assertEqual(artifacts["report"], alt_report_path)
 
    def test_locate_recent_file_ignores_stale_artifacts_before_run_start(self) -> None:
       with tempfile.TemporaryDirectory() as tmp_dir:

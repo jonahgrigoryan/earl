@@ -40,7 +40,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
   - Phase 1 added `Tests/python/test_fundingpips_mt5_runner.py`
 - Validation runs executed in this workstream:
   - Python syntax check: `python -m py_compile tools\fundingpips_mt5_runner.py Tests\python\test_fundingpips_mt5_runner.py`
-  - Python unit tests: `12/12` passing in `Tests.python.test_fundingpips_mt5_runner`
+  - Python unit tests: `14/14` passing in `Tests.python.test_fundingpips_mt5_runner`
   - Phase 1 probe run: `python tools\fundingpips_mt5_runner.py run --name phase1_probe --symbol EURUSD --from-date 2024.01.02 --to-date 2024.01.05 --stop-existing --force`
   - Phase 1 forced rerun probe: repeated the same `--force` probe twice back to back against the same cache key to confirm stale artifacts are not reused
   - Phase 1 cache-hit probe: reran the same spec without `--force` and confirmed an immediate `cache_hit` return before sync/compile preflight
@@ -96,6 +96,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - PR review feedback confirmed two correctness risks in the initial runner: cache reuse across include-only EA changes and shallow batch `set_overrides` merging. Both are now fixed on the Phase 1 branch and covered by Python regression tests.
 - PR review feedback also exposed a stale-artifact risk on rapid `--force` reruns. The Phase 1 branch now requires artifact mtimes to be strictly newer than the current run start, and that path has been validated with back-to-back real reruns.
 - Additional PR review feedback exposed three more correctness risks: cache-key collisions across agent-mode flags, cache hits paying sync/compile preflight cost, and non-ASCII text from `common.ini` failing on ASCII-only merged INI writes. All three are now fixed on the Phase 1 branch and covered by runtime/unit validation.
+- The latest PR review feedback exposed two more correctness risks: mixed cache-hit/cache-miss batch runs could skip the initial sync for the first uncached run, and stale `.xml` files could block detection of the fresh `.xml.htm` report variant. Both are now fixed on the Phase 1 branch and covered by Python regression tests plus a real probe revalidation.
 - Phase 0 solves measurement, not alpha. The verified probe artifact still showed `trades_total=0`, so profitability work now depends on Phase 1+ automation and subsequent search/strategy fixes rather than additional reporting changes.
 
 ## Session Log
@@ -113,6 +114,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - 2026-03-07: Addressed PR `#48` review feedback by changing the runner cache key to hash the full repo-controlled EA source tree (`MQL5/Experts/FundingPips` plus `MQL5/Include/RPEA`) instead of only `RPEA.mq5`, and by deep-merging batch `set_overrides` so run-level overrides no longer drop shared defaults. Expanded Python regression coverage to `7/7` tests and revalidated the real probe run, EA compile, and automated MT5 suite.
 - 2026-03-07: Addressed a second PR `#48` review comment by removing the 2-second artifact mtime grace window in `tools/fundingpips_mt5_runner.py`. The runner now accepts only artifacts with `mtime >= started_at`, preventing fast back-to-back `--force` reruns from reusing stale summary/daily/report files and terminating MT5 early. Added two Python tests for stale-vs-fresh `locate_recent_file` behavior, bringing the suite to `9/9`, then revalidated with two consecutive forced probe runs plus EA compile and the full `42/42` automated MT5 suite.
 - 2026-03-07: Addressed three additional PR `#48` review comments by adding `use_local`/`use_remote`/`use_cloud` to the cache key, moving cache-hit evaluation ahead of sync/compile/MT5-process preflight, and preserving the detected `common.ini` encoding when writing the merged run INI. Expanded Python regression coverage to `12/12`, verified a real forced probe run with cache key `6c0b176b77dfd288`, confirmed an immediate `cache_hit` on the same spec without `--force`, then reran EA compile (`0 errors, 2 warnings`) and the full `42/42` automated MT5 suite.
+- 2026-03-09: Addressed two further PR `#48` review comments by ensuring batch execution keeps `sync_before_run` enabled until the first non-cache-hit run actually occurs, and by checking `.xml` and `.xml.htm` report candidates independently so a stale XML file cannot block a fresh HTML-wrapped report. Expanded Python regression coverage to `14/14`, revalidated the real forced probe plus immediate cache-hit path for `EURUSD` (`2024.01.02..2024.01.05`), then reran EA compile (`0 errors, 2 warnings`) and the full `42/42` automated MT5 suite.
 
 ## Next Recommended Action
 

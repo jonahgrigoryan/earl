@@ -473,19 +473,25 @@ def wait_for_artifacts(
    while time.time() < deadline:
       summary_path = locate_recent_file(tester_root, SUMMARY_FILENAME, started_at)
       daily_path = locate_recent_file(tester_root, DAILY_FILENAME, started_at)
+      report_path = None
+      report_candidates: list[tuple[float, Path]] = []
       if expected_report_path.exists():
          try:
-            if expected_report_path.stat().st_mtime >= started_at:
-               report_path = expected_report_path
+            report_mtime = expected_report_path.stat().st_mtime
+            if report_mtime >= started_at:
+               report_candidates.append((report_mtime, expected_report_path))
          except FileNotFoundError:
-            report_path = None
-      elif expected_report_path.with_suffix(expected_report_path.suffix + ".htm").exists():
-         alt_report = expected_report_path.with_suffix(expected_report_path.suffix + ".htm")
+            pass
+      alt_report = expected_report_path.with_suffix(expected_report_path.suffix + ".htm")
+      if alt_report.exists():
          try:
-            if alt_report.stat().st_mtime >= started_at:
-               report_path = alt_report
+            alt_report_mtime = alt_report.stat().st_mtime
+            if alt_report_mtime >= started_at:
+               report_candidates.append((alt_report_mtime, alt_report))
          except FileNotFoundError:
-            report_path = None
+            pass
+      if report_candidates:
+         report_path = max(report_candidates, key=lambda candidate: candidate[0])[1]
 
       if summary_path and daily_path and report_path:
          return {
@@ -792,17 +798,20 @@ def run_batch(
       raise ValueError(f"Batch file contains no runs: {batch_path}")
 
    results = []
+   pending_sync = sync_before_run
    for index, run_data in enumerate(runs, start=1):
       spec = build_spec(run_data, defaults)
       result = run_single_backtest(
          spec,
          paths,
          dry_run=dry_run,
-         sync_before_run=sync_before_run and index == 1,
+         sync_before_run=pending_sync,
          compile_before_run=compile_before_run,
          force=force,
          stop_existing=stop_existing,
       )
+      if pending_sync and result.get("status") != "cache_hit":
+         pending_sync = False
       results.append(result)
    return {
       "batch_path": str(batch_path),

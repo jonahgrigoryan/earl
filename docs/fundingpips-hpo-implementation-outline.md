@@ -438,11 +438,11 @@ Use these throughout the pipeline, not just at the end:
 
 - Phase 0 is complete and squash-merged into `feat/hpo-pipeline`.
 - Phase 1 is implemented locally on `feat/hpo-phase1-mt5-runner`.
-- Phase 1 currently includes generated `.ini` and `.set` support, compile-before-run MT5 orchestration, cache-aware run folders, strict fresh-artifact detection for reruns, cache-hit short-circuiting before preflight, preserved `common.ini` encoding for merged INI output, and deterministic collection of summary, daily, and tester report artifacts.
+- Phase 1 currently includes generated `.ini` and `.set` support, compile-before-run MT5 orchestration, cache-aware run folders, strict fresh-artifact detection for reruns, cache-hit short-circuiting before preflight, preserved `common.ini` encoding for merged INI output, batch-sync handling for mixed cache-hit/cache-miss runs, and deterministic collection of summary, daily, and tester report artifacts.
 - Phase 1 is packaged on `feat/hpo-phase1-mt5-runner` and is awaiting review in PR `#48`.
 - Latest validation for Phase 1:
   - Python syntax check passed
-  - Python unit tests: `12/12` passing
+  - Python unit tests: `14/14` passing
   - MT5 probe run completed successfully for `EURUSD` from `2024.01.02` to `2024.01.05`
   - back-to-back forced reruns of the same probe completed successfully against the same cache key
   - rerunning the same probe without `--force` returned `cache_hit` immediately
