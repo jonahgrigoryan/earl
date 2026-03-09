@@ -151,6 +151,8 @@ class FundingPipsMt5RunnerTests(unittest.TestCase):
          (run_dir / "run_manifest.json").write_text("{}", encoding="ascii")
          (collected_dir / runner.SUMMARY_FILENAME).write_text("summary", encoding="ascii")
          (collected_dir / runner.DAILY_FILENAME).write_text("daily", encoding="ascii")
+         cached_report = collected_dir / f"{spec.report_stem}_{cache_key}.xml.htm"
+         cached_report.write_text("report", encoding="ascii")
 
          original_terminal_fingerprint = runner.terminal_fingerprint
          original_dependency_hash = runner.compute_ea_dependency_hash
@@ -188,6 +190,89 @@ class FundingPipsMt5RunnerTests(unittest.TestCase):
             runner.assert_no_running_mt5 = original_assert_no_running_mt5
 
       self.assertEqual(result["status"], "cache_hit")
+      self.assertEqual(result["report_path"], str(cached_report))
+
+   def test_run_single_backtest_does_not_cache_hit_when_report_missing(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         root = Path(tmp_dir)
+         repo_root = root / "repo"
+         output_root = root / "output"
+         tester_profiles_dir = root / "tester_profiles"
+         config_dir = root / "config"
+         terminal_data_path = root / "terminal_data"
+         terminal_exe = root / "terminal64.exe"
+         metaeditor_exe = root / "metaeditor64.exe"
+         tests_dir = repo_root / "Tests" / "RPEA"
+         base_set_path = tests_dir / "RPEA_10k_default.set"
+         template_ini_path = tests_dir / "RPEA_10k_single.ini"
+         expert_dir = repo_root / "MQL5" / "Experts" / "FundingPips"
+         include_dir = repo_root / "MQL5" / "Include" / "RPEA"
+
+         tests_dir.mkdir(parents=True)
+         expert_dir.mkdir(parents=True)
+         include_dir.mkdir(parents=True)
+         output_root.mkdir(parents=True)
+         tester_profiles_dir.mkdir(parents=True)
+         config_dir.mkdir(parents=True)
+         terminal_data_path.mkdir(parents=True)
+         terminal_exe.write_text("terminal", encoding="ascii")
+         metaeditor_exe.write_text("metaeditor", encoding="ascii")
+         base_set_path.write_text("RiskPct=1.5\n", encoding="ascii")
+         template_ini_path.write_text("[Tester]\nExpert=FundingPips\\RPEA\n", encoding="ascii")
+         (expert_dir / "RPEA.mq5").write_text("#property strict\n", encoding="ascii")
+         (include_dir / "dummy.mqh").write_text("#property strict\n", encoding="ascii")
+
+         paths = runner.RunnerPaths(
+            repo_root=repo_root,
+            terminal_exe=terminal_exe,
+            metaeditor_exe=metaeditor_exe,
+            terminal_data_path=terminal_data_path,
+            tester_root=root / "tester_root",
+            tester_profiles_dir=tester_profiles_dir,
+            config_dir=config_dir,
+            output_root=output_root,
+         )
+         spec = runner.build_spec({"name": "cache_miss_probe"})
+         terminal_info = {"path": str(terminal_exe), "size": 1, "mtime_ns": 2}
+         dependency_hash = "dep_hash_v1"
+         base_set_text = base_set_path.read_text(encoding="ascii")
+         cache_key = runner.compute_cache_key(spec, base_set_text, terminal_info, dependency_hash)
+         run_dir = output_root / f"cache_miss_probe__{cache_key}"
+         collected_dir = run_dir / "collected"
+         collected_dir.mkdir(parents=True)
+         (run_dir / "run_manifest.json").write_text("{}", encoding="ascii")
+         (collected_dir / runner.SUMMARY_FILENAME).write_text("summary", encoding="ascii")
+         (collected_dir / runner.DAILY_FILENAME).write_text("daily", encoding="ascii")
+
+         original_terminal_fingerprint = runner.terminal_fingerprint
+         original_dependency_hash = runner.compute_ea_dependency_hash
+         original_sync_repo = runner.sync_repo
+         original_assert_no_running_mt5 = runner.assert_no_running_mt5
+         sync_calls: list[str] = []
+
+         try:
+            runner.terminal_fingerprint = lambda _: terminal_info
+            runner.compute_ea_dependency_hash = lambda _: dependency_hash
+            runner.sync_repo = lambda repo: sync_calls.append(str(repo))
+            runner.assert_no_running_mt5 = lambda: None
+
+            result = runner.run_single_backtest(
+               spec,
+               paths,
+               dry_run=True,
+               sync_before_run=True,
+               compile_before_run=False,
+               force=False,
+               stop_existing=False,
+            )
+         finally:
+            runner.terminal_fingerprint = original_terminal_fingerprint
+            runner.compute_ea_dependency_hash = original_dependency_hash
+            runner.sync_repo = original_sync_repo
+            runner.assert_no_running_mt5 = original_assert_no_running_mt5
+
+      self.assertEqual(result["status"], "dry_run")
+      self.assertEqual(len(sync_calls), 1)
 
    def test_run_batch_syncs_first_uncached_run_after_cache_hit(self) -> None:
       with tempfile.TemporaryDirectory() as tmp_dir:

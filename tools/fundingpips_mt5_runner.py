@@ -298,6 +298,13 @@ def load_text(path: Path) -> str:
    return path.read_text(encoding="ascii")
 
 
+def load_json_text(path: Path) -> dict[str, Any] | None:
+   try:
+      return json.loads(path.read_text(encoding="ascii"))
+   except (OSError, ValueError):
+      return None
+
+
 def load_ini_text_with_encoding(path: Path) -> tuple[str, str]:
    for encoding in ("ascii", "utf-8-sig", "utf-16", "utf-16-le", "utf-16-be"):
       try:
@@ -456,6 +463,31 @@ def locate_recent_file(root: Path, filename: str, not_before: float) -> Path | N
          latest = path
          latest_mtime = mtime
    return latest
+
+
+def resolve_cached_report_path(
+   manifest_path: Path,
+   collected_dir: Path,
+   report_stem: str,
+   cache_key: str,
+) -> Path | None:
+   manifest = load_json_text(manifest_path) if manifest_path.exists() else None
+   manifest_report = manifest.get("collected_report") if isinstance(manifest, dict) else None
+   if manifest_report:
+      candidate = Path(str(manifest_report))
+      if candidate.exists():
+         return candidate
+
+   expected_names = [
+      f"{report_stem}_{cache_key}.xml",
+      f"{report_stem}_{cache_key}.xml.htm",
+   ]
+   for name in expected_names:
+      candidate = collected_dir / name
+      if candidate.exists():
+         return candidate
+
+   return None
 
 
 def wait_for_artifacts(
@@ -656,7 +688,14 @@ def run_single_backtest(
    manifest_path = run_dir / "run_manifest.json"
    cached_summary = collected_dir / SUMMARY_FILENAME
    cached_daily = collected_dir / DAILY_FILENAME
-   if manifest_path.exists() and cached_summary.exists() and cached_daily.exists() and not force:
+   cached_report = resolve_cached_report_path(manifest_path, collected_dir, spec.report_stem, cache_key)
+   if (
+      manifest_path.exists()
+      and cached_summary.exists()
+      and cached_daily.exists()
+      and cached_report is not None
+      and not force
+   ):
       return {
          "status": "cache_hit",
          "cache_key": cache_key,
@@ -664,6 +703,7 @@ def run_single_backtest(
          "manifest_path": str(manifest_path),
          "summary_path": str(cached_summary),
          "daily_path": str(cached_daily),
+         "report_path": str(cached_report),
       }
 
    if sync_before_run:
