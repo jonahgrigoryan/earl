@@ -24,7 +24,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 
 ## Current Snapshot
 
-- Status: Phases 0-2 are complete on `feat/hpo-phase2-objective-windows`, and the clean post-riskfix rerun is finished. The next execution step is Phase 2 closeout into `feat/hpo-pipeline`, then cutting the dedicated Phase 3 branch from that updated baseline.
+- Status: Phases 0-2 are complete and merged into `feat/hpo-pipeline`. The active branch is now `feat/hpo-phase3-optuna-search`, and the next execution step is the focused study `tools/fundingpips_studies/phase3_focus_postriskfix.json`.
 - User go-ahead to begin edits: granted.
 - Repo default branch: `master`.
 - Baseline branch for this workstream: `feat/hpo-pipeline`.
@@ -34,6 +34,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
   - `feat/hpo-phase0-metrics-exports`
   - `feat/hpo-phase1-mt5-runner`
   - `feat/hpo-phase2-objective-windows`
+  - `feat/hpo-phase3-optuna-search`
 - Code changes applied in this workstream:
   - Phase 0 merged: `MQL5/Include/RPEA/evaluation_report.mqh`, `MQL5/Experts/FundingPips/RPEA.mq5`, `Tests/RPEA/test_evaluation_report.mqh`, and runner registration in `Tests/RPEA/run_automated_tests_ea.mq5`
   - Phase 1 added `tools/__init__.py`
@@ -43,6 +44,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
   - Phase 2 added `tools/fundingpips_rules_profiles/fundingpips_1step_eval.json`
   - Phase 2 added `tools/fundingpips_studies/phase2_baseline.json`
   - Phase 2 follow-up added `tools/fundingpips_studies/phase2_baseline_postriskfix.json`
+  - Phase 3 added `tools/fundingpips_studies/phase3_focus_postriskfix.json`
   - Phase 2 added `Tests/RPEA/RPEA_candidate_B_2024H2.set`
   - Phase 2 added `Tests/python/test_fundingpips_phase2.py`
   - Phase 2 extended `tools/fundingpips_mt5_runner.py` with `build_runner_paths()` for library callers
@@ -92,7 +94,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - Phase 0 merge result: PR `#47` squash-merged into `feat/hpo-pipeline`
 - Current Phase 1 branch state: branch updates pending review on `origin/feat/hpo-phase1-mt5-runner`
 - Current Phase 1 PR: `https://github.com/jonahgrigoryan/earl/pull/48`
-- Immediate objective: close out the corrected Phase 2 branch into `feat/hpo-pipeline`, then cut `feat/hpo-phase3-optuna-search` and rerun the focused post-riskfix search from there.
+- Immediate objective: run the focused Phase 3 study `tools/fundingpips_studies/phase3_focus_postriskfix.json`, then replay the top candidates before deciding whether to widen the Phase 3 space or switch to EA-level alpha changes.
 
 ## Locked Decisions So Far
 
@@ -169,9 +171,11 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - 2026-03-13: Reviewed post-fix winning-cluster replays after correcting XAUUSD stop-risk sizing in `risk.mqh` and day-local breach export behavior in `evaluation_report.mqh`. The corrected `compliance_restore` replay stayed compliant and profitable (`68` trades, `+0.8462%`, `max_daily_dd_pct=0.445683`) but no longer resembled the stale pre-fix `+10.75%` result, confirming the old Phase 2 ranking was inflated by bad realized sizing.
 - 2026-03-13: Ran targeted replay ablations on the winning cluster. `NewsBufferS=300` alone and `MaxSpreadPoints=40` alone both produced `0` trades; `SpreadMultATR=0.005` alone restored the full live path (`68` trades, `+0.8462%`) and matched the paired-spread replay exactly. Added `tools/fundingpips_studies/phase2_baseline_postriskfix.json` so the next HPO rerun uses a clean study name and treats `SpreadMultATR=0.005` as the restored baseline condition.
 - 2026-03-14: Exported the clean post-riskfix Phase 2 study and confirmed all four trials were valid, breach-free, and non-zero-trade, but still `pass_rate=0.0`. The nominal study winner shifted to a slower safer cluster (`RiskPct=2.0`, `MR_RiskPct_Default=0.75`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=7`), yet full-window replays showed the trial-3 cluster (`RiskPct=2.0`, `MR_RiskPct_Default=1.05`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=5`) made materially more return while staying fully compliant.
+- 2026-03-14: Completed Phase 2 branch hygiene. Committed the corrected Phase 2 work as `a70a665` on `feat/hpo-phase2-objective-windows`, merged it into `feat/hpo-pipeline` as merge commit `9aebabd`, and cut the dedicated Phase 3 branch `feat/hpo-phase3-optuna-search` from that updated baseline.
+- 2026-03-14: Added `tools/fundingpips_studies/phase3_focus_postriskfix.json` on `feat/hpo-phase3-optuna-search`. It fixes `SpreadMultATR=0.005`, collapses to a single baseline scenario because the old compliance-restore scenario no longer separates behavior, and narrows the search to the proven post-riskfix cluster around `RiskPct=2.0`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO in {5,7}`, and `MR_RiskPct_Default in {0.8,0.9,1.0}`.
 
 ## Next Recommended Action
 
-- Merge the corrected Phase 2 work from `feat/hpo-phase2-objective-windows` into `feat/hpo-pipeline`.
-- Cut `feat/hpo-phase3-optuna-search` from that updated baseline branch.
-- Recreate or cherry-pick the focused post-riskfix study spec there, then run the next search from the dedicated Phase 3 branch.
+- Run the focused Phase 3 study with `tools/fundingpips_studies/phase3_focus_postriskfix.json`.
+- Export the completed study artifacts from `.tmp\fundingpips_hpo_studies\phase3_focus_postriskfix\` and replay the top `2-3` candidates under the corrected environment.
+- If the focused Phase 3 winner still cannot materially improve full-window return, shift next into EA-level alpha diagnosis rather than widening the search space further.
