@@ -1,0 +1,7 @@
+{
+  "id": "fundingpips_1step_eval",
+  "target_profit_pct": 10.0,
+  "daily_loss_cap_pct": 4.0,
+  "overall_loss_cap_pct": 6.0,
+  "min_trade_days": 3
+}

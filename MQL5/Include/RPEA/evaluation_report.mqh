@@ -70,6 +70,14 @@ double EvaluationReport_ComputeLossPct(const double baseline, const double min_e
    return (loss_money / baseline) * 100.0;
 }
 
+bool EvaluationReport_DidDayBreach(const EvaluationReportDay &day)
+{
+   if(!MathIsValidNumber(day.min_equity) || !MathIsValidNumber(day.daily_floor))
+      return false;
+
+   return (day.min_equity <= day.daily_floor + 1e-6);
+}
+
 bool EvaluationReport_PassCondition(const double current_equity,
                                     const double initial_baseline,
                                     const int days_traded,
@@ -174,7 +182,7 @@ void EvaluationReport_EnsureCurrentDay(const datetime server_time,
    day.end_equity = current_equity;
    day.max_daily_dd_money = MathMax(0.0, day.baseline_used - current_equity);
    day.max_daily_dd_pct = EvaluationReport_ComputeLossPct(day.baseline_used, current_equity);
-   day.daily_breach = st.daily_floor_breached || (current_equity <= day.daily_floor + 1e-6);
+   day.daily_breach = EvaluationReport_DidDayBreach(day);
    g_evaluation_report_days[day_count] = day;
 
    if(day.daily_breach)
@@ -233,8 +241,7 @@ void EvaluationReport_UpdateSnapshot(const datetime server_time,
          day.max_daily_dd_money = day_dd_money;
       if(day_dd_pct > day.max_daily_dd_pct)
          day.max_daily_dd_pct = day_dd_pct;
-      if(st.daily_floor_breached || current_equity <= day.daily_floor + 1e-6)
-         day.daily_breach = true;
+      day.daily_breach = EvaluationReport_DidDayBreach(day);
       g_evaluation_report_days[day_index] = day;
 
       if(day.daily_breach)

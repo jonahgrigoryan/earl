@@ -551,16 +551,25 @@ def copy_if_present(source: Path | None, destination: Path) -> str | None:
    return str(destination)
 
 
-def create_runner_paths(args: argparse.Namespace) -> RunnerPaths:
+def build_runner_paths(
+   mt5_install_path: str | None = None,
+   terminal_data_path: str | None = None,
+   output_root: str | Path = DEFAULT_OUTPUT_ROOT,
+) -> RunnerPaths:
    repo = repo_root()
-   terminal_data = resolve_terminal_data_path(args.terminal_data_path)
-   terminal_exe = resolve_terminal_exe(args.mt5_install_path, terminal_data)
-   metaeditor_exe = resolve_metaeditor_exe(args.mt5_install_path, terminal_data)
+   terminal_data = resolve_terminal_data_path(terminal_data_path)
+   terminal_exe = resolve_terminal_exe(mt5_install_path, terminal_data)
+   metaeditor_exe = resolve_metaeditor_exe(mt5_install_path, terminal_data)
    tester_root = Path(os.environ["APPDATA"]) / "MetaQuotes" / "Tester"
-   output_root = (repo / args.output_root).resolve() if not Path(args.output_root).is_absolute() else Path(args.output_root)
+   output_root_path = Path(output_root)
+   resolved_output_root = (
+      (repo / output_root_path).resolve()
+      if not output_root_path.is_absolute()
+      else output_root_path.resolve()
+   )
    tester_profiles = terminal_data / "MQL5" / "Profiles" / "Tester"
    config_dir = terminal_data / "config"
-   ensure_directory(output_root)
+   ensure_directory(resolved_output_root)
    ensure_directory(tester_profiles)
    return RunnerPaths(
       repo_root=repo,
@@ -570,7 +579,15 @@ def create_runner_paths(args: argparse.Namespace) -> RunnerPaths:
       tester_root=tester_root,
       tester_profiles_dir=tester_profiles,
       config_dir=config_dir,
-      output_root=output_root,
+      output_root=resolved_output_root,
+   )
+
+
+def create_runner_paths(args: argparse.Namespace) -> RunnerPaths:
+   return build_runner_paths(
+      mt5_install_path=args.mt5_install_path,
+      terminal_data_path=args.terminal_data_path,
+      output_root=args.output_root,
    )
 
 

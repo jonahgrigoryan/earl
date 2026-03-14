@@ -8,6 +8,37 @@ from tools import fundingpips_mt5_runner as runner
 
 
 class FundingPipsMt5RunnerTests(unittest.TestCase):
+   def test_build_runner_paths_resolves_relative_output_root(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         repo_root = Path(tmp_dir) / "repo"
+         terminal_data = Path(tmp_dir) / "terminal_data"
+         terminal_exe = Path(tmp_dir) / "terminal64.exe"
+         metaeditor_exe = Path(tmp_dir) / "metaeditor64.exe"
+         repo_root.mkdir(parents=True)
+         terminal_data.mkdir(parents=True)
+         terminal_exe.write_text("terminal", encoding="ascii")
+         metaeditor_exe.write_text("metaeditor", encoding="ascii")
+
+         original_repo_root = runner.repo_root
+         original_resolve_terminal_data_path = runner.resolve_terminal_data_path
+         original_resolve_terminal_exe = runner.resolve_terminal_exe
+         original_resolve_metaeditor_exe = runner.resolve_metaeditor_exe
+         try:
+            runner.repo_root = lambda: repo_root
+            runner.resolve_terminal_data_path = lambda preferred: terminal_data
+            runner.resolve_terminal_exe = lambda mt5_install_path, terminal_data_path: terminal_exe
+            runner.resolve_metaeditor_exe = lambda mt5_install_path, terminal_data_path: metaeditor_exe
+
+            paths = runner.build_runner_paths(output_root="relative_output")
+         finally:
+            runner.repo_root = original_repo_root
+            runner.resolve_terminal_data_path = original_resolve_terminal_data_path
+            runner.resolve_terminal_exe = original_resolve_terminal_exe
+            runner.resolve_metaeditor_exe = original_resolve_metaeditor_exe
+
+      self.assertEqual(paths.repo_root, repo_root)
+      self.assertEqual(paths.output_root, (repo_root / "relative_output").resolve())
+
    def test_compute_cache_key_is_order_independent_for_overrides(self) -> None:
       spec_a = runner.build_spec(
          {

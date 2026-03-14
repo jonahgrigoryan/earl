@@ -31,14 +31,16 @@ For implementation and optimization, the source of truth must be the purchased F
 - leverage
 - evaluation vs funded news restrictions
 
-Until the dashboard is confirmed, use the conservative working assumption already captured in the prior note:
+For the implemented repo tooling, use the current repo rule profile as the working source of truth until the purchased dashboard proves otherwise:
 
 - target: `10%`
-- max daily loss: `3%`
+- max daily loss: `4%`
 - max overall loss: `6%`
 - minimum trading days: `3`
 - daily loss baseline: higher of balance or equity at reset
 - overall DD: assume static unless dashboard proves otherwise
+
+If the dashboard later differs, update the checked-in rules profile and study specs rather than hand-editing scoring logic.
 
 ## Core Principles
 
@@ -437,17 +439,29 @@ Use these throughout the pipeline, not just at the end:
 ## Current Status
 
 - Phase 0 is complete and squash-merged into `feat/hpo-pipeline`.
-- Phase 1 is implemented locally on `feat/hpo-phase1-mt5-runner`.
-- Phase 1 currently includes generated `.ini` and `.set` support, compile-before-run MT5 orchestration, cache-aware run folders, strict fresh-artifact detection for reruns, cache-hit short-circuiting before preflight, preserved `common.ini` encoding for merged INI output, batch-sync handling for mixed cache-hit/cache-miss runs, and deterministic collection of summary, daily, and tester report artifacts.
-- Phase 1 is packaged on `feat/hpo-phase1-mt5-runner` and is awaiting review in PR `#48`.
-- Latest validation for Phase 1:
-  - Python syntax check passed
-  - Python unit tests: `15/15` passing
-  - MT5 probe run completed successfully for `EURUSD` from `2024.01.02` to `2024.01.05`
-  - back-to-back forced reruns of the same probe completed successfully against the same cache key
-  - rerunning the same probe without `--force` returned `cache_hit` immediately with `report_path` included
+- Phase 1 is complete and provides the MT5 runner/library base used by Phase 2.
+- Phase 2 is complete locally on `feat/hpo-phase2-objective-windows`.
+- Phase 2 currently includes:
+  - repo-tracked Candidate B seed set at `Tests/RPEA/RPEA_candidate_B_2024H2.set`
+  - rules profile config at `tools/fundingpips_rules_profiles/fundingpips_1step_eval.json`
+  - baseline study spec at `tools/fundingpips_studies/phase2_baseline.json`
+  - post-riskfix rerun study spec at `tools/fundingpips_studies/phase2_baseline_postriskfix.json`
+  - library-facing `build_runner_paths()` in `tools/fundingpips_mt5_runner.py`
+  - the new orchestrator `tools/fundingpips_hpo.py` with `generate-windows`, `run-study`, and `export-study`
+  - weekday-only rolling windows, MT5 report parsing, Phase 0 artifact normalization, custom SQLite trial/run tables, flat export regeneration, stale interrupted-trial recovery on `--resume`, and failure-state handling so invalid/timed-out trials are stored as `FAIL` instead of `COMPLETE`
+- Latest validation for the finished Phase 2 tooling:
+  - Python syntax check passed for the runner, orchestrator, and Phase 2 tests
+  - Python unit tests: `29/29` passing, including fail-then-resume coverage for invalid trial accounting
+  - Candidate B `.set` coverage: `101/101` `RPEA.mq5` inputs present
+  - `generate-windows` produced the expected `12` baseline windows
   - EA compile: `0 errors, 2 warnings`
   - automated suites: `42/42` passing
-- Next execution step: squash-merge PR `#48` into `feat/hpo-pipeline`, then wait to cut Phase 2 from the updated baseline branch.
+  - real resumed baseline study completed with `python tools\fundingpips_hpo.py run-study --study-spec tools\fundingpips_studies\phase2_baseline.json --n-trials 4 --resume --stop-existing`
+  - `export-study` regenerated the flat outputs, with winning trial `2` at objective `15.143758394097217`
+  - fresh clean-validation study `phase2_baseline_clean` finished with four valid `COMPLETE` trials plus one recovered `FAIL`, demonstrating the new fail-then-resume behavior under a real interrupted MT5 session
+  - post-fix replay analysis showed the March 12, 2026 winning cluster was inflated by incorrect XAUUSD realized sizing; with corrected sizing the same cluster remains compliant but returns only about `+0.8462%`
+  - targeted ablations showed `SpreadMultATR=0.005` alone restores trading for the winning cluster, while `NewsBufferS=300` and `MaxSpreadPoints=40` do not unlock trades by themselves
+  - clean post-riskfix Phase 2 rerun completed with four valid, non-zero-trade, breach-free trials; full-window candidate replays then showed the nominal trial-3 runner-up out-earned the nominal study winner while staying compliant
+- Next execution step: bank the corrected Phase 2 branch into the HPO baseline, then cut the dedicated Phase 3 branch and run the focused follow-up search from there.
 
 Use `docs/fundingpips-hpo-handoff.md` as the session-by-session execution tracker.
