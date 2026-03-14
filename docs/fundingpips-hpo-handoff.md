@@ -24,36 +24,75 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 
 ## Current Snapshot
 
-- Status: Phase 0 is merged into `feat/hpo-pipeline`; Phase 1 is implemented, validated, pushed, and waiting for review on `feat/hpo-phase1-mt5-runner`.
+- Status: Phases 0-2 are complete on `feat/hpo-phase2-objective-windows`, and the clean post-riskfix rerun is finished. The next execution step is Phase 2 closeout into `feat/hpo-pipeline`, then cutting the dedicated Phase 3 branch from that updated baseline.
 - User go-ahead to begin edits: granted.
 - Repo default branch: `master`.
 - Baseline branch for this workstream: `feat/hpo-pipeline`.
-- Active Phase 1 branch: `feat/hpo-phase1-mt5-runner`.
+- Active Phase 2 branch: `feat/hpo-phase2-objective-windows`.
 - Branches created for this workstream:
   - `feat/hpo-pipeline`
   - `feat/hpo-phase0-metrics-exports`
   - `feat/hpo-phase1-mt5-runner`
+  - `feat/hpo-phase2-objective-windows`
 - Code changes applied in this workstream:
   - Phase 0 merged: `MQL5/Include/RPEA/evaluation_report.mqh`, `MQL5/Experts/FundingPips/RPEA.mq5`, `Tests/RPEA/test_evaluation_report.mqh`, and runner registration in `Tests/RPEA/run_automated_tests_ea.mq5`
   - Phase 1 added `tools/__init__.py`
   - Phase 1 added `tools/fundingpips_mt5_runner.py`
   - Phase 1 added `Tests/python/test_fundingpips_mt5_runner.py`
+  - Phase 2 added `tools/fundingpips_hpo.py`
+  - Phase 2 added `tools/fundingpips_rules_profiles/fundingpips_1step_eval.json`
+  - Phase 2 added `tools/fundingpips_studies/phase2_baseline.json`
+  - Phase 2 follow-up added `tools/fundingpips_studies/phase2_baseline_postriskfix.json`
+  - Phase 2 added `Tests/RPEA/RPEA_candidate_B_2024H2.set`
+  - Phase 2 added `Tests/python/test_fundingpips_phase2.py`
+  - Phase 2 extended `tools/fundingpips_mt5_runner.py` with `build_runner_paths()` for library callers
 - Validation runs executed in this workstream:
-  - Python syntax check: `python -m py_compile tools\fundingpips_mt5_runner.py Tests\python\test_fundingpips_mt5_runner.py`
-  - Python unit tests: `15/15` passing in `Tests.python.test_fundingpips_mt5_runner`
+  - Python syntax check: `python -m py_compile tools\fundingpips_mt5_runner.py tools\fundingpips_hpo.py Tests\python\test_fundingpips_mt5_runner.py Tests\python\test_fundingpips_phase2.py`
+  - Python unit tests: `29/29` passing in `Tests.python.test_fundingpips_mt5_runner` plus `Tests.python.test_fundingpips_phase2`, including the new Phase 2 fail-then-resume coverage
   - Phase 1 probe run: `python tools\fundingpips_mt5_runner.py run --name phase1_probe --symbol EURUSD --from-date 2024.01.02 --to-date 2024.01.05 --stop-existing --force`
   - Phase 1 forced rerun probe: repeated the same `--force` probe twice back to back against the same cache key to confirm stale artifacts are not reused
   - Phase 1 cache-hit probe: reran the same spec without `--force` and confirmed an immediate `cache_hit` return before sync/compile preflight, with `report_path` present in the cached result
+  - Phase 2 window generation: `python tools\fundingpips_hpo.py generate-windows --study-spec tools\fundingpips_studies\phase2_baseline.json`
+  - Candidate B `.set` coverage check against `RPEA.mq5`: `101/101` inputs present
+  - Phase 2 real-study attempt: `python tools\fundingpips_hpo.py run-study --study-spec tools\fundingpips_studies\phase2_baseline.json --n-trials 2 --stop-existing`
+  - Phase 2 export regeneration after the interrupted real study: `python tools\fundingpips_hpo.py export-study --study-dir .tmp\fundingpips_hpo_studies\phase2_baseline`
+  - Phase 2 end-to-end completion run: `python tools\fundingpips_hpo.py run-study --study-spec tools\fundingpips_studies\phase2_baseline.json --n-trials 4 --resume --stop-existing`
+  - Phase 2 export regeneration after the completed study: `python tools\fundingpips_hpo.py export-study --study-dir .tmp\fundingpips_hpo_studies\phase2_baseline`
+  - Fresh Phase 2 clean validation run: `python tools\fundingpips_hpo.py run-study --study-spec .tmp\phase2_baseline_clean.json --stop-existing`
+  - Fresh Phase 2 clean validation resume: `python tools\fundingpips_hpo.py run-study --study-spec .tmp\phase2_baseline_clean.json --n-trials 4 --resume --stop-existing`
+  - Fresh Phase 2 clean export regeneration: `python tools\fundingpips_hpo.py export-study --study-dir .tmp\fundingpips_hpo_studies\phase2_baseline_clean`
   - EA compile: `0 errors, 2 warnings`
   - automated suites: `42/42` passing (`success=true`)
-  - Phase 1 collected artifacts written under `.tmp/fundingpips_hpo_runs/phase1_probe__6c0b176b77dfd288/collected/`:
-    - `fundingpips_eval_summary.json`
-    - `fundingpips_eval_daily.csv`
-    - `phase1_probe_6c0b176b77dfd288.xml.htm`
+  - Post-riskfix targeted replay review on the winning cluster:
+    - corrected `compliance_restore` replay reduced the old June 30 daily-loss event from about `4.14%` / `449.20` to about `0.45%` / `44.92`
+    - corrected daily CSV export no longer carries `daily_breach=true` into later non-breach days
+    - replay ablations showed `SpreadMultATR=0.005` alone restores the cluster's `68` trades and `+0.8462%` return
+    - `NewsBufferS=300` alone and `MaxSpreadPoints=40` alone both produced `0` trades on the same window
+  - Clean post-riskfix Phase 2 study execution completed under `tools\fundingpips_studies\phase2_baseline_postriskfix.json`
+  - Top-candidate replay review after the clean rerun:
+    - nominal best Phase 2 trial (`RiskPct=2.0`, `MR_RiskPct_Default=0.75`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=7`) replayed at `+0.5754%` with `85` trades and no breaches
+    - the Phase 2 runner-up cluster (`RiskPct=2.0`, `MR_RiskPct_Default=1.05`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=5`) replayed better at `+1.2845%` with `77` trades and no breaches
+    - `NewsBufferS=300` remained non-binding for the new best profile, so the prior two-scenario mix is no longer adding useful separation
+- Phase 1 collected artifacts written under `.tmp/fundingpips_hpo_runs/phase1_probe__6c0b176b77dfd288/collected/`:
+  - `fundingpips_eval_summary.json`
+  - `fundingpips_eval_daily.csv`
+  - `phase1_probe_6c0b176b77dfd288.xml.htm`
+- Phase 2 baseline study assets now live under `.tmp/fundingpips_hpo_studies/phase2_baseline/`:
+  - `study_manifest.json`
+  - `study.sqlite3`
+  - `windows.json`
+  - flat exports generated from the SQLite custom tables
+  - `best_trial_summary.json` now points to winning trial `2` (objective `15.143758394097217`)
+- Fresh clean-validation assets live under `.tmp/fundingpips_hpo_studies/phase2_baseline_clean/`:
+  - `study_manifest.json`
+  - `study.sqlite3`
+  - `windows.json`
+  - flat exports generated from the SQLite custom tables
+  - `best_trial_summary.json` points to winning trial `0` with the same best params as the canonical baseline study
 - Phase 0 merge result: PR `#47` squash-merged into `feat/hpo-pipeline`
 - Current Phase 1 branch state: branch updates pending review on `origin/feat/hpo-phase1-mt5-runner`
 - Current Phase 1 PR: `https://github.com/jonahgrigoryan/earl/pull/48`
-- Immediate objective: review and squash-merge the Phase 1 PR into `feat/hpo-pipeline`.
+- Immediate objective: close out the corrected Phase 2 branch into `feat/hpo-pipeline`, then cut `feat/hpo-phase3-optuna-search` and rerun the focused post-riskfix search from there.
 
 ## Locked Decisions So Far
 
@@ -69,7 +108,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 |---|---|---|---|
 | 0 | `feat/hpo-phase0-metrics-exports` | Deterministic tester metrics for FundingPips-style pass/fail and drawdown tracking | Squash-merged into `feat/hpo-pipeline` via PR `#47` |
 | 1 | `feat/hpo-phase1-mt5-runner` | Python MT5 runner for repeatable single backtests | Committed, pushed, and awaiting review in PR `#48` |
-| 2 | `feat/hpo-phase2-objective-windows` | Objective function, rolling windows, and baseline Optuna study | Not started |
+| 2 | `feat/hpo-phase2-objective-windows` | Objective function, rolling windows, and baseline Optuna study | Complete locally with real resumed study validation |
 | 3 | `feat/hpo-phase3-optuna-search` | Parameter reduction and conditional search | Not started |
 | 4 | `feat/hpo-phase4-wfo-stress` | Walk-forward and stress harness | Not started |
 | 5 | `feat/hpo-phase5-mr-ql-staging` | MR / ensemble / Q-learning staged tuning | Not started |
@@ -99,6 +138,10 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - The latest PR review feedback exposed two more correctness risks: mixed cache-hit/cache-miss batch runs could skip the initial sync for the first uncached run, and stale `.xml` files could block detection of the fresh `.xml.htm` report variant. Both are now fixed on the Phase 1 branch and covered by Python regression tests plus a real probe revalidation.
 - The latest cache-hit review feedback exposed one more contract gap: cached runs were considered reusable without a collected tester report. The Phase 1 branch now requires the cached report artifact to exist before returning `cache_hit`, and cached results now include `report_path`.
 - Phase 0 solves measurement, not alpha. The verified probe artifact still showed `trades_total=0`, so profitability work now depends on Phase 1+ automation and subsequent search/strategy fixes rather than additional reporting changes.
+- The repo-tracked Candidate B seed set now has full `RPEA.mq5` input coverage, but it remains a study seed only, not a promoted production profile.
+- Long MT5 studies can still exceed an interactive shell budget. The difference now is that interrupted trials are recorded as `FAIL` and the resumed study refills the missing valid trial budget instead of silently treating the interruption as a finished trial.
+- The small Phase 2 search completed cleanly from a tooling perspective, but none of the four valid completed trials achieved `pass_rate > 0`; the next bottleneck is EA behavior and candidate quality, not Phase 2 orchestration.
+- The original March 12, 2026 Phase 2 leaderboard is no longer trustworthy for ranking because it was produced before the March 13, 2026 XAUUSD stop-risk correction. Any new Phase 3 work should use only the post-riskfix rerun outputs after they are merged back into the HPO baseline branch.
 
 ## Session Log
 
@@ -117,9 +160,18 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - 2026-03-07: Addressed three additional PR `#48` review comments by adding `use_local`/`use_remote`/`use_cloud` to the cache key, moving cache-hit evaluation ahead of sync/compile/MT5-process preflight, and preserving the detected `common.ini` encoding when writing the merged run INI. Expanded Python regression coverage to `12/12`, verified a real forced probe run with cache key `6c0b176b77dfd288`, confirmed an immediate `cache_hit` on the same spec without `--force`, then reran EA compile (`0 errors, 2 warnings`) and the full `42/42` automated MT5 suite.
 - 2026-03-09: Addressed two further PR `#48` review comments by ensuring batch execution keeps `sync_before_run` enabled until the first non-cache-hit run actually occurs, and by checking `.xml` and `.xml.htm` report candidates independently so a stale XML file cannot block a fresh HTML-wrapped report. Expanded Python regression coverage to `14/14`, revalidated the real forced probe plus immediate cache-hit path for `EURUSD` (`2024.01.02..2024.01.05`), then reran EA compile (`0 errors, 2 warnings`) and the full `42/42` automated MT5 suite.
 - 2026-03-09: Addressed one more PR `#48` review comment by requiring a cached tester report before declaring `cache_hit`. The runner now resolves the cached report path from the manifest or the expected collected report filenames and only short-circuits when summary, daily, and report artifacts all exist; cached results now return `report_path`. Expanded Python regression coverage to `15/15`, revalidated the real forced probe plus immediate cache-hit path for `EURUSD` (`2024.01.02..2024.01.05`), then reran EA compile (`0 errors, 2 warnings`) and the full `42/42` automated MT5 suite.
+- 2026-03-10: Implemented Phase 2 on `feat/hpo-phase2-objective-windows`. Added `tools/fundingpips_hpo.py` for study-spec and rules-profile loading, weekday rolling-window generation, Optuna orchestration, MT5 report parsing, Phase 0 artifact normalization, custom SQLite trial/run tables, and flat export regeneration. Added the repo-tracked baseline seed `Tests/RPEA/RPEA_candidate_B_2024H2.set`, `requirements-hpo.txt`, rules/study JSON configs, and Python regression coverage in `Tests/python/test_fundingpips_phase2.py`. Extended `tools/fundingpips_mt5_runner.py` with `build_runner_paths()` so the Phase 2 orchestrator can call it as a library.
+- 2026-03-10: Validated the finished Phase 2 toolchain with `python -m py_compile`, Python unit tests `28/28`, Candidate B set coverage `101/101` against `RPEA.mq5`, baseline window generation (`12` windows), EA compile (`0 errors, 2 warnings`), and automated suites `42/42`. A real `run-study --n-trials 2` attempt persisted partial run records under `.tmp/fundingpips_hpo_studies/phase2_baseline/` before the interactive shell timeout interrupted the process.
+- 2026-03-10: Hardened Phase 2 resume behavior after the interrupted real study by teaching `tools/fundingpips_hpo.py` to recover stale Optuna `RUNNING` trials as `FAIL` when `--resume` is used, preserving partial run records while allowing new trials to continue. Added unit coverage for this recovery path and corrected `run-study` result accounting so `completed_trials` counts only `COMPLETE` trials, not all stored trial rows.
+- 2026-03-12: Completed the long real Phase 2 baseline study with `python tools\fundingpips_hpo.py run-study --study-spec tools\fundingpips_studies\phase2_baseline.json --n-trials 4 --resume --stop-existing`, then regenerated flat exports with `export-study`. The winning trial is `trial_number=2` with objective `15.143758394097217` and params `RiskPct=1.75`, `MR_RiskPct_Default=0.9`, `ORMinutes=15`, `CutoffHour=20`, `StartHourLO=5`.
+- 2026-03-12: Hardened Phase 2 trial failure accounting after observing that the earlier timeout trial had been stored as `COMPLETE` even though it was invalid. Updated `tools/fundingpips_hpo.py` so invalid/timed-out trials are now persisted as `FAIL` and raised through Optuna catch-handling, then added `Tests/python/test_fundingpips_phase2.py` coverage for fail-then-resume replacement. This closes the gap where resumed studies could stop at the requested trial count without actually delivering that many valid completed trials.
+- 2026-03-12: Ran a fresh clean-validation study under `.tmp\phase2_baseline_clean.json`. The first 3-hour session completed two valid trials before timing out mid-trial, and the resumed run recovered that stale `RUNNING` trial as `FAIL` exactly as designed, then finished with four valid `COMPLETE` trials plus one recovered `FAIL`. This provides end-to-end live proof that the new failure accounting works under a real interrupted session, not just in unit tests.
+- 2026-03-13: Reviewed post-fix winning-cluster replays after correcting XAUUSD stop-risk sizing in `risk.mqh` and day-local breach export behavior in `evaluation_report.mqh`. The corrected `compliance_restore` replay stayed compliant and profitable (`68` trades, `+0.8462%`, `max_daily_dd_pct=0.445683`) but no longer resembled the stale pre-fix `+10.75%` result, confirming the old Phase 2 ranking was inflated by bad realized sizing.
+- 2026-03-13: Ran targeted replay ablations on the winning cluster. `NewsBufferS=300` alone and `MaxSpreadPoints=40` alone both produced `0` trades; `SpreadMultATR=0.005` alone restored the full live path (`68` trades, `+0.8462%`) and matched the paired-spread replay exactly. Added `tools/fundingpips_studies/phase2_baseline_postriskfix.json` so the next HPO rerun uses a clean study name and treats `SpreadMultATR=0.005` as the restored baseline condition.
+- 2026-03-14: Exported the clean post-riskfix Phase 2 study and confirmed all four trials were valid, breach-free, and non-zero-trade, but still `pass_rate=0.0`. The nominal study winner shifted to a slower safer cluster (`RiskPct=2.0`, `MR_RiskPct_Default=0.75`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=7`), yet full-window replays showed the trial-3 cluster (`RiskPct=2.0`, `MR_RiskPct_Default=1.05`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=5`) made materially more return while staying fully compliant.
 
 ## Next Recommended Action
 
-- Review and squash-merge PR `#48` into `feat/hpo-pipeline`.
-- After the Phase 1 merge, fast-forward the local baseline branch.
-- Only then cut `feat/hpo-phase2-objective-windows` from the updated baseline branch.
+- Merge the corrected Phase 2 work from `feat/hpo-phase2-objective-windows` into `feat/hpo-pipeline`.
+- Cut `feat/hpo-phase3-optuna-search` from that updated baseline branch.
+- Recreate or cherry-pick the focused post-riskfix study spec there, then run the next search from the dedicated Phase 3 branch.
