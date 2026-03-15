@@ -17,6 +17,7 @@
 int    g_entries_this_session = 0;
 bool   g_locked_to_mr = false;
 string g_current_session_label = "";
+datetime g_entry_budget_day_anchor = 0;
 
 // Track positions to avoid double-counting partials
 ulong g_counted_positions[];
@@ -375,19 +376,28 @@ void M7_ClearPositionTracking()
 // Session entry counter
 int M7_GetEntriesThisSession(const AppContext &ctx, const string symbol)
 {
-   // Check if session changed
+   // Track entry budget by trading day, not by overlapping session label.
+   // This prevents early-session entries from being "forgotten" when the
+   // preferred label flips from NY to LO later in the same day.
+   MqlDateTime tm;
+   TimeToStruct(ctx.current_server_time, tm);
+   tm.hour = 0;
+   tm.min = 0;
+   tm.sec = 0;
+   datetime current_day_anchor = StructToTime(tm);
+
+   if(current_day_anchor != g_entry_budget_day_anchor)
+   {
+      g_entries_this_session = 0;
+      g_locked_to_mr = false;
+      g_entry_budget_day_anchor = current_day_anchor;
+      M7_ClearPositionTracking();
+   }
+
    string current_label = "";
    if(Sessions_InLondon(ctx, symbol)) current_label = SESSION_LABEL_LONDON;
    else if(Sessions_InNewYork(ctx, symbol)) current_label = SESSION_LABEL_NEWYORK;
-
-   if(current_label != g_current_session_label)
-   {
-      // Session changed - reset counters
-      g_entries_this_session = 0;
-      g_locked_to_mr = false;
-      g_current_session_label = current_label;
-      M7_ClearPositionTracking();
-   }
+   g_current_session_label = current_label;
 
    return g_entries_this_session;
 }
@@ -441,6 +451,7 @@ void M7_ResetSessionState()
    g_entries_this_session = 0;
    g_locked_to_mr = false;
    g_current_session_label = "";
+   g_entry_budget_day_anchor = 0;
    M7_ClearPositionTracking();
 }
 

@@ -24,7 +24,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 
 ## Current Snapshot
 
-- Status: Phases 0-2 are complete and merged into `feat/hpo-pipeline`. The active branch is now `feat/hpo-phase3-optuna-search`, and the next execution step is the focused study `tools/fundingpips_studies/phase3_focus_postriskfix.json`.
+- Status: Phases 0-3 are complete through candidate selection. The active branch is `feat/hpo-phase3-optuna-search`, and the next execution step is to cut or prepare `feat/hpo-phase4-wfo-stress` around the Phase 3 post-fix anchor cluster.
 - User go-ahead to begin edits: granted.
 - Repo default branch: `master`.
 - Baseline branch for this workstream: `feat/hpo-pipeline`.
@@ -48,6 +48,8 @@ It exists so a new agent or a new conversation can resume work without re-scanni
   - Phase 2 added `Tests/RPEA/RPEA_candidate_B_2024H2.set`
   - Phase 2 added `Tests/python/test_fundingpips_phase2.py`
   - Phase 2 extended `tools/fundingpips_mt5_runner.py` with `build_runner_paths()` for library callers
+  - Phase 3 extended `tools/fundingpips_mt5_runner.py` to collect decision/event CSV diagnostics into each run folder
+  - Phase 3 updated `MQL5/Include/RPEA/m7_helpers.mqh` so MR entry-budget and lock state reset by trading day instead of overlapping session-label changes
 - Validation runs executed in this workstream:
   - Python syntax check: `python -m py_compile tools\fundingpips_mt5_runner.py tools\fundingpips_hpo.py Tests\python\test_fundingpips_mt5_runner.py Tests\python\test_fundingpips_phase2.py`
   - Python unit tests: `29/29` passing in `Tests.python.test_fundingpips_mt5_runner` plus `Tests.python.test_fundingpips_phase2`, including the new Phase 2 fail-then-resume coverage
@@ -75,6 +77,13 @@ It exists so a new agent or a new conversation can resume work without re-scanni
     - nominal best Phase 2 trial (`RiskPct=2.0`, `MR_RiskPct_Default=0.75`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=7`) replayed at `+0.5754%` with `85` trades and no breaches
     - the Phase 2 runner-up cluster (`RiskPct=2.0`, `MR_RiskPct_Default=1.05`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=5`) replayed better at `+1.2845%` with `77` trades and no breaches
     - `NewsBufferS=300` remained non-binding for the new best profile, so the prior two-scenario mix is no longer adding useful separation
+  - Focused Phase 3 study execution/export completed under `tools\fundingpips_studies\phase3_focus_postriskfix.json`
+  - Gate-level replay diagnostics after the focused study:
+    - raw decision/event log collection showed the weak LO7 path was not getting a better signal, it was getting an extra MR budget reset when the session label flipped from NY to LO inside the same trading day
+    - exact divergence rows were confirmed on `2025-08-14` and `2025-08-25`, where the pre-fix LO7 path admitted extra late-morning MR entries via `RULE_2_MR_LOCK` after the session counter had reset
+    - fixing the entry-budget reset in `m7_helpers.mqh` raised the LO7 replay (`RiskPct=2.0`, `MR_RiskPct_Default=1.0`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=7`, `SpreadMultATR=0.005`) from `+0.9754%` to `+1.5041%` with `65` trades and no breaches
+    - the current anchor replay (`RiskPct=2.0`, `MR_RiskPct_Default=1.05`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=5`, `SpreadMultATR=0.005`) improved to `+1.5637%` with `65` trades and no breaches
+    - the nearby anchor neighbor (`MR_RiskPct_Default=1.0`, same remaining params) matched the anchor exactly at `+1.5637%`, establishing a small stable cluster for Phase 4
 - Phase 1 collected artifacts written under `.tmp/fundingpips_hpo_runs/phase1_probe__6c0b176b77dfd288/collected/`:
   - `fundingpips_eval_summary.json`
   - `fundingpips_eval_daily.csv`
@@ -94,7 +103,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - Phase 0 merge result: PR `#47` squash-merged into `feat/hpo-pipeline`
 - Current Phase 1 branch state: branch updates pending review on `origin/feat/hpo-phase1-mt5-runner`
 - Current Phase 1 PR: `https://github.com/jonahgrigoryan/earl/pull/48`
-- Immediate objective: run the focused Phase 3 study `tools/fundingpips_studies/phase3_focus_postriskfix.json`, then replay the top candidates before deciding whether to widen the Phase 3 space or switch to EA-level alpha changes.
+- Immediate objective: move into Phase 4 walk-forward/stress on the post-fix anchor cluster: `RiskPct=2.0`, `MR_RiskPct_Default in {1.0,1.05}`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=5`, `SpreadMultATR=0.005`.
 
 ## Locked Decisions So Far
 
@@ -111,8 +120,8 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 | 0 | `feat/hpo-phase0-metrics-exports` | Deterministic tester metrics for FundingPips-style pass/fail and drawdown tracking | Squash-merged into `feat/hpo-pipeline` via PR `#47` |
 | 1 | `feat/hpo-phase1-mt5-runner` | Python MT5 runner for repeatable single backtests | Committed, pushed, and awaiting review in PR `#48` |
 | 2 | `feat/hpo-phase2-objective-windows` | Objective function, rolling windows, and baseline Optuna study | Complete locally with real resumed study validation |
-| 3 | `feat/hpo-phase3-optuna-search` | Parameter reduction and conditional search | Not started |
-| 4 | `feat/hpo-phase4-wfo-stress` | Walk-forward and stress harness | Not started |
+| 3 | `feat/hpo-phase3-optuna-search` | Parameter reduction, conditional search, and gate-level replay diagnosis | Complete locally; phase-4-ready candidate cluster selected |
+| 4 | `feat/hpo-phase4-wfo-stress` | Walk-forward and stress harness | Ready to start from updated Phase 3 branch state |
 | 5 | `feat/hpo-phase5-mr-ql-staging` | MR / ensemble / Q-learning staged tuning | Not started |
 
 ## First Execution Pass When Approved
@@ -143,7 +152,8 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - The repo-tracked Candidate B seed set now has full `RPEA.mq5` input coverage, but it remains a study seed only, not a promoted production profile.
 - Long MT5 studies can still exceed an interactive shell budget. The difference now is that interrupted trials are recorded as `FAIL` and the resumed study refills the missing valid trial budget instead of silently treating the interruption as a finished trial.
 - The small Phase 2 search completed cleanly from a tooling perspective, but none of the four valid completed trials achieved `pass_rate > 0`; the next bottleneck is EA behavior and candidate quality, not Phase 2 orchestration.
-- The original March 12, 2026 Phase 2 leaderboard is no longer trustworthy for ranking because it was produced before the March 13, 2026 XAUUSD stop-risk correction. Any new Phase 3 work should use only the post-riskfix rerun outputs after they are merged back into the HPO baseline branch.
+- The original March 12, 2026 Phase 2 leaderboard is no longer trustworthy for ranking because it was produced before the March 13, 2026 XAUUSD stop-risk correction. Any new Phase 3 or Phase 4 work should use only the post-riskfix rerun outputs.
+- The EA is still far from challenge-pass alpha (`+1.5637%` best full-window replay versus a `10%` target), so Phase 4 should be used to validate robustness of the new cluster, not to claim funded-account readiness.
 
 ## Session Log
 
@@ -173,9 +183,18 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - 2026-03-14: Exported the clean post-riskfix Phase 2 study and confirmed all four trials were valid, breach-free, and non-zero-trade, but still `pass_rate=0.0`. The nominal study winner shifted to a slower safer cluster (`RiskPct=2.0`, `MR_RiskPct_Default=0.75`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=7`), yet full-window replays showed the trial-3 cluster (`RiskPct=2.0`, `MR_RiskPct_Default=1.05`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=5`) made materially more return while staying fully compliant.
 - 2026-03-14: Completed Phase 2 branch hygiene. Committed the corrected Phase 2 work as `a70a665` on `feat/hpo-phase2-objective-windows`, merged it into `feat/hpo-pipeline` as merge commit `9aebabd`, and cut the dedicated Phase 3 branch `feat/hpo-phase3-optuna-search` from that updated baseline.
 - 2026-03-14: Added `tools/fundingpips_studies/phase3_focus_postriskfix.json` on `feat/hpo-phase3-optuna-search`. It fixes `SpreadMultATR=0.005`, collapses to a single baseline scenario because the old compliance-restore scenario no longer separates behavior, and narrows the search to the proven post-riskfix cluster around `RiskPct=2.0`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO in {5,7}`, and `MR_RiskPct_Default in {0.8,0.9,1.0}`.
+- 2026-03-15: Ran the focused Phase 3 study and replayed the practical winners. The small Optuna search remained breach-free but plateaued, so the work shifted to raw replay diagnostics using new per-run decision/event log collection in `tools/fundingpips_mt5_runner.py`.
+- 2026-03-15: Used the collected decision/event logs to trace the weak LO7 path to an intra-day session-budget reset in `m7_helpers.mqh`. Under `StartHourLO=7`, an early XAUUSD MR trade could be counted under one active session label and then forgotten when the preferred label flipped later in the same day, granting an extra late-morning MR entry on dates like `2025-08-14` and `2025-08-25`.
+- 2026-03-15: Fixed that reset so MR entry-budget and lock state now roll by trading day instead of by session label. Fresh full-window reruns then produced the current Phase 4-ready cluster: anchor `RiskPct=2.0`, `MR_RiskPct_Default=1.05`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=5`, `SpreadMultATR=0.005` returned `+1.5637%` with `65` trades and no breaches, while the nearby neighbor with `MR_RiskPct_Default=1.0` matched it exactly. This beats the prior anchor and satisfies the local robustness bar for starting Phase 4.
 
 ## Next Recommended Action
 
-- Run the focused Phase 3 study with `tools/fundingpips_studies/phase3_focus_postriskfix.json`.
-- Export the completed study artifacts from `.tmp\fundingpips_hpo_studies\phase3_focus_postriskfix\` and replay the top `2-3` candidates under the corrected environment.
-- If the focused Phase 3 winner still cannot materially improve full-window return, shift next into EA-level alpha diagnosis rather than widening the search space further.
+- Cut or prepare `feat/hpo-phase4-wfo-stress` from the current `feat/hpo-phase3-optuna-search` state.
+- Use the post-fix anchor cluster as the Phase 4 candidate set:
+  - `RiskPct=2.0`
+  - `MR_RiskPct_Default in {1.0,1.05}`
+  - `ORMinutes=45`
+  - `CutoffHour=23`
+  - `StartHourLO=5`
+  - `SpreadMultATR=0.005`
+- Build the walk-forward/stress harness around this cluster before any further alpha expansion.

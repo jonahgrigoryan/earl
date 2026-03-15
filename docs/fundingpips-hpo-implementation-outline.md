@@ -109,6 +109,26 @@ v1 adds heavier robustness and architecture work:
 - stress harness
 - staged MR / ensemble / Q-learning evaluation
 
+## Current Execution Status
+
+As of `2026-03-15`, Phases 0-3 are complete through candidate selection on `feat/hpo-phase3-optuna-search`.
+
+Key outcomes from the post-riskfix Phase 3 closeout:
+
+- the original weak LO7 profile was traced to a gate-level state bug, not superior alpha
+- per-run decision/event log collection showed overlapping NY->LO session-label flips could reset MR entry-budget mid-day and admit extra late-morning MR trades
+- fixing that reset in `m7_helpers.mqh` produced a new stable anchor cluster:
+  - `RiskPct=2.0`
+  - `MR_RiskPct_Default in {1.0,1.05}`
+  - `ORMinutes=45`
+  - `CutoffHour=23`
+  - `StartHourLO=5`
+  - `SpreadMultATR=0.005`
+- best full-window replay after the fix: `+1.5637%`, breach-free
+- nearby neighbor replay: identical `+1.5637%`, breach-free
+
+This is the handoff point for Phase 4. The cluster is not challenge-pass-ready on raw return, but it is now stable enough to justify walk-forward and stress work instead of more Phase 3 micro-searching.
+
 ## Implementation Phases
 
 ## Phase 0: FundingPips Metrics Export
