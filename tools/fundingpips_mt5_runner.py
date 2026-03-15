@@ -465,6 +465,35 @@ def locate_recent_file(root: Path, filename: str, not_before: float) -> Path | N
    return latest
 
 
+def locate_recent_log_files(
+   root: Path,
+   prefix: str,
+   *,
+   suffix: str = ".csv",
+   not_before: float,
+) -> list[Path]:
+   if not root.exists():
+      return []
+
+   matches: list[tuple[float, Path]] = []
+   pattern = f"{prefix}*{suffix}"
+   for path in root.rglob(pattern):
+      if not path.is_file():
+         continue
+      if "RPEA" not in path.parts or "logs" not in path.parts:
+         continue
+      try:
+         mtime = path.stat().st_mtime
+      except FileNotFoundError:
+         continue
+      if mtime < not_before:
+         continue
+      matches.append((mtime, path))
+
+   matches.sort(key=lambda item: (item[0], str(item[1])))
+   return [path for _, path in matches]
+
+
 def resolve_cached_report_path(
    manifest_path: Path,
    collected_dir: Path,
@@ -549,6 +578,26 @@ def copy_if_present(source: Path | None, destination: Path) -> str | None:
    ensure_directory(destination.parent)
    shutil.copy2(source, destination)
    return str(destination)
+
+
+def copy_files_preserving_relative(
+   sources: list[Path],
+   root: Path,
+   destination_root: Path,
+) -> list[str]:
+   copied: list[str] = []
+   for source in sources:
+      if not source.exists():
+         continue
+      try:
+         relative = source.relative_to(root)
+      except ValueError:
+         relative = Path(source.name)
+      destination = destination_root / relative
+      ensure_directory(destination.parent)
+      shutil.copy2(source, destination)
+      copied.append(str(destination))
+   return copied
 
 
 def build_runner_paths(
@@ -706,6 +755,7 @@ def run_single_backtest(
    cached_summary = collected_dir / SUMMARY_FILENAME
    cached_daily = collected_dir / DAILY_FILENAME
    cached_report = resolve_cached_report_path(manifest_path, collected_dir, spec.report_stem, cache_key)
+   cached_manifest = load_json_text(manifest_path) if manifest_path.exists() else None
    if (
       manifest_path.exists()
       and cached_summary.exists()
@@ -721,6 +771,8 @@ def run_single_backtest(
          "summary_path": str(cached_summary),
          "daily_path": str(cached_daily),
          "report_path": str(cached_report),
+         "decision_logs": (cached_manifest or {}).get("collected_decision_logs", []),
+         "event_logs": (cached_manifest or {}).get("collected_event_logs", []),
       }
 
    if sync_before_run:
@@ -812,6 +864,19 @@ def run_single_backtest(
    report_source = artifacts.get("report")
    report_destination = collected_dir / (report_source.name if report_source else Path(report_relative_path).name)
    report_copy = copy_if_present(report_source, report_destination)
+   logs_root = collected_dir / "logs"
+   decision_sources = locate_recent_log_files(
+      paths.tester_root,
+      "decisions_",
+      not_before=started_at,
+   )
+   event_sources = locate_recent_log_files(
+      paths.tester_root,
+      "events_",
+      not_before=started_at,
+   )
+   decision_copies = copy_files_preserving_relative(decision_sources, paths.tester_root, logs_root)
+   event_copies = copy_files_preserving_relative(event_sources, paths.tester_root, logs_root)
 
    manifest.update(
       {
@@ -820,9 +885,13 @@ def run_single_backtest(
          "collected_summary": summary_copy,
          "collected_daily": daily_copy,
          "collected_report": report_copy,
+         "collected_decision_logs": decision_copies,
+         "collected_event_logs": event_copies,
          "source_summary": str(artifacts.get("summary")) if artifacts.get("summary") else None,
          "source_daily": str(artifacts.get("daily")) if artifacts.get("daily") else None,
          "source_report": str(report_source) if report_source else None,
+         "source_decision_logs": [str(path) for path in decision_sources],
+         "source_event_logs": [str(path) for path in event_sources],
       }
    )
    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="ascii")
@@ -835,6 +904,8 @@ def run_single_backtest(
       "summary_path": summary_copy,
       "daily_path": daily_copy,
       "report_path": report_copy,
+      "decision_logs": decision_copies,
+      "event_logs": event_copies,
    }
 
 

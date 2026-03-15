@@ -109,6 +109,26 @@ v1 adds heavier robustness and architecture work:
 - stress harness
 - staged MR / ensemble / Q-learning evaluation
 
+## Current Execution Status
+
+As of `2026-03-15`, Phases 0-3 are complete through candidate selection on `feat/hpo-phase3-optuna-search`.
+
+Key outcomes from the post-riskfix Phase 3 closeout:
+
+- the original weak LO7 profile was traced to a gate-level state bug, not superior alpha
+- per-run decision/event log collection showed overlapping NY->LO session-label flips could reset MR entry-budget mid-day and admit extra late-morning MR trades
+- fixing that reset in `m7_helpers.mqh` produced a new stable anchor cluster:
+  - `RiskPct=2.0`
+  - `MR_RiskPct_Default in {1.0,1.05}`
+  - `ORMinutes=45`
+  - `CutoffHour=23`
+  - `StartHourLO=5`
+  - `SpreadMultATR=0.005`
+- best full-window replay after the fix: `+1.5637%`, breach-free
+- nearby neighbor replay: identical `+1.5637%`, breach-free
+
+This is the handoff point for Phase 4. The cluster is not challenge-pass-ready on raw return, but it is now stable enough to justify walk-forward and stress work instead of more Phase 3 micro-searching.
+
 ## Implementation Phases
 
 ## Phase 0: FundingPips Metrics Export
@@ -446,6 +466,7 @@ Use these throughout the pipeline, not just at the end:
   - rules profile config at `tools/fundingpips_rules_profiles/fundingpips_1step_eval.json`
   - baseline study spec at `tools/fundingpips_studies/phase2_baseline.json`
   - post-riskfix rerun study spec at `tools/fundingpips_studies/phase2_baseline_postriskfix.json`
+  - focused Phase 3 study spec at `tools/fundingpips_studies/phase3_focus_postriskfix.json`
   - library-facing `build_runner_paths()` in `tools/fundingpips_mt5_runner.py`
   - the new orchestrator `tools/fundingpips_hpo.py` with `generate-windows`, `run-study`, and `export-study`
   - weekday-only rolling windows, MT5 report parsing, Phase 0 artifact normalization, custom SQLite trial/run tables, flat export regeneration, stale interrupted-trial recovery on `--resume`, and failure-state handling so invalid/timed-out trials are stored as `FAIL` instead of `COMPLETE`
@@ -462,6 +483,6 @@ Use these throughout the pipeline, not just at the end:
   - post-fix replay analysis showed the March 12, 2026 winning cluster was inflated by incorrect XAUUSD realized sizing; with corrected sizing the same cluster remains compliant but returns only about `+0.8462%`
   - targeted ablations showed `SpreadMultATR=0.005` alone restores trading for the winning cluster, while `NewsBufferS=300` and `MaxSpreadPoints=40` do not unlock trades by themselves
   - clean post-riskfix Phase 2 rerun completed with four valid, non-zero-trade, breach-free trials; full-window candidate replays then showed the nominal trial-3 runner-up out-earned the nominal study winner while staying compliant
-- Next execution step: bank the corrected Phase 2 branch into the HPO baseline, then cut the dedicated Phase 3 branch and run the focused follow-up search from there.
+- Next execution step: on `feat/hpo-phase3-optuna-search`, run the focused follow-up study `tools/fundingpips_studies/phase3_focus_postriskfix.json`, then replay the top candidates under the corrected environment before deciding between broader Phase 3 expansion and EA-level alpha work.
 
 Use `docs/fundingpips-hpo-handoff.md` as the session-by-session execution tracker.
