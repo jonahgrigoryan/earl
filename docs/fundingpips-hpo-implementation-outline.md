@@ -111,7 +111,7 @@ v1 adds heavier robustness and architecture work:
 
 ## Current Execution Status
 
-As of `2026-03-15`, Phases 0-3 are complete through candidate selection on `feat/hpo-phase3-optuna-search`.
+As of `2026-03-15`, Phases 0-3 are complete through candidate selection and Phase 4 kickoff is underway on `feat/hpo-phase4-wfo-stress`.
 
 Key outcomes from the post-riskfix Phase 3 closeout:
 
@@ -126,8 +126,45 @@ Key outcomes from the post-riskfix Phase 3 closeout:
   - `SpreadMultATR=0.005`
 - best full-window replay after the fix: `+1.5637%`, breach-free
 - nearby neighbor replay: identical `+1.5637%`, breach-free
+- Phase 4 harness now exists in-repo:
+  - `tools/fundingpips_phase4.py`
+  - `tools/fundingpips_studies/phase4_anchor_wfo_stress.json`
+  - `Tests/python/test_fundingpips_phase4.py`
+- initial walk-forward manifest for the locked anchor cluster was later extended through `2025-10-31` and now covers three monthly rolls:
+  - `wf001_202508`: search `2025-06-03..2025-07-31`, report `2025-08-01..2025-08-29`
+  - `wf002_202509`: search `2025-07-01..2025-08-29`, report `2025-09-01..2025-09-30`
+  - `wf003_202510`: search `2025-08-01..2025-09-30`, report `2025-10-01..2025-10-31`
+- first live Phase 4 cycle (`wf001_202508`) completed for the primary anchor pair across both search and report windows:
+  - search objective tie: `52.56601445625`
+  - report objective tie: `50.677969662500004`
+  - mild/moderate stress exports remained breach-free with no collapse
+- August report-window neighbor checks also completed:
+  - all four neighbors matched their parent report objective exactly (`objective_delta=0.0`)
+  - no neighbor collapse was observed
+- second live Phase 4 primary cycle (`wf002_202509`) completed on the extended full-September report month:
+  - search objective tie: `45.47837836875`
+  - report objective tie: `47.93151323125`
+  - September was the most informative added month (`42` baseline trades) and still did not separate the anchors
+- second live neighbor sweep also completed on `wf002_202509`:
+  - all four September neighbors matched their parent report objective exactly (`objective_delta=0.0`)
+- third live Phase 4 primary cycle (`wf003_202510`) also completed:
+  - search objective tie: `53.1939696625`
+  - report objective tie: `49.607492500000006`
+  - October stayed breach-free but was low-signal (`1` baseline trade)
+- a true second neighbor ring was then tested around `anchor_mr100` using behavior-changing axes:
+  - `StartHourLO=7`
+  - `ORMinutes in {30,60}`
+  - `CutoffHour=20`
+  - `SpreadMultATR in {0.003,0.007}`
+- that second ring finally created meaningful deltas, but only on spread/cutoff:
+  - `CutoffHour=20` underperformed the anchor on both informative report months
+  - `SpreadMultATR=0.003` improved August but materially hurt September
+  - `SpreadMultATR=0.007` hurt August and only slightly helped September
+  - `StartHourLO=7` and `ORMinutes in {30,60}` still tied exactly
+- across the two informative report months, the untweaked `anchor_mr100` remained the best balanced tested candidate
+- Phase 4 export now reparses stored decision logs so regime-tagged summaries are refreshed from source logs instead of stale cached JSON values
 
-This is the handoff point for Phase 4. The cluster is not challenge-pass-ready on raw return, but it is now stable enough to justify walk-forward and stress work instead of more Phase 3 micro-searching.
+Phase 4 is now in progress. The cluster is still not challenge-pass-ready on raw return, but it is stable enough to justify continued walk-forward and stress work instead of more Phase 3 micro-searching. The latest result is stronger than a flat tie: the branch now knows which axes actually move behavior (`SpreadMultATR`, `CutoffHour`) and that the base `anchor_mr100` still wins on balance against those tested perturbations.
 
 ## Implementation Phases
 

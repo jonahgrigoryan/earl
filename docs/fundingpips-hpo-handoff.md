@@ -24,7 +24,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 
 ## Current Snapshot
 
-- Status: Phases 0-3 are complete through candidate selection. The active branch is `feat/hpo-phase3-optuna-search`, and the next execution step is to cut or prepare `feat/hpo-phase4-wfo-stress` around the Phase 3 post-fix anchor cluster.
+- Status: Phases 0-3 are complete through candidate selection, and Phase 4 kickoff is now underway on `feat/hpo-phase4-wfo-stress` at `4f739c0`. The walk-forward/stress harness is checked in, the Phase 4 horizon is extended through `2025-10-31`, and the current live matrix includes three primary monthly rolls plus neighbor sweeps on the two informative report months (`wf001_202508` and `wf002_202509`). A second neighbor ring finally produced meaningful movement on `SpreadMultATR` and `CutoffHour`, but the untweaked anchor still won on balance, so the branch now has both a robust baseline and a clearer picture of which parameters actually move the path.
 - User go-ahead to begin edits: granted.
 - Repo default branch: `master`.
 - Baseline branch for this workstream: `feat/hpo-pipeline`.
@@ -35,6 +35,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
   - `feat/hpo-phase1-mt5-runner`
   - `feat/hpo-phase2-objective-windows`
   - `feat/hpo-phase3-optuna-search`
+  - `feat/hpo-phase4-wfo-stress`
 - Code changes applied in this workstream:
   - Phase 0 merged: `MQL5/Include/RPEA/evaluation_report.mqh`, `MQL5/Experts/FundingPips/RPEA.mq5`, `Tests/RPEA/test_evaluation_report.mqh`, and runner registration in `Tests/RPEA/run_automated_tests_ea.mq5`
   - Phase 1 added `tools/__init__.py`
@@ -50,6 +51,10 @@ It exists so a new agent or a new conversation can resume work without re-scanni
   - Phase 2 extended `tools/fundingpips_mt5_runner.py` with `build_runner_paths()` for library callers
   - Phase 3 extended `tools/fundingpips_mt5_runner.py` to collect decision/event CSV diagnostics into each run folder
   - Phase 3 updated `MQL5/Include/RPEA/m7_helpers.mqh` so MR entry-budget and lock state reset by trading day instead of overlapping session-label changes
+  - Phase 4 added `tools/fundingpips_phase4.py`
+  - Phase 4 added `tools/fundingpips_studies/phase4_anchor_wfo_stress.json`
+  - Phase 4 added `Tests/python/test_fundingpips_phase4.py`
+  - Phase 4 export refresh now reparses stored decision logs so regime-tagged summaries are regenerated from source logs instead of stale cached JSON fields
 - Validation runs executed in this workstream:
   - Python syntax check: `python -m py_compile tools\fundingpips_mt5_runner.py tools\fundingpips_hpo.py Tests\python\test_fundingpips_mt5_runner.py Tests\python\test_fundingpips_phase2.py`
   - Python unit tests: `29/29` passing in `Tests.python.test_fundingpips_mt5_runner` plus `Tests.python.test_fundingpips_phase2`, including the new Phase 2 fail-then-resume coverage
@@ -84,6 +89,38 @@ It exists so a new agent or a new conversation can resume work without re-scanni
     - fixing the entry-budget reset in `m7_helpers.mqh` raised the LO7 replay (`RiskPct=2.0`, `MR_RiskPct_Default=1.0`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=7`, `SpreadMultATR=0.005`) from `+0.9754%` to `+1.5041%` with `65` trades and no breaches
     - the current anchor replay (`RiskPct=2.0`, `MR_RiskPct_Default=1.05`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=5`, `SpreadMultATR=0.005`) improved to `+1.5637%` with `65` trades and no breaches
     - the nearby anchor neighbor (`MR_RiskPct_Default=1.0`, same remaining params) matched the anchor exactly at `+1.5637%`, establishing a small stable cluster for Phase 4
+  - Phase 4 syntax check: `python -m py_compile tools\fundingpips_phase4.py Tests\python\test_fundingpips_phase4.py`
+  - Phase 4 Python unit tests: `python -m unittest Tests.python.test_fundingpips_phase4` (`3/3` passing)
+  - Phase 4 manifest generation: `python tools\fundingpips_phase4.py prepare-phase4 --phase4-spec tools\fundingpips_studies\phase4_anchor_wfo_stress.json`
+  - First live Phase 4 primary cycle: `python tools\fundingpips_phase4.py run-phase4 --phase4-spec tools\fundingpips_studies\phase4_anchor_wfo_stress.json --cycle-id wf001_202508 --candidate-scope primary --window-phase both --stop-existing`
+  - Phase 4 August neighbor sweep: `python tools\fundingpips_phase4.py run-phase4 --phase4-spec tools\fundingpips_studies\phase4_anchor_wfo_stress.json --cycle-id wf001_202508 --candidate-scope all --window-phase report --stop-existing`
+  - Phase 4 horizon extension: updated `tools\fundingpips_studies\phase4_anchor_wfo_stress.json` `to_date` from `2025-09-03` to `2025-10-31`, then regenerated cycles with `prepare-phase4`
+  - Phase 4 refreshed September primary cycle: `python tools\fundingpips_phase4.py run-phase4 --phase4-spec tools\fundingpips_studies\phase4_anchor_wfo_stress.json --cycle-id wf002_202509 --candidate-scope primary --window-phase both --stop-existing --force`
+  - Phase 4 October primary cycle: `python tools\fundingpips_phase4.py run-phase4 --phase4-spec tools\fundingpips_studies\phase4_anchor_wfo_stress.json --cycle-id wf003_202510 --candidate-scope primary --window-phase both --stop-existing`
+  - Phase 4 September neighbor sweep: `python tools\fundingpips_phase4.py run-phase4 --phase4-spec tools\fundingpips_studies\phase4_anchor_wfo_stress.json --cycle-id wf002_202509 --candidate-scope all --window-phase report --stop-existing`
+  - Phase 4 second-ring spec expansion: added `ring2_lo7_mr100`, `ring2_or30_mr100`, `ring2_or60_mr100`, `ring2_cutoff20_mr100`, `ring2_spread003_mr100`, and `ring2_spread007_mr100` under `neighbor_candidates`
+  - Phase 4 second-ring report sweep across informative months: `python tools\fundingpips_phase4.py run-phase4 --phase4-spec tools\fundingpips_studies\phase4_anchor_wfo_stress.json --cycle-id wf001_202508 --cycle-id wf002_202509 --candidate-scope all --window-phase report --stop-existing`
+  - Phase 4 export regeneration after the live cycle: `python tools\fundingpips_phase4.py export-phase4 --phase4-dir .tmp\fundingpips_phase4\phase4_anchor_wfo_stress`
+  - Current live Phase 4 results:
+    - generated three walk-forward cycles: `wf001_202508` (`search 2025-06-03..2025-07-31`, `report 2025-08-01..2025-08-29`), `wf002_202509` (`search 2025-07-01..2025-08-29`, `report 2025-09-01..2025-09-30`), and `wf003_202510` (`search 2025-08-01..2025-09-30`, `report 2025-10-01..2025-10-31`)
+    - `wf001_202508` search objective tied exactly between `anchor_mr100` and `anchor_mr105` at `52.56601445625`
+    - `wf001_202508` report objective tied exactly between `anchor_mr100` and `anchor_mr105` at `50.677969662500004`
+    - all four August report-window neighbors matched their parent objective exactly (`objective_delta=0.0`) and none collapsed
+    - `wf002_202509` search objective tied exactly between `anchor_mr100` and `anchor_mr105` at `45.47837836875`
+    - `wf002_202509` report objective tied exactly between `anchor_mr100` and `anchor_mr105` at `47.93151323125`
+    - all four September report-window neighbors also matched their parent objective exactly (`objective_delta=0.0`) and none collapsed
+    - `wf002_202509` was the most informative added month (`42` baseline trades, `+0.1129%` return for `anchor_mr100`, same ranking outcome for `anchor_mr105`)
+    - `wf003_202510` search objective tied exactly between `anchor_mr100` and `anchor_mr105` at `53.1939696625`
+    - `wf003_202510` report objective tied exactly between `anchor_mr100` and `anchor_mr105` at `49.607492500000006`
+    - `wf003_202510` baseline stayed breach-free but was low-signal (`1` trade, `+0.0272%` for `anchor_mr100`, same ranking outcome for `anchor_mr105`)
+    - the second-ring parameters finally produced meaningful report-window movement:
+      - `CutoffHour=20` degraded vs anchor on both informative months (`-1.613994` in August, `-0.621336` in September)
+      - `SpreadMultATR=0.003` improved August by `+0.805026` but degraded September by `-3.044793`
+      - `SpreadMultATR=0.007` degraded August by `-5.593193` but improved September slightly by `+0.043688`
+      - `StartHourLO=7` and `ORMinutes in {30,60}` still matched the anchor exactly
+    - across August+September report windows, `anchor_mr100` remained the best balanced candidate (`avg_objective=49.304741`, `min_objective=47.931513`)
+    - mild and moderate stress exports remained breach-free with `neighbor_collapse_count=0`, `mild_report_noncollapse=true`, and `moderate_report_noncollapse=true`
+    - refreshed actual-run exports now show real regime tags (`RANGING`, `TRENDING`, `VOLATILE`) instead of stale `UNKNOWN` values
 - Phase 1 collected artifacts written under `.tmp/fundingpips_hpo_runs/phase1_probe__6c0b176b77dfd288/collected/`:
   - `fundingpips_eval_summary.json`
   - `fundingpips_eval_daily.csv`
@@ -100,10 +137,18 @@ It exists so a new agent or a new conversation can resume work without re-scanni
   - `windows.json`
   - flat exports generated from the SQLite custom tables
   - `best_trial_summary.json` points to winning trial `0` with the same best params as the canonical baseline study
+- Phase 4 assets now live under `.tmp/fundingpips_phase4/phase4_anchor_wfo_stress/`:
+  - `phase4_manifest.json`
+  - `walk_forward_cycles.json`
+  - `phase4_summary.json`
+  - `window_summaries.json`
+  - `scenario_records.jsonl`
+  - per-run actual records under `actual_runs/wf001_202508/`, `actual_runs/wf002_202509/`, and `actual_runs/wf003_202510/`
 - Phase 0 merge result: PR `#47` squash-merged into `feat/hpo-pipeline`
 - Current Phase 1 branch state: branch updates pending review on `origin/feat/hpo-phase1-mt5-runner`
 - Current Phase 1 PR: `https://github.com/jonahgrigoryan/earl/pull/48`
-- Immediate objective: move into Phase 4 walk-forward/stress on the post-fix anchor cluster: `RiskPct=2.0`, `MR_RiskPct_Default in {1.0,1.05}`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=5`, `SpreadMultATR=0.005`.
+- Immediate objective: treat the current tied Phase 4 set as an equivalence cluster unless a new perturbation axis is introduced. The next practical choice is either to nominate a canonical representative (`anchor_mr100` is the conservative default because it uses the lower MR risk) or to open a second neighbor ring on parameters that actually move the path.
+- Immediate objective: wait for user direction. The branch now has a tested winner-by-balance (`anchor_mr100`) and identified behavior-changing axes (`SpreadMultATR`, `CutoffHour`). Do not advance to the next phase without explicit approval.
 
 ## Locked Decisions So Far
 
@@ -121,7 +166,7 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 | 1 | `feat/hpo-phase1-mt5-runner` | Python MT5 runner for repeatable single backtests | Committed, pushed, and awaiting review in PR `#48` |
 | 2 | `feat/hpo-phase2-objective-windows` | Objective function, rolling windows, and baseline Optuna study | Complete locally with real resumed study validation |
 | 3 | `feat/hpo-phase3-optuna-search` | Parameter reduction, conditional search, and gate-level replay diagnosis | Complete locally; phase-4-ready candidate cluster selected |
-| 4 | `feat/hpo-phase4-wfo-stress` | Walk-forward and stress harness | Ready to start from updated Phase 3 branch state |
+| 4 | `feat/hpo-phase4-wfo-stress` | Walk-forward and stress harness | Expanded-horizon matrix plus second-ring test complete locally; robustness gates pass, meaningful deltas were found on spread/cutoff, and `anchor_mr100` remains the best balanced tested candidate |
 | 5 | `feat/hpo-phase5-mr-ql-staging` | MR / ensemble / Q-learning staged tuning | Not started |
 
 ## First Execution Pass When Approved
@@ -154,6 +199,12 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - The small Phase 2 search completed cleanly from a tooling perspective, but none of the four valid completed trials achieved `pass_rate > 0`; the next bottleneck is EA behavior and candidate quality, not Phase 2 orchestration.
 - The original March 12, 2026 Phase 2 leaderboard is no longer trustworthy for ranking because it was produced before the March 13, 2026 XAUUSD stop-risk correction. Any new Phase 3 or Phase 4 work should use only the post-riskfix rerun outputs.
 - The EA is still far from challenge-pass alpha (`+1.5637%` best full-window replay versus a `10%` target), so Phase 4 should be used to validate robustness of the new cluster, not to claim funded-account readiness.
+- The current live Phase 4 matrix still cannot separate the anchor cluster: both primary candidates tied exactly across `wf001_202508`, `wf002_202509`, and `wf003_202510`, and the August/September neighbor sweeps both matched parent report objectives exactly. Ranking is therefore still underdetermined.
+- The horizon-extension question is now answered: even after extending through `2025-10-31`, the cluster remains exactly tied. More time alone may not be enough to create separation if the tested parameters are effectively no-ops under current sizing/session behavior.
+- The current stress scenarios are synthetic overlays applied to baseline run outputs. That is good enough for Phase 4 screening, but if two candidates remain nearly indistinguishable, targeted real reruns with actual tester-side friction changes may still be needed.
+- The exact ties across `MR_RiskPct_Default` and the tested `StartHourLO` / MR-risk neighbors suggest at least part of this cluster may be collapsing to the same executed trade path, possibly due to sizing granularity or inactive gating differences over the tested windows.
+- The second-ring result narrowed the live behavior-sensitive axes to `SpreadMultATR` and `CutoffHour`; `StartHourLO=7` and `ORMinutes in {30,60}` still did not move the tested report windows. Any further Phase 4 micro-search should therefore focus only on spread/cutoff, not on more MR-risk or OR-hour clones.
+- Interrupted MT5 reruns can leave `terminal64` / `metatester64` processes alive; clean them before the next long Phase 4 launch so the runner starts from a known-good state.
 
 ## Session Log
 
@@ -186,15 +237,20 @@ It exists so a new agent or a new conversation can resume work without re-scanni
 - 2026-03-15: Ran the focused Phase 3 study and replayed the practical winners. The small Optuna search remained breach-free but plateaued, so the work shifted to raw replay diagnostics using new per-run decision/event log collection in `tools/fundingpips_mt5_runner.py`.
 - 2026-03-15: Used the collected decision/event logs to trace the weak LO7 path to an intra-day session-budget reset in `m7_helpers.mqh`. Under `StartHourLO=7`, an early XAUUSD MR trade could be counted under one active session label and then forgotten when the preferred label flipped later in the same day, granting an extra late-morning MR entry on dates like `2025-08-14` and `2025-08-25`.
 - 2026-03-15: Fixed that reset so MR entry-budget and lock state now roll by trading day instead of by session label. Fresh full-window reruns then produced the current Phase 4-ready cluster: anchor `RiskPct=2.0`, `MR_RiskPct_Default=1.05`, `ORMinutes=45`, `CutoffHour=23`, `StartHourLO=5`, `SpreadMultATR=0.005` returned `+1.5637%` with `65` trades and no breaches, while the nearby neighbor with `MR_RiskPct_Default=1.0` matched it exactly. This beats the prior anchor and satisfies the local robustness bar for starting Phase 4.
+- 2026-03-15: Started Phase 4 on `feat/hpo-phase4-wfo-stress` (`4f739c0`). Added `tools/fundingpips_phase4.py`, `tools/fundingpips_studies/phase4_anchor_wfo_stress.json`, and `Tests/python/test_fundingpips_phase4.py`, then generated a two-cycle manifest covering `wf001_202508` and `wf002_202509` with overlapping two-month search windows and non-overlapping monthly report windows.
+- 2026-03-15: Ran the first live Phase 4 primary-candidate slice across both search and report windows for `wf001_202508`. The anchor pair (`MR_RiskPct_Default=1.0` and `1.05`) tied exactly on both search (`52.56601445625`) and report (`50.677969662500004`) objectives, while all exported mild/moderate stress scenarios remained breach-free and non-collapsing.
+- 2026-03-15: Fixed a Phase 4 export bug where regime summaries were being read back from stale cached JSON instead of reparsed source decision logs. `tools/fundingpips_phase4.py export-phase4` now refreshes each actual-run record from stored decision logs and daily CSVs, and regenerated artifacts under `.tmp\fundingpips_phase4\phase4_anchor_wfo_stress\` now show real regime tags instead of `UNKNOWN`.
+- 2026-03-15: Completed the August report-window neighbor sweep with `--candidate-scope all --window-phase report`. All four neighbors (`neighbor_mr095`, `neighbor_mr110`, `neighbor_lo6_mr100`, `neighbor_lo6_mr105`) matched their parent report objective exactly (`objective_delta=0.0`) and none triggered a collapse, which strengthens the robustness read but still does not create ranking separation.
+- 2026-03-15: Completed the September primary walk-forward slice (`wf002_202509`) across both search and report windows. The anchor pair tied again on search (`45.47837836875`) and report (`48.984461875`) objectives; the short report window was breach-free but effectively flat/slightly negative on baseline (`4` trades, `-0.0027%`), so the correct next move is to extend the Phase 4 horizon rather than over-interpret this tiny slice.
+- 2026-03-15: Extended `tools/fundingpips_studies/phase4_anchor_wfo_stress.json` through `2025-10-31` and regenerated the cycle manifest. This upgraded `wf002_202509` into a full September report month and added `wf003_202510` as a new October report cycle.
+- 2026-03-15: Reran the full September primary cycle and completed the new October primary cycle. The anchor pair still tied exactly on every search/report objective (`wf002_202509` search `45.47837836875`, report `47.93151323125`; `wf003_202510` search `53.1939696625`, report `49.607492500000006`), which means the added horizon improved confidence but still did not create ranking separation.
+- 2026-03-15: Used the full September report window as the most informative added month (`42` baseline trades on `anchor_mr100`) and completed a second neighbor sweep there. All four September neighbors matched their parent report objective exactly (`objective_delta=0.0`), reinforcing the read that the current tested Phase 4 anchor set behaves like one equivalence cluster.
+- 2026-03-15: Added a true second neighbor ring around `anchor_mr100` using parameters more likely to change behavior: `StartHourLO=7`, `ORMinutes in {30,60}`, `CutoffHour=20`, and `SpreadMultATR in {0.003,0.007}`. Ran the August and September report windows across the expanded candidate set.
+- 2026-03-15: The second ring finally produced meaningful movement, but only on `SpreadMultATR` and `CutoffHour`. `CutoffHour=20` underperformed the anchor on both informative months, `SpreadMultATR=0.003` helped August but hurt September, `SpreadMultATR=0.007` hurt August but slightly helped September, and `StartHourLO=7` plus `ORMinutes in {30,60}` still tied exactly. Across the two informative report windows, `anchor_mr100` remained the best balanced candidate (`avg_objective=49.304741`).
 
 ## Next Recommended Action
 
-- Cut or prepare `feat/hpo-phase4-wfo-stress` from the current `feat/hpo-phase3-optuna-search` state.
-- Use the post-fix anchor cluster as the Phase 4 candidate set:
-  - `RiskPct=2.0`
-  - `MR_RiskPct_Default in {1.0,1.05}`
-  - `ORMinutes=45`
-  - `CutoffHour=23`
-  - `StartHourLO=5`
-  - `SpreadMultATR=0.005`
-- Build the walk-forward/stress harness around this cluster before any further alpha expansion.
+- Wait for user approval before closing Phase 4 or starting any later phase.
+- If Phase 4 should close now, use `anchor_mr100` as the winner because it remained the best balanced candidate after the second-ring test.
+- If one more discrimination pass is desired, run a very small spread/cutoff-only micro-ring around `anchor_mr100`, for example `SpreadMultATR in {0.004,0.005,0.006}` crossed with `CutoffHour in {21,22,23}`.
+- Do not spend more Phase 4 time on `MR_RiskPct_Default`, `StartHourLO`, or `ORMinutes` unless new evidence appears that they affect the path again.

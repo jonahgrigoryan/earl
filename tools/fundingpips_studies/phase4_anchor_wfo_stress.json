@@ -1,0 +1,166 @@
+{
+  "name": "phase4_anchor_wfo_stress",
+  "rules_profile": "fundingpips_1step_eval",
+  "symbol": "EURUSD",
+  "period": "M1",
+  "from_date": "2025-06-03",
+  "to_date": "2025-10-31",
+  "base_set": "Tests/RPEA/RPEA_candidate_B_2024H2.set",
+  "walk_forward": {
+    "search_window_months": 2,
+    "report_window_months": 1,
+    "roll_months": 1
+  },
+  "primary_candidates": [
+    {
+      "id": "anchor_mr100",
+      "set_overrides": {
+        "RiskPct": 2.0,
+        "MR_RiskPct_Default": 1.0,
+        "ORMinutes": 45,
+        "CutoffHour": 23,
+        "StartHourLO": 5,
+        "SpreadMultATR": 0.005
+      }
+    },
+    {
+      "id": "anchor_mr105",
+      "set_overrides": {
+        "RiskPct": 2.0,
+        "MR_RiskPct_Default": 1.05,
+        "ORMinutes": 45,
+        "CutoffHour": 23,
+        "StartHourLO": 5,
+        "SpreadMultATR": 0.005
+      }
+    }
+  ],
+  "neighbor_candidates": [
+    {
+      "id": "neighbor_mr095",
+      "base_candidate_id": "anchor_mr100",
+      "set_overrides": {
+        "MR_RiskPct_Default": 0.95
+      }
+    },
+    {
+      "id": "neighbor_mr110",
+      "base_candidate_id": "anchor_mr105",
+      "set_overrides": {
+        "MR_RiskPct_Default": 1.10
+      }
+    },
+    {
+      "id": "neighbor_lo6_mr100",
+      "base_candidate_id": "anchor_mr100",
+      "set_overrides": {
+        "StartHourLO": 6
+      }
+    },
+    {
+      "id": "neighbor_lo6_mr105",
+      "base_candidate_id": "anchor_mr105",
+      "set_overrides": {
+        "StartHourLO": 6
+      }
+    },
+    {
+      "id": "ring2_lo7_mr100",
+      "base_candidate_id": "anchor_mr100",
+      "set_overrides": {
+        "StartHourLO": 7
+      }
+    },
+    {
+      "id": "ring2_or30_mr100",
+      "base_candidate_id": "anchor_mr100",
+      "set_overrides": {
+        "ORMinutes": 30
+      }
+    },
+    {
+      "id": "ring2_or60_mr100",
+      "base_candidate_id": "anchor_mr100",
+      "set_overrides": {
+        "ORMinutes": 60
+      }
+    },
+    {
+      "id": "ring2_cutoff20_mr100",
+      "base_candidate_id": "anchor_mr100",
+      "set_overrides": {
+        "CutoffHour": 20
+      }
+    },
+    {
+      "id": "ring2_spread003_mr100",
+      "base_candidate_id": "anchor_mr100",
+      "set_overrides": {
+        "SpreadMultATR": 0.003
+      }
+    },
+    {
+      "id": "ring2_spread007_mr100",
+      "base_candidate_id": "anchor_mr100",
+      "set_overrides": {
+        "SpreadMultATR": 0.007
+      }
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "baseline",
+      "severity": "baseline",
+      "weight": 1.0,
+      "set_overrides": {}
+    },
+    {
+      "id": "mild_spread_slippage",
+      "severity": "mild",
+      "weight": 0.5,
+      "source_scenario_id": "baseline",
+      "synthetic_stress": {
+        "spread_return_penalty_pct_per_trade": 0.0025,
+        "slippage_return_penalty_pct_per_trade": 0.0015,
+        "daily_dd_multiplier": 1.10,
+        "overall_dd_multiplier": 1.10
+      }
+    },
+    {
+      "id": "moderate_spread_slippage",
+      "severity": "moderate",
+      "weight": 0.25,
+      "source_scenario_id": "baseline",
+      "synthetic_stress": {
+        "spread_return_penalty_pct_per_trade": 0.0050,
+        "slippage_return_penalty_pct_per_trade": 0.0030,
+        "daily_dd_multiplier": 1.25,
+        "overall_dd_multiplier": 1.25
+      }
+    },
+    {
+      "id": "mild_delay_commission",
+      "severity": "mild",
+      "weight": 0.5,
+      "source_scenario_id": "baseline",
+      "synthetic_stress": {
+        "delay_return_penalty_pct_per_trade": 0.0015,
+        "commission_money_per_trade": 0.25,
+        "daily_dd_multiplier": 1.05,
+        "overall_dd_multiplier": 1.05
+      }
+    },
+    {
+      "id": "moderate_delay_commission",
+      "severity": "moderate",
+      "weight": 0.25,
+      "source_scenario_id": "baseline",
+      "synthetic_stress": {
+        "delay_return_penalty_pct_per_trade": 0.0030,
+        "commission_money_per_trade": 0.50,
+        "daily_dd_multiplier": 1.10,
+        "overall_dd_multiplier": 1.10
+      }
+    }
+  ]
+}
