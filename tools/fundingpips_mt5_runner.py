@@ -408,6 +408,22 @@ def fingerprint_staged_files(staged_files: tuple[StagedFileSpec, ...], repo: Pat
    return fingerprints
 
 
+def resolve_staged_runtime_destination(root: Path, relative_path_text: str) -> Path:
+   relative_path = Path(relative_path_text)
+   if relative_path.is_absolute():
+      raise ValueError(f"Staged runtime destination must be relative: {relative_path_text}")
+
+   resolved_root = root.resolve()
+   destination = (resolved_root / relative_path).resolve()
+   try:
+      destination.relative_to(resolved_root)
+   except ValueError as exc:
+      raise ValueError(
+         f"Staged runtime destination escapes root {resolved_root}: {relative_path_text}"
+      ) from exc
+   return destination
+
+
 def stage_runtime_files(
    staged_files: tuple[StagedFileSpec, ...],
    *,
@@ -433,8 +449,15 @@ def stage_runtime_files(
    staged_rows = fingerprint_staged_files(staged_files, repo)
    for row in staged_rows:
       source_path = Path(str(row["source_path"]))
-      terminal_destination = terminal_root / Path(str(row["terminal_relative_path"]))
-      common_destination = common_root / Path(str(row["terminal_relative_path"]))
+      terminal_relative_path = str(row["terminal_relative_path"])
+      terminal_destination = resolve_staged_runtime_destination(
+         terminal_root,
+         terminal_relative_path,
+      )
+      common_destination = resolve_staged_runtime_destination(
+         common_root,
+         terminal_relative_path,
+      )
       agent_destinations: list[str] = []
 
       for destination in (terminal_destination, common_destination):
@@ -442,7 +465,7 @@ def stage_runtime_files(
          shutil.copy2(source_path, destination)
 
       for root in tester_agent_roots:
-         destination = root / Path(str(row["terminal_relative_path"]))
+         destination = resolve_staged_runtime_destination(root, terminal_relative_path)
          ensure_directory(destination.parent)
          shutil.copy2(source_path, destination)
          agent_destinations.append(str(destination))

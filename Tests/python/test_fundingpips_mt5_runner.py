@@ -326,6 +326,49 @@ class FundingPipsMt5RunnerTests(unittest.TestCase):
          self.assertEqual(common_destination.read_text(encoding="ascii"), "{\"k_thresholds\":[0.0]}")
          self.assertEqual(agent_destination.read_text(encoding="ascii"), "{\"k_thresholds\":[0.0]}")
 
+   def test_stage_runtime_files_rejects_escape_terminal_relative_path(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         repo = Path(tmp_dir) / "repo"
+         terminal_data = Path(tmp_dir) / "terminal_data"
+         artifact_path = repo / "artifacts" / "thresholds.json"
+         artifact_path.parent.mkdir(parents=True)
+         terminal_data.mkdir(parents=True)
+         artifact_path.write_text("{\"k_thresholds\":[0.0]}", encoding="ascii")
+
+         with self.assertRaisesRegex(ValueError, r"Staged runtime destination escapes root"):
+            runner.stage_runtime_files(
+               (
+                  runner.StagedFileSpec(
+                     source_path=Path("artifacts/thresholds.json"),
+                     terminal_relative_path="../outside/thresholds.json",
+                  ),
+               ),
+               repo=repo,
+               terminal_data_path=terminal_data,
+            )
+
+   def test_stage_runtime_files_rejects_absolute_terminal_relative_path(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         repo = Path(tmp_dir) / "repo"
+         terminal_data = Path(tmp_dir) / "terminal_data"
+         artifact_path = repo / "artifacts" / "thresholds.json"
+         artifact_path.parent.mkdir(parents=True)
+         terminal_data.mkdir(parents=True)
+         artifact_path.write_text("{\"k_thresholds\":[0.0]}", encoding="ascii")
+         absolute_destination = (Path(tmp_dir) / "outside" / "thresholds.json").resolve()
+
+         with self.assertRaisesRegex(ValueError, r"Staged runtime destination must be relative"):
+            runner.stage_runtime_files(
+               (
+                  runner.StagedFileSpec(
+                     source_path=Path("artifacts/thresholds.json"),
+                     terminal_relative_path=str(absolute_destination),
+                  ),
+               ),
+               repo=repo,
+               terminal_data_path=terminal_data,
+            )
+
    def test_run_single_backtest_returns_cache_hit_before_preflight(self) -> None:
       with tempfile.TemporaryDirectory() as tmp_dir:
          root = Path(tmp_dir)
