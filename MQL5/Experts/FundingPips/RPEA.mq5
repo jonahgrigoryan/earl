@@ -138,8 +138,13 @@ input int    MaxPendingsPerSymbol       = 2;
 // MR/Ensemble Inputs
 input bool   EnableMR                   = true;    // Enable MR strategy
 input bool   EnableMRBypassOnRLUnloaded = DEFAULT_EnableMRBypassOnRLUnloaded; // Diagnostic bypass when Q-table is unavailable
+input string QLMode                     = DEFAULT_QLMode;              // Phase 5 runtime RL gate: enabled|disabled
+input string QLQTablePath               = DEFAULT_QLQTablePath;        // Runtime-staged Q-table path under MQL5/Files
+input string QLThresholdsPath           = DEFAULT_QLThresholdsPath;    // Runtime-staged thresholds path under MQL5/Files
 input bool   UseBanditMetaPolicy        = true;    // Enable contextual bandit for strategy selection
 input bool   BanditShadowMode           = true;    // Log bandit decisions without executing
+input string BanditStateMode            = DEFAULT_BanditStateMode;     // Phase 5 bandit mode: disabled|frozen|live
+input string BanditSnapshotPath         = DEFAULT_BanditSnapshotPath;  // Runtime-staged bandit posterior path under MQL5/Files
 input bool   EnableAnomalyDetector      = DEFAULT_EnableAnomalyDetector;      // Enable anomaly shock detector
 input bool   AnomalyShadowMode          = DEFAULT_AnomalyShadowMode;          // Shadow-only (log intent) rollout mode
 input double AnomalyShockSigmaThreshold = DEFAULT_AnomalyShockSigmaThreshold; // Trigger threshold in sigma units
@@ -298,17 +303,24 @@ int OnInit()
       Print("[EMRT] Cache loaded: ", FILE_EMRT_CACHE);
 
    // 5b) Load RL artifacts (Q-table + thresholds)
-   bool qtable_loaded = RL_LoadQTable(FILE_QTABLE_BIN);
+   string qtable_path = Config_GetQLQTablePath();
+   bool qtable_loaded = RL_LoadQTable(qtable_path);
    if(!qtable_loaded)
-      Print("[RL] Q-table not loaded (using defaults): ", FILE_QTABLE_BIN);
+      Print("[RL] Q-table not loaded (using defaults): ", qtable_path);
    else
-      Print("[RL] Q-table loaded: ", FILE_QTABLE_BIN);
+      Print("[RL] Q-table loaded: ", qtable_path);
 
-   bool thresholds_loaded = RL_LoadThresholds();
+   string thresholds_path = Config_GetQLThresholdsPath();
+   bool thresholds_loaded = RL_LoadThresholdsFromPath(thresholds_path);
    if(!thresholds_loaded)
-      Print("[RL] Thresholds not loaded or stale (using defaults)");
+      Print("[RL] Thresholds not loaded or stale (using defaults): ", thresholds_path);
    else
-      Print("[RL] Thresholds loaded");
+      Print("[RL] Thresholds loaded: ", thresholds_path);
+
+   PrintFormat("[RL] ql_mode=%s bandit_state_mode=%s bandit_snapshot_path=%s",
+               Config_GetQLMode(),
+               Config_GetBanditStateMode(),
+               Config_GetBanditSnapshotPath());
 
    // 5c) Initialize SLO monitoring (M7 Task 08)
    SLO_OnInit();

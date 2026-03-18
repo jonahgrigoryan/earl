@@ -144,11 +144,25 @@ bool MetaPolicy_BanditIsReady()
    return Bandit_IsPosteriorReady();
 }
 
+bool MetaPolicy_BanditCanRun()
+{
+   if(!Config_GetUseBanditMetaPolicy())
+      return false;
+   if(!Config_GetEnableMR())
+      return false;
+   if(!Bandit_IsSelectionEnabled())
+      return false;
+   return true;
+}
+
 string MetaPolicy_BanditChoice(const AppContext &ctx, const string symbol,
                                const MetaPolicyContext &mpc)
 {
+   if(!MetaPolicy_BanditCanRun())
+      return MetaPolicy_DeterministicChoice(mpc);
+
    bool bandit_ready = MetaPolicy_BanditIsReady();
-   if(!Config_GetUseBanditMetaPolicy() || !bandit_ready)
+   if(!bandit_ready)
       return MetaPolicy_DeterministicChoice(mpc);
 
    // Call existing bandit API
@@ -194,7 +208,7 @@ string MetaPolicy_Choose(const AppContext &ctx, const string symbol,
 
    // Fill from helpers
    mpc.emrt_rank            = EMRT_GetRank("XAUEUR");
-   mpc.q_advantage          = RL_GetQAdvantage(0);
+   mpc.q_advantage          = RL_RuntimeQAdvantage(0);
    mpc.bwisc_ore            = M7_GetCurrentORE(ctx, symbol);
    mpc.atr_d1_percentile    = M7_GetATR_D1_Percentile(ctx, symbol);
    mpc.session_age_minutes  = M7_GetSessionAgeMinutes(ctx, symbol);
@@ -214,7 +228,7 @@ string MetaPolicy_Choose(const AppContext &ctx, const string symbol,
                         mpc.spread_quantile >= 0.90 ||
                         mpc.slippage_quantile >= 0.90 ||
                         mpc.entries_this_session >= 2);
-   bool bandit_ready = (Config_GetUseBanditMetaPolicy() && MetaPolicy_BanditIsReady());
+   bool bandit_ready = (MetaPolicy_BanditCanRun() && MetaPolicy_BanditIsReady());
    bool bandit_used = (!hard_blocked && bandit_ready && !Config_GetBanditShadowMode());
    string choice = "Skip";
    if(!hard_blocked)

@@ -46,12 +46,55 @@ void SignalsMR_ValidateDependencies()
 {
    double rank = EMRT_GetRank("XAUEUR");
    double p50 = EMRT_GetP50("XAUEUR");
-   int action = RL_ActionForState(0);
-   double qadv = RL_GetQAdvantage(0);
+   int action = RL_RuntimeActionForState(0);
+   double qadv = RL_RuntimeQAdvantage(0);
    if(rank < 0.0 || p50 < 0.0 || action < 0 || qadv < 0.0)
    {
       // no-op: suppress unused warnings
    }
+}
+
+bool SignalsMR_ResolveRuntimeQL(
+   const string symbol,
+   const datetime now,
+   const int state,
+   int &action,
+   double &q_advantage
+)
+{
+   if(!Config_IsQLModeEnabled())
+   {
+      action = (int)RL_ACTION_HOLD;
+      q_advantage = RL_RuntimeQAdvantage(state);
+      SignalsMR_LogGate(symbol, "ql_mode_disabled",
+                        StringFormat("\"state\":%d,\"ql_mode\":\"%s\"", state, Config_GetQLMode()), now);
+      return true;
+   }
+
+   action = RL_RuntimeActionForState(state);
+   q_advantage = RL_RuntimeQAdvantage(state);
+   if(!g_qtable_loaded)
+   {
+      if(Config_GetEnableMRBypassOnRLUnloaded())
+      {
+         SignalsMR_LogGate(symbol, "rl_bypass_unloaded",
+                           StringFormat("\"state\":%d,\"action\":%d", state, action), now);
+         return true;
+      }
+
+      SignalsMR_LogGate(symbol, "rl_qtable_unloaded",
+                        StringFormat("\"state\":%d,\"action\":%d", state, action), now);
+      return false;
+   }
+
+   if(action != RL_ACTION_ENTER)
+   {
+      SignalsMR_LogGate(symbol, "rl_action",
+                        StringFormat("\"state\":%d,\"action\":%d", state, action), now);
+      return false;
+   }
+
+   return true;
 }
 
 void SignalsMR_GetSpreadChanges(const string symbol, double &changes[], int periods)
@@ -133,11 +176,11 @@ bool SignalsMR_CheckEntryConditions(
    // Gate 2: EMRT rank must be favorable (fast reversion)
    string emrt_symbol = (symbol == "XAUUSD" ? "XAUEUR" : symbol);
    double emrt_rank = EMRT_GetRank(emrt_symbol);
-   if(emrt_rank > EMRT_FastThresholdPct / 100.0)
+   if(emrt_rank > Config_GetEMRTFastThresholdPct() / 100.0)
    {
       SignalsMR_LogGate(symbol, "emrt_rank",
                         StringFormat("\"emrt_rank\":%.4f,\"threshold\":%.4f",
-                                     emrt_rank, EMRT_FastThresholdPct / 100.0), now);
+                                     emrt_rank, Config_GetEMRTFastThresholdPct() / 100.0), now);
       return false;
    }
 
@@ -145,31 +188,13 @@ bool SignalsMR_CheckEntryConditions(
    double spread_changes[];
    SignalsMR_GetSpreadChanges(emrt_symbol, spread_changes, RL_NUM_PERIODS);
    int state = RL_StateFromSpread(spread_changes, RL_NUM_PERIODS);
-   int action = RL_ActionForState(state);
-   if(!g_qtable_loaded)
-   {
-      if(Config_GetEnableMRBypassOnRLUnloaded())
-      {
-         SignalsMR_LogGate(symbol, "rl_bypass_unloaded",
-                           StringFormat("\"state\":%d,\"action\":%d", state, action), now);
-      }
-      else
-      {
-         SignalsMR_LogGate(symbol, "rl_qtable_unloaded",
-                           StringFormat("\"state\":%d,\"action\":%d", state, action), now);
-         return false;
-      }
-   }
-   else if(action != RL_ACTION_ENTER)
-   {
-      SignalsMR_LogGate(symbol, "rl_action",
-                        StringFormat("\"state\":%d,\"action\":%d", state, action), now);
+   int action = (int)RL_ACTION_HOLD;
+   double q_advantage = 0.5;
+   if(!SignalsMR_ResolveRuntimeQL(symbol, now, state, action, q_advantage))
       return false;
-   }
 
    // Confidence: weighted combination
    double emrt_fastness = 1.0 - emrt_rank;
-   double q_advantage = RL_GetQAdvantage(state);
    double emrt_weight = MR_EMRTWeight;
    double q_weight = 1.0 - emrt_weight;
    confidence = emrt_weight * emrt_fastness + q_weight * q_advantage;

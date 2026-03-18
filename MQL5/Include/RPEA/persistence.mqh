@@ -598,6 +598,8 @@ string Persistence_ReadWholeFile(const string path)
 {
    int handle = FileOpen(path, FILE_READ|FILE_TXT|FILE_ANSI);
    if(handle == INVALID_HANDLE)
+      handle = FileOpen(path, FILE_READ|FILE_TXT|FILE_ANSI|FILE_COMMON);
+   if(handle == INVALID_HANDLE)
       return "";
    string contents = "";
    while(!FileIsEnding(handle))

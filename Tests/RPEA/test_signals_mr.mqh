@@ -34,6 +34,18 @@ extern string g_current_test;
       } \
    } while(false)
 
+#define ASSERT_NEAR(expected, actual, tolerance, message) \
+   do { \
+      double _diff = MathAbs((double)(expected) - (double)(actual)); \
+      if(_diff <= (tolerance)) { \
+         g_test_passed++; \
+         PrintFormat("[PASS] %s: %s (expected=%.6f, actual=%.6f)", g_current_test, message, (double)(expected), (double)(actual)); \
+      } else { \
+         g_test_failed++; \
+         PrintFormat("[FAIL] %s: %s (expected=%.6f, actual=%.6f)", g_current_test, message, (double)(expected), (double)(actual)); \
+      } \
+   } while(false)
+
 #define TEST_FRAMEWORK_DEFINED
 #endif
 
@@ -42,6 +54,8 @@ void TestSignalsMR_ResetState()
    g_emrt_loaded = false;
    g_qtable_loaded = false;
    g_mr_proxy_warned = false;
+   Config_Test_ClearQLModeOverride();
+   Config_Test_ClearEnableMRBypassOnRLUnloadedOverride();
 }
 
 int TestSignalsMR_Begin(const string name)
@@ -107,6 +121,39 @@ bool TestSignalsMR_CalculateSLTP_NoATR()
    return TestSignalsMR_End(failures_before);
 }
 
+bool TestSignalsMR_RuntimeQLDisabled_NeutralizesGate()
+{
+   TestSignalsMR_ResetState();
+   int failures_before = TestSignalsMR_Begin("TestSignalsMR_RuntimeQLDisabled_NeutralizesGate");
+
+   Config_Test_SetQLModeOverride(true, "disabled");
+   int action = -1;
+   double q_advantage = 0.0;
+   bool ok = SignalsMR_ResolveRuntimeQL("XAUEUR", TimeCurrent(), 7, action, q_advantage);
+
+   ASSERT_TRUE(ok, "ql_mode=disabled bypasses RL entry gate");
+   ASSERT_EQUALS((int)RL_ACTION_HOLD, action, "disabled RL returns neutral HOLD action");
+   ASSERT_NEAR(0.5, q_advantage, 1e-9, "disabled RL returns neutral q-advantage");
+
+   return TestSignalsMR_End(failures_before);
+}
+
+bool TestSignalsMR_RuntimeQLEnabled_UnloadedFailsWithoutBypass()
+{
+   TestSignalsMR_ResetState();
+   int failures_before = TestSignalsMR_Begin("TestSignalsMR_RuntimeQLEnabled_UnloadedFailsWithoutBypass");
+
+   Config_Test_SetQLModeOverride(true, "enabled");
+   Config_Test_SetEnableMRBypassOnRLUnloadedOverride(true, false);
+   int action = -1;
+   double q_advantage = 0.0;
+   bool ok = SignalsMR_ResolveRuntimeQL("XAUEUR", TimeCurrent(), 3, action, q_advantage);
+
+   ASSERT_FALSE(ok, "enabled RL rejects unloaded q-table when bypass is off");
+
+   return TestSignalsMR_End(failures_before);
+}
+
 bool TestSignalsMR_RunAll()
 {
    Print("=================================================================");
@@ -116,7 +163,9 @@ bool TestSignalsMR_RunAll()
    bool ok1 = TestSignalsMR_SkipsNonGold();
    bool ok2 = TestSignalsMR_GetSpreadChanges_ZeroPeriods();
    bool ok3 = TestSignalsMR_CalculateSLTP_NoATR();
-   return (ok1 && ok2 && ok3);
+   bool ok4 = TestSignalsMR_RuntimeQLDisabled_NeutralizesGate();
+   bool ok5 = TestSignalsMR_RuntimeQLEnabled_UnloadedFailsWithoutBypass();
+   return (ok1 && ok2 && ok3 && ok4 && ok5);
 }
 
 #endif // TEST_SIGNALS_MR_MQH

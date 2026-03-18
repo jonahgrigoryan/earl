@@ -76,7 +76,9 @@ Use one baseline branch as the integration spine, then short-lived phase branche
 - `feat/hpo-phase2-objective-windows`
 - `feat/hpo-phase3-optuna-search`
 - `feat/hpo-phase4-wfo-stress`
-- `feat/hpo-phase5-mr-ql-staging`
+- `codex/hpo-phase5-mr-ql-staging`
+
+The Phase 5 branch used the `codex/` prefix in practice to satisfy the local Codex app branch-prefix rule.
 
 ### Branch flow
 
@@ -111,60 +113,40 @@ v1 adds heavier robustness and architecture work:
 
 ## Current Execution Status
 
-As of `2026-03-15`, Phases 0-3 are complete through candidate selection and Phase 4 kickoff is underway on `feat/hpo-phase4-wfo-stress`.
+As of `2026-03-17`, Phases 0-5 are complete through Phase 5 winner selection and merge-prep packaging on `codex/hpo-phase5-mr-ql-staging`.
 
-Key outcomes from the post-riskfix Phase 3 closeout:
+Key execution outcomes:
 
-- the original weak LO7 profile was traced to a gate-level state bug, not superior alpha
-- per-run decision/event log collection showed overlapping NY->LO session-label flips could reset MR entry-budget mid-day and admit extra late-morning MR trades
-- fixing that reset in `m7_helpers.mqh` produced a new stable anchor cluster:
-  - `RiskPct=2.0`
-  - `MR_RiskPct_Default in {1.0,1.05}`
-  - `ORMinutes=45`
-  - `CutoffHour=23`
-  - `StartHourLO=5`
-  - `SpreadMultATR=0.005`
-- best full-window replay after the fix: `+1.5637%`, breach-free
-- nearby neighbor replay: identical `+1.5637%`, breach-free
-- Phase 4 harness now exists in-repo:
-  - `tools/fundingpips_phase4.py`
-  - `tools/fundingpips_studies/phase4_anchor_wfo_stress.json`
-  - `Tests/python/test_fundingpips_phase4.py`
-- initial walk-forward manifest for the locked anchor cluster was later extended through `2025-10-31` and now covers three monthly rolls:
-  - `wf001_202508`: search `2025-06-03..2025-07-31`, report `2025-08-01..2025-08-29`
-  - `wf002_202509`: search `2025-07-01..2025-08-29`, report `2025-09-01..2025-09-30`
-  - `wf003_202510`: search `2025-08-01..2025-09-30`, report `2025-10-01..2025-10-31`
-- first live Phase 4 cycle (`wf001_202508`) completed for the primary anchor pair across both search and report windows:
-  - search objective tie: `52.56601445625`
-  - report objective tie: `50.677969662500004`
-  - mild/moderate stress exports remained breach-free with no collapse
-- August report-window neighbor checks also completed:
-  - all four neighbors matched their parent report objective exactly (`objective_delta=0.0`)
-  - no neighbor collapse was observed
-- second live Phase 4 primary cycle (`wf002_202509`) completed on the extended full-September report month:
-  - search objective tie: `45.47837836875`
-  - report objective tie: `47.93151323125`
-  - September was the most informative added month (`42` baseline trades) and still did not separate the anchors
-- second live neighbor sweep also completed on `wf002_202509`:
-  - all four September neighbors matched their parent report objective exactly (`objective_delta=0.0`)
-- third live Phase 4 primary cycle (`wf003_202510`) also completed:
-  - search objective tie: `53.1939696625`
-  - report objective tie: `49.607492500000006`
-  - October stayed breach-free but was low-signal (`1` baseline trade)
-- a true second neighbor ring was then tested around `anchor_mr100` using behavior-changing axes:
-  - `StartHourLO=7`
-  - `ORMinutes in {30,60}`
-  - `CutoffHour=20`
-  - `SpreadMultATR in {0.003,0.007}`
-- that second ring finally created meaningful deltas, but only on spread/cutoff:
-  - `CutoffHour=20` underperformed the anchor on both informative report months
-  - `SpreadMultATR=0.003` improved August but materially hurt September
-  - `SpreadMultATR=0.007` hurt August and only slightly helped September
-  - `StartHourLO=7` and `ORMinutes in {30,60}` still tied exactly
-- across the two informative report months, the untweaked `anchor_mr100` remained the best balanced tested candidate
-- Phase 4 export now reparses stored decision logs so regime-tagged summaries are refreshed from source logs instead of stale cached JSON values
+- Phase 4 was promoted as the HPO baseline via commit `d07f1db`, keeping `anchor_mr100` as the carried-forward representative.
+- Phase 5 added a dedicated harness and runtime artifact/mode controls:
+  - `tools/fundingpips_phase5.py`
+  - `tools/fundingpips_studies/phase5_anchor_pipeline.json`
+  - explicit runtime `QLMode`, qtable/threshold path overrides, and bandit state/snapshot controls in the EA
+  - baseline bundle generation plus study-root `phase5_manifest.json`, `phase5_summary.json`, and `phase5_run_rows.jsonl`
+- Final Phase 5 study totals under `.tmp/fundingpips_phase5/phase5_anchor_pipeline/`:
+  - `795` total rows
+  - `780` valid rows
+  - `15` blocked rows, all `bandit_snapshot_not_ready`
+- Stage 1 winner: `stage1__arch_mr_deterministic`
+- Stage 2 winner: `stage2__threshold_003`
+  - accepted threshold diffs versus the Phase 4 anchor:
+    - `EMRT_FastThresholdPct: 100 -> 95`
+    - `MR_TimeStopMin: 60 -> 75`
+- Stage 3 winner: `stage3__baseline_artifacts__ql_enabled`
+  - Stage 3 scope was intentionally limited to the inherited baseline artifacts because `phase5_manifest.json` records no additional Stage 3 artifact candidates
+  - `ql_enabled` preserved the Stage 2 profile at report objective mean `52.34879085833333`, worst report window `48.628524612499994`, `no_breach=true`, `no_zero_trade=true`
+  - `ql_disabled` degraded to mean objective `30.03640387916667` and zero-traded in `wf001_202508` and `wf003_202510`
+- Final locked artifact contract:
+  - baseline bundle `baseline_bundle_53fb4b67246a`
+  - qtable `qtable_30a624d3fc6a`
+  - thresholds `thresholds_565e78dc7fa8`
+  - bandit snapshot `bandit_snapshot_44136fa355b3` with `ready=false` and `BanditStateMode=disabled`
+- Merge-prep outputs now exist:
+  - `.tmp/fundingpips_phase5/phase5_anchor_pipeline/phase5_final_lock.json`
+  - `docs/fundingpips-phase5-completion-note.md`
+  - `docs/fundingpips-phase5-merge-prep.md`
 
-Phase 4 is now in progress. The cluster is still not challenge-pass-ready on raw return, but it is stable enough to justify continued walk-forward and stress work instead of more Phase 3 micro-searching. The latest result is stronger than a flat tie: the branch now knows which axes actually move behavior (`SpreadMultATR`, `CutoffHour`) and that the base `anchor_mr100` still wins on balance against those tested perturbations.
+Phase 5 is complete for the planned scope. The remaining unresolved item is intentionally deferred scope, not unfinished implementation: the frozen-bandit arm was never accepted because no bandit-ready posterior snapshot was staged for that branch.
 
 ## Implementation Phases
 
@@ -352,6 +334,20 @@ Prove that top candidates survive realistic variation in time, friction, and nea
 
 Introduce complex architecture choices in a controlled order so they earn their place instead of overfitting into the pipeline.
 
+### Completed outcome
+
+Phase 5 is now complete and locked.
+
+- Architecture winner: deterministic MR-on with bandit disabled
+- Threshold winner: `stage2__threshold_003`
+- Stage 3 winner: `stage3__baseline_artifacts__ql_enabled`
+- Accepted behavior diffs from the promoted Phase 4 anchor:
+  - `EMRT_FastThresholdPct` reduced from `100` to `95`
+  - `MR_TimeStopMin` increased from `60` to `75`
+  - RL stays enabled using the inherited baseline qtable and thresholds artifacts
+  - frozen bandit remains excluded because the staged snapshot is not ready
+- Stage 3 scope confirmation: baseline artifacts only, `ql_enabled` versus `ql_disabled`
+
 ### Sequence
 
 1. Architecture ablation with coarse toggles only.
@@ -374,6 +370,8 @@ If Q-learning fails that standard, it stays fixed or off for the evaluation prof
 - each complexity layer is justified against a simpler baseline
 - Q-learning on/off comparisons exist under matched conditions
 - the final profile is explainable and not dependent on one lucky path
+
+Outcome: satisfied for the planned Phase 5 scope. The only excluded arm is the intentionally deferred frozen-bandit branch.
 
 ## Optimization Framework
 
@@ -497,29 +495,16 @@ Use these throughout the pipeline, not just at the end:
 
 - Phase 0 is complete and squash-merged into `feat/hpo-pipeline`.
 - Phase 1 is complete and provides the MT5 runner/library base used by Phase 2.
-- Phase 2 is complete locally on `feat/hpo-phase2-objective-windows`.
-- Phase 2 currently includes:
-  - repo-tracked Candidate B seed set at `Tests/RPEA/RPEA_candidate_B_2024H2.set`
-  - rules profile config at `tools/fundingpips_rules_profiles/fundingpips_1step_eval.json`
-  - baseline study spec at `tools/fundingpips_studies/phase2_baseline.json`
-  - post-riskfix rerun study spec at `tools/fundingpips_studies/phase2_baseline_postriskfix.json`
-  - focused Phase 3 study spec at `tools/fundingpips_studies/phase3_focus_postriskfix.json`
-  - library-facing `build_runner_paths()` in `tools/fundingpips_mt5_runner.py`
-  - the new orchestrator `tools/fundingpips_hpo.py` with `generate-windows`, `run-study`, and `export-study`
-  - weekday-only rolling windows, MT5 report parsing, Phase 0 artifact normalization, custom SQLite trial/run tables, flat export regeneration, stale interrupted-trial recovery on `--resume`, and failure-state handling so invalid/timed-out trials are stored as `FAIL` instead of `COMPLETE`
-- Latest validation for the finished Phase 2 tooling:
-  - Python syntax check passed for the runner, orchestrator, and Phase 2 tests
-  - Python unit tests: `29/29` passing, including fail-then-resume coverage for invalid trial accounting
-  - Candidate B `.set` coverage: `101/101` `RPEA.mq5` inputs present
-  - `generate-windows` produced the expected `12` baseline windows
-  - EA compile: `0 errors, 2 warnings`
-  - automated suites: `42/42` passing
-  - real resumed baseline study completed with `python tools\fundingpips_hpo.py run-study --study-spec tools\fundingpips_studies\phase2_baseline.json --n-trials 4 --resume --stop-existing`
-  - `export-study` regenerated the flat outputs, with winning trial `2` at objective `15.143758394097217`
-  - fresh clean-validation study `phase2_baseline_clean` finished with four valid `COMPLETE` trials plus one recovered `FAIL`, demonstrating the new fail-then-resume behavior under a real interrupted MT5 session
-  - post-fix replay analysis showed the March 12, 2026 winning cluster was inflated by incorrect XAUUSD realized sizing; with corrected sizing the same cluster remains compliant but returns only about `+0.8462%`
-  - targeted ablations showed `SpreadMultATR=0.005` alone restores trading for the winning cluster, while `NewsBufferS=300` and `MaxSpreadPoints=40` do not unlock trades by themselves
-  - clean post-riskfix Phase 2 rerun completed with four valid, non-zero-trade, breach-free trials; full-window candidate replays then showed the nominal trial-3 runner-up out-earned the nominal study winner while staying compliant
-- Next execution step: on `feat/hpo-phase3-optuna-search`, run the focused follow-up study `tools/fundingpips_studies/phase3_focus_postriskfix.json`, then replay the top candidates under the corrected environment before deciding between broader Phase 3 expansion and EA-level alpha work.
+- Phase 2, Phase 3, and Phase 4 are complete and promoted into the current Phase 5 baseline.
+- Phase 5 is complete locally on `codex/hpo-phase5-mr-ql-staging`.
+- The accepted evaluation profile after Phase 5 is:
+  - architecture: deterministic MR-on with bandit disabled
+  - thresholds: `EMRT_FastThresholdPct=95`, `MR_TimeStopMin=75`
+  - RL runtime mode: enabled with the inherited baseline artifacts
+- Final Phase 5 lock and review artifacts:
+  - `.tmp/fundingpips_phase5/phase5_anchor_pipeline/phase5_final_lock.json`
+  - `docs/fundingpips-phase5-completion-note.md`
+  - `docs/fundingpips-phase5-merge-prep.md`
+- Next execution step: merge/review preparation only. Do not rerun or merge unless reproducibility is newly required or user approval is explicitly given.
 
 Use `docs/fundingpips-hpo-handoff.md` as the session-by-session execution tracker.
