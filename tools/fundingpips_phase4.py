@@ -403,6 +403,11 @@ def load_phase4_spec(path: Path) -> Phase4Spec:
 def build_phase4_paths(phase4_name: str, repo: Path | None = None) -> Phase4Paths:
    root = repo or repo_root()
    phase4_dir = (root / DEFAULT_PHASE4_ROOT / phase4_name).resolve()
+   return build_phase4_paths_from_dir(phase4_dir)
+
+
+def build_phase4_paths_from_dir(phase4_dir: Path) -> Phase4Paths:
+   phase4_dir = phase4_dir.resolve()
    return Phase4Paths(
       phase4_dir=phase4_dir,
       manifest_path=phase4_dir / "phase4_manifest.json",
@@ -1196,6 +1201,7 @@ def build_phase4_summary(
 
 
 def export_phase4(phase4_dir: Path) -> dict[str, Any]:
+   phase4_dir = phase4_dir.resolve()
    manifest_path = phase4_dir / "phase4_manifest.json"
    if not manifest_path.exists():
       raise FileNotFoundError(f"Phase 4 manifest not found: {manifest_path}")
@@ -1205,7 +1211,7 @@ def export_phase4(phase4_dir: Path) -> dict[str, Any]:
       raise ValueError(f"phase4_spec_path missing from manifest: {manifest_path}")
    spec = load_phase4_spec(spec_path)
    rules_profile = hpo.load_rules_profile(hpo.rules_profile_path(spec.rules_profile))
-   paths = build_phase4_paths(spec.name, repo=phase4_dir.parents[2])
+   paths = build_phase4_paths_from_dir(phase4_dir)
    cycles = build_walk_forward_cycles(spec)
    actual_records = load_actual_run_records(paths)
    scenario_records, missing_records = build_scenario_records(actual_records, spec, rules_profile)

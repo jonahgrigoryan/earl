@@ -386,6 +386,11 @@ def load_study_spec(path: Path) -> StudySpec:
 def build_study_paths(study_name: str, repo: Path | None = None) -> StudyPaths:
    root = repo or repo_root()
    study_dir = (root / DEFAULT_STUDY_ROOT / study_name).resolve()
+   return build_study_paths_from_dir(study_dir)
+
+
+def build_study_paths_from_dir(study_dir: Path) -> StudyPaths:
+   study_dir = study_dir.resolve()
    return StudyPaths(
       study_dir=study_dir,
       sqlite_path=study_dir / "study.sqlite3",
@@ -1297,6 +1302,7 @@ def run_study(
 
 
 def export_study(study_dir: Path) -> dict[str, Any]:
+   study_dir = study_dir.resolve()
    manifest_path = study_dir / "study_manifest.json"
    if not manifest_path.exists():
       raise FileNotFoundError(f"Study manifest not found: {manifest_path}")
@@ -1304,7 +1310,7 @@ def export_study(study_dir: Path) -> dict[str, Any]:
    study_name = str(manifest.get("study_name", "")).strip()
    if not study_name:
       raise ValueError(f"study_name missing from manifest: {manifest_path}")
-   paths = build_study_paths(study_name, repo=study_dir.parents[2])
+   paths = build_study_paths_from_dir(study_dir)
    exports = export_study_artifacts(paths, study_name)
    return {
       "study_name": study_name,

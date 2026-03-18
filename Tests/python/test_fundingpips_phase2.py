@@ -1,4 +1,5 @@
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -492,6 +493,83 @@ class FundingPipsPhase2Tests(unittest.TestCase):
       self.assertTrue(trial_csv_exists)
       self.assertTrue(run_records_exists)
       self.assertTrue(best_summary_exists)
+
+   def test_export_study_uses_caller_provided_study_directory(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         repo = Path(tmp_dir)
+         paths = hpo.build_study_paths("export_case", repo=repo)
+         hpo.ensure_directory(paths.study_dir)
+         hpo.ensure_custom_tables(paths.sqlite_path)
+         hpo.write_json_file(paths.manifest_path, {"study_name": "export_case"})
+
+         created_at = hpo.utc_now_iso()
+         hpo.upsert_trial_result(
+            paths.sqlite_path,
+            study_name="export_case",
+            trial_number=0,
+            state="COMPLETE",
+            objective=12.5,
+            params={"RiskPct": 1.25},
+            aggregate_metrics={
+               "valid": True,
+               "run_count": 24,
+               "window_count": 12,
+               "scenario_count": 2,
+               "pass_rate": 0.0,
+               "breach_rate": 0.0,
+               "zero_trade_rate": 0.0,
+               "progress_ratio_mean": 0.1,
+               "daily_slack_mean": 0.8,
+               "overall_slack_mean": 0.8,
+               "speed_mean": 0.0,
+               "reset_exposure_mean": 0.2,
+               "cache_hit_rate": 0.0,
+               "failure_reason": None,
+            },
+            created_at_utc=created_at,
+         )
+         hpo.upsert_run_record(
+            paths.sqlite_path,
+            {
+               "study_name": "export_case",
+               "trial_number": 0,
+               "window_id": "w001",
+               "scenario_id": "baseline",
+               "cache_key": "abc",
+               "run_dir": str(paths.study_dir / "run"),
+               "summary_path": "summary.json",
+               "daily_path": "daily.csv",
+               "report_path": "report.htm",
+               "valid": True,
+               "status": "completed",
+            },
+            created_at_utc=created_at,
+         )
+
+         relocated_study_dir = repo / "copied" / "export_case"
+         relocated_study_dir.parent.mkdir(parents=True, exist_ok=True)
+         shutil.move(str(paths.study_dir), str(relocated_study_dir))
+         regenerated = hpo.export_study(relocated_study_dir)
+
+         relocated_trial_csv = relocated_study_dir / "trial_results.csv"
+         relocated_run_records = relocated_study_dir / "run_records.jsonl"
+         relocated_best_summary = relocated_study_dir / "best_trial_summary.json"
+         self.assertTrue(relocated_trial_csv.exists())
+         self.assertTrue(relocated_run_records.exists())
+         self.assertTrue(relocated_best_summary.exists())
+         self.assertEqual(regenerated["study_dir"], str(relocated_study_dir.resolve()))
+         self.assertEqual(
+            regenerated["exports"]["trial_results_csv"],
+            str(relocated_trial_csv.resolve()),
+         )
+         self.assertEqual(
+            regenerated["exports"]["run_records_jsonl"],
+            str(relocated_run_records.resolve()),
+         )
+         self.assertEqual(
+            regenerated["exports"]["best_trial_summary"],
+            str(relocated_best_summary.resolve()),
+         )
 
    def test_run_study_resume_recovers_stale_running_trial(self) -> None:
       FakeRunnerModule.reset()

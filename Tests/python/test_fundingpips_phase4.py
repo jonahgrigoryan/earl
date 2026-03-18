@@ -1,4 +1,5 @@
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -367,6 +368,123 @@ class FundingPipsPhase4Tests(unittest.TestCase):
       self.assertEqual(summary["cycle_summaries"][0]["search_selected_candidate"], "anchor_mr105")
       self.assertEqual(actual_record["regime_summary"]["preferred_symbol"], "XAUUSD")
       self.assertEqual(actual_record["regime_summary"]["dominant_regime"], "TRENDING")
+
+   def test_export_phase4_uses_caller_provided_phase4_directory(self) -> None:
+      FakePhase4RunnerModule.reset()
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         repo = Path(tmp_dir)
+         rules_dir = repo / "tools" / "fundingpips_rules_profiles"
+         studies_dir = repo / "tools" / "fundingpips_studies"
+         tests_dir = repo / "Tests" / "RPEA"
+         rules_dir.mkdir(parents=True)
+         studies_dir.mkdir(parents=True)
+         tests_dir.mkdir(parents=True)
+
+         (rules_dir / "fundingpips_1step_eval.json").write_text(
+            json.dumps(
+               {
+                  "id": "fundingpips_1step_eval",
+                  "target_profit_pct": 10.0,
+                  "daily_loss_cap_pct": 4.0,
+                  "overall_loss_cap_pct": 6.0,
+                  "min_trade_days": 3,
+               }
+            ),
+            encoding="ascii",
+         )
+         base_set_path = tests_dir / "RPEA_candidate_B_2024H2.set"
+         base_set_path.write_text(
+            "RiskPct=2.0\nMR_RiskPct_Default=1.0\nORMinutes=45\nCutoffHour=23\nStartHourLO=5\nSpreadMultATR=0.005\n",
+            encoding="ascii",
+         )
+
+         spec_path = studies_dir / "phase4_anchor_wfo_stress.json"
+         spec_path.write_text(
+            json.dumps(
+               {
+                  "name": "phase4_anchor_wfo_stress",
+                  "rules_profile": "fundingpips_1step_eval",
+                  "symbol": "EURUSD",
+                  "period": "M1",
+                  "from_date": "2025-06-03",
+                  "to_date": "2025-09-03",
+                  "base_set": str(base_set_path),
+                  "walk_forward": {
+                     "search_window_months": 2,
+                     "report_window_months": 1,
+                     "roll_months": 1,
+                  },
+                  "primary_candidates": [
+                     {
+                        "id": "anchor_mr100",
+                        "set_overrides": {
+                           "RiskPct": 2.0,
+                           "MR_RiskPct_Default": 1.0,
+                           "ORMinutes": 45,
+                           "CutoffHour": 23,
+                           "StartHourLO": 5,
+                           "SpreadMultATR": 0.005,
+                        },
+                     }
+                  ],
+                  "scenarios": [
+                     {
+                        "id": "baseline",
+                        "severity": "baseline",
+                        "weight": 1.0,
+                        "set_overrides": {},
+                     }
+                  ],
+               }
+            ),
+            encoding="utf-8",
+         )
+
+         runner_paths = runner.RunnerPaths(
+            repo_root=repo,
+            terminal_exe=repo / "terminal64.exe",
+            metaeditor_exe=repo / "metaeditor64.exe",
+            terminal_data_path=repo / "terminal_data",
+            tester_root=repo / "tester_root",
+            tester_profiles_dir=repo / "tester_profiles",
+            config_dir=repo / "config",
+            output_root=repo / ".tmp" / "fundingpips_hpo_runs",
+         )
+         runner_paths.output_root.mkdir(parents=True)
+         runner_paths.tester_profiles_dir.mkdir(parents=True)
+         runner_paths.config_dir.mkdir(parents=True)
+         runner_paths.terminal_data_path.mkdir(parents=True)
+         runner_paths.tester_root.mkdir(parents=True)
+
+         with mock.patch("tools.fundingpips_hpo.repo_root", return_value=repo), mock.patch(
+            "tools.fundingpips_phase4.repo_root",
+            return_value=repo,
+         ):
+            phase4.run_phase4(
+               spec_path,
+               cycle_ids=("wf001_202508",),
+               candidate_scope="primary",
+               window_phase="report",
+               runner_paths=runner_paths,
+               runner_module=FakePhase4RunnerModule,
+            )
+            original_phase4_dir = phase4.build_phase4_paths("phase4_anchor_wfo_stress", repo=repo).phase4_dir
+            relocated_phase4_dir = repo / "copied" / "phase4_anchor_wfo_stress"
+            relocated_phase4_dir.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(original_phase4_dir), str(relocated_phase4_dir))
+            exported = phase4.export_phase4(relocated_phase4_dir)
+
+         relocated_scenario_records = relocated_phase4_dir / "scenario_records.jsonl"
+         relocated_window_summaries = relocated_phase4_dir / "window_summaries.json"
+         relocated_summary = relocated_phase4_dir / "phase4_summary.json"
+         self.assertTrue(relocated_scenario_records.exists())
+         self.assertTrue(relocated_window_summaries.exists())
+         self.assertTrue(relocated_summary.exists())
+         self.assertEqual(exported["phase4_dir"], str(relocated_phase4_dir.resolve()))
+         self.assertEqual(exported["scenario_records_path"], str(relocated_scenario_records.resolve()))
+         self.assertEqual(exported["window_summaries_path"], str(relocated_window_summaries.resolve()))
+         self.assertEqual(exported["phase4_summary_path"], str(relocated_summary.resolve()))
+         self.assertGreater(exported["actual_run_record_count"], 0)
 
 
 if __name__ == "__main__":
