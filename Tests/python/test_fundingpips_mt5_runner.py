@@ -29,6 +29,20 @@ class FundingPipsMt5RunnerTests(unittest.TestCase):
       self.assertEqual(spec.staged_files[0].artifact_id, "qtable_a")
       self.assertEqual(spec.staged_files[0].sha256, "deadbeef")
 
+   def test_build_spec_rejects_blank_staged_source_path(self) -> None:
+      with self.assertRaisesRegex(ValueError, r"staged_files\[0\]\.source_path is required"):
+         runner.build_spec(
+            {
+               "name": "staged_probe",
+               "staged_files": [
+                  {
+                     "source_path": "   ",
+                     "terminal_relative_path": "RPEA/qtable/mr_qtable.bin",
+                  }
+               ],
+            }
+         )
+
    def test_build_runner_paths_resolves_relative_output_root(self) -> None:
       with tempfile.TemporaryDirectory() as tmp_dir:
          repo_root = Path(tmp_dir) / "repo"
@@ -139,6 +153,48 @@ class FundingPipsMt5RunnerTests(unittest.TestCase):
       )
 
       self.assertNotEqual(key_a, key_b)
+
+   def test_fingerprint_staged_files_rejects_sha256_mismatch(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         repo = Path(tmp_dir)
+         artifact_path = repo / "artifacts" / "qtable.bin"
+         artifact_path.parent.mkdir(parents=True)
+         artifact_path.write_text("alpha", encoding="ascii")
+         spec = runner.build_spec(
+            {
+               "name": "staged_cache_probe",
+               "staged_files": [
+                  {
+                     "source_path": "artifacts/qtable.bin",
+                     "terminal_relative_path": "RPEA/qtable/mr_qtable.bin",
+                     "sha256": "deadbeef",
+                  }
+               ],
+            }
+         )
+
+         with self.assertRaisesRegex(ValueError, r"Staged artifact sha256 mismatch"):
+            runner.fingerprint_staged_files(spec.staged_files, repo)
+
+   def test_fingerprint_staged_files_rejects_directory_sources(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         repo = Path(tmp_dir)
+         artifact_dir = repo / "artifacts"
+         artifact_dir.mkdir(parents=True)
+         spec = runner.build_spec(
+            {
+               "name": "staged_cache_probe",
+               "staged_files": [
+                  {
+                     "source_path": "artifacts",
+                     "terminal_relative_path": "RPEA/qtable/mr_qtable.bin",
+                  }
+               ],
+            }
+         )
+
+         with self.assertRaisesRegex(ValueError, r"Staged artifact source must be a file"):
+            runner.fingerprint_staged_files(spec.staged_files, repo)
 
    def test_compute_cache_key_changes_when_agent_modes_change(self) -> None:
       spec_a = runner.build_spec({"name": "local_only", "use_local": 1, "use_remote": 0, "use_cloud": 0})

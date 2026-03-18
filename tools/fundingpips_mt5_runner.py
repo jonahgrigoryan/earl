@@ -138,12 +138,13 @@ def parse_staged_files(raw_files: Any) -> tuple[StagedFileSpec, ...]:
    for index, raw_item in enumerate(raw_files):
       if not isinstance(raw_item, dict):
          raise ValueError(f"staged_files[{index}] must be an object")
-      source_path = Path(str(raw_item.get("source_path", "")).strip())
+      raw_source_path = str(raw_item.get("source_path", "")).strip()
       terminal_relative_path = str(raw_item.get("terminal_relative_path", "")).strip()
-      if not source_path:
+      if not raw_source_path:
          raise ValueError(f"staged_files[{index}].source_path is required")
       if not terminal_relative_path:
          raise ValueError(f"staged_files[{index}].terminal_relative_path is required")
+      source_path = Path(raw_source_path)
       artifact_id = raw_item.get("artifact_id")
       parsed.append(
          StagedFileSpec(
@@ -373,7 +374,15 @@ def fingerprint_staged_files(staged_files: tuple[StagedFileSpec, ...], repo: Pat
       source_path = resolve_repo_path(repo, item.source_path)
       if not source_path.exists():
          raise FileNotFoundError(f"Staged artifact source not found: {source_path}")
-      sha256 = item.sha256 or sha256_file(source_path)
+      if not source_path.is_file():
+         raise ValueError(f"Staged artifact source must be a file: {source_path}")
+      computed_sha256 = sha256_file(source_path)
+      if item.sha256 and item.sha256.strip().lower() != computed_sha256.lower():
+         raise ValueError(
+            f"Staged artifact sha256 mismatch for {source_path}: "
+            f"expected {item.sha256.strip().lower()}, got {computed_sha256.lower()}"
+         )
+      sha256 = computed_sha256
       artifact_id = item.artifact_id or f"{safe_name(source_path.stem)}_{sha256[:12]}"
       fingerprints.append(
          {
