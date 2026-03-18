@@ -1086,6 +1086,15 @@ def build_phase5_summary(
    for row in run_rows:
       trial_window_groups[(row["stage"], row["trial_id"], row["cycle_id"], row["window_phase"])].append(row)
 
+   cycle_count = len(phase4.build_walk_forward_cycles(phase4_spec))
+   stage_window_phases: dict[str, set[str]] = collections.defaultdict(set)
+   for row in run_rows:
+      stage_window_phases[str(row["stage"])].add(str(row["window_phase"]))
+   expected_window_count_by_stage = {
+      stage: cycle_count * max(len(window_phases), 1)
+      for stage, window_phases in stage_window_phases.items()
+   }
+
    trial_window_summaries: list[dict[str, Any]] = []
    trial_group_rows: dict[tuple[str, str], list[dict[str, Any]]] = collections.defaultdict(list)
    for key in sorted(trial_window_groups.keys()):
@@ -1113,6 +1122,7 @@ def build_phase5_summary(
       trial_group_rows[(key[0], key[1])].extend(records)
 
    trial_rankings: list[dict[str, Any]] = []
+   incomplete_trial_count_by_stage = collections.Counter()
    for key, records in sorted(trial_group_rows.items()):
       sample = records[0]
       window_summaries = [
@@ -1121,6 +1131,10 @@ def build_phase5_summary(
          if item["stage"] == key[0] and item["trial_id"] == key[1]
       ]
       objectives = [float(item["objective"]) for item in window_summaries if item["aggregate_metrics"].get("valid", False)]
+      expected_window_count = expected_window_count_by_stage.get(key[0], cycle_count)
+      if len(window_summaries) != expected_window_count or len(objectives) != expected_window_count:
+         incomplete_trial_count_by_stage[key[0]] += 1
+         continue
       if not objectives:
          continue
       by_phase: dict[str, list[float]] = collections.defaultdict(list)
@@ -1146,6 +1160,7 @@ def build_phase5_summary(
             "threshold_token": sample.get("threshold_token"),
             "ql_candidate_token": sample.get("ql_candidate_token"),
             "effective_set_overrides": sample.get("effective_set_overrides", {}),
+            "expected_window_count": expected_window_count,
             "window_count": len(window_summaries),
             "complete_window_count": len(objectives),
             "report_objective_mean": report_mean,
@@ -1231,6 +1246,8 @@ def build_phase5_summary(
       "trial_rankings": trial_rankings,
       "architecture_rankings": architecture_rankings,
       "rejection_reasons": dict(rejection_reasons),
+      "expected_window_count_by_stage": dict(expected_window_count_by_stage),
+      "incomplete_trial_count_by_stage": dict(incomplete_trial_count_by_stage),
       "stress_gate_markers": stress_gate_markers,
       "manifest_links": {
          "baseline_bundle_id": bundle["baseline_bundle_id"],

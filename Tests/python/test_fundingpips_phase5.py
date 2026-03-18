@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from tools import fundingpips_mt5_runner as runner
+from tools import fundingpips_phase4 as phase4
 from tools import fundingpips_phase5 as phase5
 
 
@@ -189,6 +190,92 @@ class FundingPipsPhase5Tests(unittest.TestCase):
       )
 
       self.assertEqual(winner["trial_id"], "stage1__arch_mr_deterministic")
+
+   def test_build_phase5_summary_excludes_incomplete_trials_from_rankings(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         repo = Path(tmp_dir)
+         phase5_spec_path = self.write_fixture_repo(repo, bandit_ready=True)
+
+         phase4_spec_path = repo / "tools" / "fundingpips_studies" / "phase4_anchor_wfo_stress.json"
+         raw_phase4_spec = json.loads(phase4_spec_path.read_text(encoding="ascii"))
+         raw_phase4_spec["to_date"] = "2025-10-31"
+         phase4_spec_path.write_text(json.dumps(raw_phase4_spec, indent=2, sort_keys=True), encoding="ascii")
+
+         original_repo_root = runner.repo_root
+         try:
+            runner.repo_root = lambda: repo
+            spec = phase5.load_phase5_spec(phase5_spec_path)
+            phase4_spec = phase4.load_phase4_spec(spec.phase4_spec_path)
+         finally:
+            runner.repo_root = original_repo_root
+
+         cycles = phase4.build_walk_forward_cycles(phase4_spec)
+         self.assertGreaterEqual(len(cycles), 3)
+         paths = phase5.build_phase5_paths(spec.name, repo=repo)
+
+         run_rows: list[dict[str, object]] = []
+
+         def append_window_rows(trial_id: str, stage_token: str, cycle_id: str, progress_ratio: float) -> None:
+            for scenario_id, weight, severity in (
+               ("baseline", 1.0, "baseline"),
+               ("mild_delay_commission", 0.5, "mild"),
+            ):
+               run_rows.append(
+                  {
+                     "stage": "stage1",
+                     "trial_id": trial_id,
+                     "cycle_id": cycle_id,
+                     "window_phase": "report",
+                     "scenario_id": scenario_id,
+                     "scenario_weight": weight,
+                     "scenario_severity": severity,
+                     "arch_token": stage_token,
+                     "threshold_token": None,
+                     "ql_candidate_token": None,
+                     "stage_token": stage_token,
+                     "effective_set_overrides": {"EnableMR": 1},
+                     "valid": True,
+                     "status": "completed",
+                     "failure_reason": None,
+                     "pass_flag": False,
+                     "breach_flag": False,
+                     "zero_trade_flag": False,
+                     "progress_ratio": progress_ratio,
+                     "daily_slack_ratio": 0.95,
+                     "overall_slack_ratio": 0.96,
+                     "speed_ratio": 0.0,
+                     "reset_exposure_ratio": 0.05,
+                  }
+               )
+
+         for cycle in cycles:
+            append_window_rows(
+               trial_id="stage1__arch_complete",
+               stage_token="arch_complete",
+               cycle_id=cycle.id,
+               progress_ratio=0.10,
+            )
+
+         append_window_rows(
+            trial_id="stage1__arch_partial",
+            stage_token="arch_partial",
+            cycle_id=cycles[0].id,
+            progress_ratio=0.80,
+         )
+
+         summary = phase5.build_phase5_summary(
+            spec,
+            phase4_spec,
+            run_rows,
+            {"baseline_bundle_id": "bundle_test"},
+            paths,
+         )
+
+         ranked_trial_ids = [item["trial_id"] for item in summary["trial_rankings"]]
+         self.assertEqual(ranked_trial_ids, ["stage1__arch_complete"])
+         self.assertEqual(summary["best_rows"]["by_stage"]["stage1"]["trial_id"], "stage1__arch_complete")
+         self.assertEqual(summary["expected_window_count_by_stage"]["stage1"], len(cycles))
+         self.assertEqual(summary["incomplete_trial_count_by_stage"]["stage1"], 1)
 
    def write_fixture_repo(self, repo: Path, *, bandit_ready: bool) -> Path:
       rules_dir = repo / "tools" / "fundingpips_rules_profiles"
