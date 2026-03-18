@@ -1,5 +1,6 @@
 import json
 import re
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -655,6 +656,59 @@ class FundingPipsPhase5Tests(unittest.TestCase):
             if call["name"].startswith("phase5_smoke__stage1__")
          }
          self.assertEqual(executed_timeouts, {1800})
+
+   def test_export_phase5_uses_caller_provided_phase5_directory(self) -> None:
+      FakePhase5RunnerModule.reset()
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         repo = Path(tmp_dir)
+         phase5_spec_path = self.write_fixture_repo(repo, bandit_ready=False)
+         fake_paths = runner.RunnerPaths(
+            repo_root=repo,
+            terminal_exe=repo / "terminal64.exe",
+            metaeditor_exe=repo / "metaeditor64.exe",
+            terminal_data_path=repo / "terminal_data",
+            tester_root=repo / "tester_root",
+            tester_profiles_dir=repo / "terminal_data" / "MQL5" / "Profiles" / "Tester",
+            config_dir=repo / "terminal_data" / "config",
+            output_root=repo / "output",
+         )
+         fake_paths.terminal_exe.parent.mkdir(parents=True, exist_ok=True)
+         fake_paths.terminal_data_path.mkdir(parents=True, exist_ok=True)
+         fake_paths.tester_profiles_dir.mkdir(parents=True, exist_ok=True)
+         fake_paths.config_dir.mkdir(parents=True, exist_ok=True)
+         fake_paths.output_root.mkdir(parents=True, exist_ok=True)
+         fake_paths.terminal_exe.write_text("terminal", encoding="ascii")
+         fake_paths.metaeditor_exe.write_text("metaeditor", encoding="ascii")
+
+         original_repo_root = runner.repo_root
+         try:
+            runner.repo_root = lambda: repo
+            phase5.run_phase5(
+               phase5_spec_path,
+               stage="stage1",
+               cycle_ids=("wf001_202508",),
+               window_phase="report",
+               output_root=fake_paths.output_root,
+               runner_paths=fake_paths,
+               runner_module=FakePhase5RunnerModule,
+            )
+            original_phase5_dir = phase5.build_phase5_paths("phase5_smoke", repo=repo).phase5_dir
+            relocated_phase5_dir = repo / "copied_phase5_study"
+            shutil.move(str(original_phase5_dir), str(relocated_phase5_dir))
+            exported = phase5.export_phase5(relocated_phase5_dir)
+         finally:
+            runner.repo_root = original_repo_root
+
+         relocated_manifest = relocated_phase5_dir / "phase5_manifest.json"
+         relocated_run_rows = relocated_phase5_dir / "phase5_run_rows.jsonl"
+         relocated_summary = relocated_phase5_dir / "phase5_summary.json"
+         self.assertTrue(relocated_manifest.exists())
+         self.assertTrue(relocated_run_rows.exists())
+         self.assertTrue(relocated_summary.exists())
+         self.assertEqual(exported["phase5_dir"], str(relocated_phase5_dir.resolve()))
+         self.assertEqual(exported["phase5_run_rows_path"], str(relocated_run_rows.resolve()))
+         self.assertEqual(exported["phase5_summary_path"], str(relocated_summary.resolve()))
+         self.assertGreater(exported["actual_run_record_count"], 0)
 
 
 if __name__ == "__main__":

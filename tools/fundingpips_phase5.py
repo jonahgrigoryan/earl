@@ -184,6 +184,11 @@ def parse_bandit_snapshot(path: Path) -> dict[str, Any]:
 def build_phase5_paths(phase5_name: str, repo: Path | None = None) -> Phase5Paths:
    root = repo or repo_root()
    phase5_dir = (root / DEFAULT_PHASE5_ROOT / phase5_name).resolve()
+   return build_phase5_paths_from_dir(phase5_dir)
+
+
+def build_phase5_paths_from_dir(phase5_dir: Path) -> Phase5Paths:
+   phase5_dir = phase5_dir.resolve()
    baseline_dir = phase5_dir / "baseline"
    return Phase5Paths(
       phase5_dir=phase5_dir,
@@ -1281,6 +1286,7 @@ def build_phase5_summary(
 
 
 def export_phase5(phase5_dir: Path) -> dict[str, Any]:
+   phase5_dir = phase5_dir.resolve()
    manifest_path = phase5_dir / "phase5_manifest.json"
    if not manifest_path.exists():
       raise FileNotFoundError(f"Phase 5 manifest not found: {manifest_path}")
@@ -1292,7 +1298,7 @@ def export_phase5(phase5_dir: Path) -> dict[str, Any]:
    spec = load_phase5_spec(spec_path)
    phase4_spec = phase4.load_phase4_spec(spec.phase4_spec_path)
    rules_profile = hpo.load_rules_profile(hpo.rules_profile_path(phase4_spec.rules_profile))
-   paths = build_phase5_paths(spec.name)
+   paths = build_phase5_paths_from_dir(phase5_dir)
    bundle = load_baseline_bundle(paths)
    actual_records = load_actual_records(paths)
    run_rows = build_phase5_run_rows(actual_records, phase4_spec, rules_profile)
