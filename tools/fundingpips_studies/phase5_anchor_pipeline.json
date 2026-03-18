@@ -36,9 +36,9 @@
     },
     "rl_mode_default": "enabled",
     "bandit_state_mode_default": "disabled",
-    "qtable_path": "C:/Users/AWCS/AppData/Roaming/MetaQuotes/Terminal/D0E8209F77C8CF37AD8BF550E51FF075/MQL5/Files/RPEA/qtable/mr_qtable.bin",
-    "thresholds_path": "C:/Users/AWCS/AppData/Roaming/MetaQuotes/Terminal/D0E8209F77C8CF37AD8BF550E51FF075/MQL5/Files/RPEA/rl/thresholds.json",
-    "bandit_snapshot_path": "C:/Users/AWCS/AppData/Roaming/MetaQuotes/Terminal/D0E8209F77C8CF37AD8BF550E51FF075/MQL5/Files/RPEA/bandit/posterior.json",
+    "qtable_path": "Files/RPEA/phase5/baseline/mr_qtable.bin",
+    "thresholds_path": "Files/RPEA/phase5/baseline/thresholds.json",
+    "bandit_snapshot_path": "Files/RPEA/phase5/baseline/posterior.json",
     "study_seed": 20260316,
     "notes": "Phase 5 baseline bundle for the promoted Phase 4 anchor. The frozen bandit architecture is only valid when the staged posterior snapshot is ready."
   },

@@ -120,6 +120,24 @@ class FakePhase5RunnerModule:
 
 
 class FundingPipsPhase5Tests(unittest.TestCase):
+   def test_repo_phase5_anchor_spec_uses_portable_baseline_artifact_paths(self) -> None:
+      repo = Path(__file__).resolve().parents[2]
+      spec_path = repo / "tools" / "fundingpips_studies" / "phase5_anchor_pipeline.json"
+      raw_spec = json.loads(spec_path.read_text(encoding="utf-8"))
+      baseline = raw_spec["baseline"]
+      spec = phase5.load_phase5_spec(spec_path)
+
+      for field_name in ("qtable_path", "thresholds_path", "bandit_snapshot_path"):
+         path_text = str(baseline[field_name])
+         self.assertFalse(Path(path_text).is_absolute(), msg=f"{field_name} should be repo-relative")
+         self.assertNotIn("C:/Users/AWCS", path_text)
+         resolved = runner.resolve_repo_path(repo, Path(path_text))
+         self.assertTrue(resolved.exists(), msg=f"{field_name} missing: {resolved}")
+
+      self.assertEqual(spec.baseline.qtable_path, (repo / baseline["qtable_path"]).resolve())
+      self.assertEqual(spec.baseline.thresholds_path, (repo / baseline["thresholds_path"]).resolve())
+      self.assertEqual(spec.baseline.bandit_snapshot_path, (repo / baseline["bandit_snapshot_path"]).resolve())
+
    def test_runtime_string_config_getters_use_ea_inputs_in_non_test_builds(self) -> None:
       source = (
          Path(__file__).resolve().parents[2]
