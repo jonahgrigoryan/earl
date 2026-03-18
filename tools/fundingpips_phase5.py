@@ -199,6 +199,18 @@ def build_phase5_paths(phase5_name: str, repo: Path | None = None) -> Phase5Path
    )
 
 
+def parse_required_spec_file_path(raw_value: Any, *, field_name: str) -> Path:
+   path_text = str(raw_value or "").strip()
+   if not path_text:
+      raise ValueError(f"{field_name} is required")
+   resolved_path = resolve_repo_path(Path(path_text))
+   if not resolved_path.exists():
+      raise FileNotFoundError(f"{field_name} not found: {resolved_path}")
+   if not resolved_path.is_file():
+      raise ValueError(f"{field_name} must be a file: {resolved_path}")
+   return resolved_path
+
+
 def load_phase5_spec(path: Path) -> Phase5Spec:
    raw = hpo.load_json_file(path)
    name = str(raw.get("name", "")).strip()
@@ -224,11 +236,20 @@ def load_phase5_spec(path: Path) -> Phase5Spec:
       behavior_controls=dict(behavior_controls),
       rl_mode_default=str(baseline_raw.get("rl_mode_default", "enabled")).strip() or "enabled",
       bandit_state_mode_default=str(baseline_raw.get("bandit_state_mode_default", "live")).strip() or "live",
-      qtable_path=resolve_repo_path(Path(str(baseline_raw.get("qtable_path", "")).strip())),
+      qtable_path=parse_required_spec_file_path(
+         baseline_raw.get("qtable_path"),
+         field_name="baseline.qtable_path",
+      ),
       qtable_artifact_id=str(baseline_raw.get("qtable_artifact_id", "")).strip() or None,
-      thresholds_path=resolve_repo_path(Path(str(baseline_raw.get("thresholds_path", "")).strip())),
+      thresholds_path=parse_required_spec_file_path(
+         baseline_raw.get("thresholds_path"),
+         field_name="baseline.thresholds_path",
+      ),
       thresholds_artifact_id=str(baseline_raw.get("thresholds_artifact_id", "")).strip() or None,
-      bandit_snapshot_path=resolve_repo_path(Path(str(baseline_raw.get("bandit_snapshot_path", "")).strip())),
+      bandit_snapshot_path=parse_required_spec_file_path(
+         baseline_raw.get("bandit_snapshot_path"),
+         field_name="baseline.bandit_snapshot_path",
+      ),
       bandit_snapshot_artifact_id=str(baseline_raw.get("bandit_snapshot_artifact_id", "")).strip() or None,
       study_seed=hpo.parse_int(baseline_raw.get("study_seed", 0), "baseline.study_seed"),
       notes=str(baseline_raw.get("notes", "")).strip(),

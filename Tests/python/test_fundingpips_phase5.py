@@ -470,6 +470,38 @@ class FundingPipsPhase5Tests(unittest.TestCase):
       )
       return phase5_spec_path
 
+   def test_load_phase5_spec_rejects_blank_baseline_artifact_path(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         repo = Path(tmp_dir)
+         phase5_spec_path = self.write_fixture_repo(repo, bandit_ready=True)
+         raw_spec = json.loads(phase5_spec_path.read_text(encoding="ascii"))
+         raw_spec["baseline"]["qtable_path"] = "   "
+         phase5_spec_path.write_text(json.dumps(raw_spec, indent=2, sort_keys=True), encoding="ascii")
+
+         original_repo_root = runner.repo_root
+         try:
+            runner.repo_root = lambda: repo
+            with self.assertRaisesRegex(ValueError, r"baseline\.qtable_path is required"):
+               phase5.load_phase5_spec(phase5_spec_path)
+         finally:
+            runner.repo_root = original_repo_root
+
+   def test_load_phase5_spec_rejects_directory_baseline_artifact_path(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         repo = Path(tmp_dir)
+         phase5_spec_path = self.write_fixture_repo(repo, bandit_ready=True)
+         raw_spec = json.loads(phase5_spec_path.read_text(encoding="ascii"))
+         raw_spec["baseline"]["thresholds_path"] = str(repo / "artifacts")
+         phase5_spec_path.write_text(json.dumps(raw_spec, indent=2, sort_keys=True), encoding="ascii")
+
+         original_repo_root = runner.repo_root
+         try:
+            runner.repo_root = lambda: repo
+            with self.assertRaisesRegex(ValueError, r"baseline\.thresholds_path must be a file"):
+               phase5.load_phase5_spec(phase5_spec_path)
+         finally:
+            runner.repo_root = original_repo_root
+
    def test_prepare_phase5_builds_baseline_bundle(self) -> None:
       with tempfile.TemporaryDirectory() as tmp_dir:
          repo = Path(tmp_dir)
