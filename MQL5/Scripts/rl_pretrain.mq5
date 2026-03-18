@@ -2,16 +2,31 @@
 #property strict
 
 #include <RPEA/rl_pretrain_inputs.mqh>
+
+#ifdef QL_LearningRate
+#undef QL_LearningRate
+#endif
+#ifdef QL_DiscountFactor
+#undef QL_DiscountFactor
+#endif
+#ifdef QL_EpsilonTrain
+#undef QL_EpsilonTrain
+#endif
+#ifdef QL_TrainingEpisodes
+#undef QL_TrainingEpisodes
+#endif
+
 #include <RPEA/rl_agent.mqh>
 
 // Training hyperparameters
-input int    TrainingEpisodes     = 10000;  // Number of training episodes
-input double LearningRate         = 0.10;   // Alpha for Bellman update
-input double DiscountFactor       = 0.99;   // Gamma for future rewards
-input double EpsilonStart         = 1.0;    // Initial exploration rate
-input double EpsilonEnd           = 0.1;    // Final exploration rate
-input string QTableOutputPath     = "RPEA/qtable/mr_qtable.bin";
-input string ThresholdsOutputPath = "RPEA/rl/thresholds.json";
+input int    QL_TrainingEpisodes        = 10000;  // Number of training episodes
+input double QL_LearningRate            = 0.10;   // Alpha for Bellman update
+input double QL_DiscountFactor          = 0.99;   // Gamma for future rewards
+input double QL_EpsilonTrain            = 0.10;   // Terminal exploration floor for linear decay from 1.0
+input int    TrainingSeed               = 0;      // 0 = TimeLocal()
+input string QTableOutputPath           = "RPEA/qtable/mr_qtable.bin";
+input string ThresholdsOutputPath       = "RPEA/rl/thresholds.json";
+input string ArtifactManifestOutputPath = "RPEA/rl/training_manifest.json";
 
 // OU process parameters for spread simulation
 input double OU_Theta       = 0.1;  // Mean reversion speed
@@ -33,17 +48,40 @@ double MathRandomNormal(double mean, double stddev);
 bool   SimulateNewsWindow(int timestep, int episode_length);
 bool   SimulateBarrierBreach(double spread_level, int position);
 bool   RL_SaveThresholds(const string path);
+bool   RL_WriteArtifactManifest(const string path,
+                                const int training_seed,
+                                const int duration_ms,
+                                const double average_reward,
+                                const double best_reward);
+
+int g_training_seed_used = 0;
 
 void OnStart()
 {
    Print("=== RL Pre-Training Started ===");
-   Print("Episodes: ", TrainingEpisodes);
-   Print("Learning Rate: ", LearningRate);
-   Print("Discount Factor: ", DiscountFactor);
+   Print("Episodes: ", QL_TrainingEpisodes);
+   Print("Learning Rate: ", QL_LearningRate);
+   Print("Discount Factor: ", QL_DiscountFactor);
+   Print("Epsilon schedule: linear decay from 1.0 to ", QL_EpsilonTrain);
 
-   if(TrainingEpisodes <= 0)
+   if(QL_TrainingEpisodes <= 0)
    {
-      Print("ERROR: TrainingEpisodes must be > 0");
+      Print("ERROR: QL_TrainingEpisodes must be > 0");
+      return;
+   }
+   if(!MathIsValidNumber(QL_LearningRate) || QL_LearningRate <= 0.0 || QL_LearningRate > 1.0)
+   {
+      Print("ERROR: QL_LearningRate must be in (0, 1]");
+      return;
+   }
+   if(!MathIsValidNumber(QL_DiscountFactor) || QL_DiscountFactor <= 0.0 || QL_DiscountFactor > 1.0)
+   {
+      Print("ERROR: QL_DiscountFactor must be in (0, 1]");
+      return;
+   }
+   if(!MathIsValidNumber(QL_EpsilonTrain) || QL_EpsilonTrain < 0.0 || QL_EpsilonTrain > 1.0)
+   {
+      Print("ERROR: QL_EpsilonTrain must be in [0, 1]");
       return;
    }
    if(EpisodeLength < 2)
@@ -52,7 +90,11 @@ void OnStart()
       return;
    }
 
-   MathSrand((int)TimeLocal());
+   int training_seed = TrainingSeed;
+   if(training_seed == 0)
+      training_seed = (int)TimeLocal();
+   g_training_seed_used = training_seed;
+   MathSrand(training_seed);
 
    if(!EnsureOutputFolders())
    {
@@ -64,16 +106,17 @@ void OnStart()
    g_qtable_loaded = true; // Allow greedy selection during training
    Print("Q-table initialized");
 
+   ulong started_ms = GetTickCount();
    double best_reward = -1e308;
    double cumulative_reward = 0.0;
 
-   for(int ep = 0; ep < TrainingEpisodes; ep++)
+   for(int ep = 0; ep < QL_TrainingEpisodes; ep++)
    {
-      double epsilon = EpsilonStart - (EpsilonStart - EpsilonEnd) * ((double)ep / (double)TrainingEpisodes);
-      if(epsilon < EpsilonEnd) epsilon = EpsilonEnd;
-      if(epsilon > EpsilonStart) epsilon = EpsilonStart;
+      double epsilon = 1.0 - (1.0 - QL_EpsilonTrain) * ((double)ep / (double)QL_TrainingEpisodes);
+      if(epsilon < QL_EpsilonTrain) epsilon = QL_EpsilonTrain;
+      if(epsilon > 1.0) epsilon = 1.0;
 
-      double ep_reward = RunEpisode(epsilon, LearningRate, DiscountFactor);
+      double ep_reward = RunEpisode(epsilon, QL_LearningRate, QL_DiscountFactor);
       cumulative_reward += ep_reward;
       if(ep_reward > best_reward)
          best_reward = ep_reward;
@@ -82,12 +125,13 @@ void OnStart()
       {
          double avg_reward = cumulative_reward / (ep + 1);
          PrintFormat("Episode %d/%d | Epsilon: %.3f | Avg Reward: %.4f | Best: %.4f",
-                     ep, TrainingEpisodes, epsilon, avg_reward, best_reward);
+                     ep, QL_TrainingEpisodes, epsilon, avg_reward, best_reward);
       }
    }
 
    Print("=== Training Complete ===");
-   Print("Final Average Reward: ", cumulative_reward / TrainingEpisodes);
+    double average_reward = cumulative_reward / QL_TrainingEpisodes;
+   Print("Final Average Reward: ", average_reward);
 
    if(RL_SaveQTable(QTableOutputPath))
       Print("Q-table saved to: ", QTableOutputPath);
@@ -98,6 +142,16 @@ void OnStart()
       Print("Thresholds saved to: ", ThresholdsOutputPath);
    else
       Print("WARNING: Failed to save thresholds (using defaults)");
+
+   int duration_ms = (int)(GetTickCount() - started_ms);
+   if(RL_WriteArtifactManifest(ArtifactManifestOutputPath,
+                               training_seed,
+                               duration_ms,
+                               average_reward,
+                               best_reward))
+      Print("Artifact manifest saved to: ", ArtifactManifestOutputPath);
+   else
+      Print("WARNING: Failed to save artifact manifest");
 
    Print("=== RL Pre-Training Finished ===");
 }
@@ -237,7 +291,7 @@ bool SimulateBarrierBreach(double spread_level, int position)
 
 bool RL_SaveThresholds(const string path)
 {
-   int sample_episodes = (TrainingEpisodes < 100) ? TrainingEpisodes : 100;
+   int sample_episodes = (QL_TrainingEpisodes < 100) ? QL_TrainingEpisodes : 100;
    int total_samples = sample_episodes * EpisodeLength;
    if(total_samples <= 0)
       return false;
@@ -296,13 +350,27 @@ bool RL_SaveThresholds(const string path)
       "  \"sigma_ref\": %.6f,\n"
       "  \"calibrated_at\": \"%s\",\n"
       "  \"training_episodes\": %d,\n"
+      "  \"training_seed\": %d,\n"
+      "  \"ql_learning_rate\": %.6f,\n"
+      "  \"ql_discount_factor\": %.6f,\n"
+      "  \"ql_epsilon_schedule\": {\n"
+      "    \"type\": \"linear_decay\",\n"
+      "    \"start\": %.6f,\n"
+      "    \"end\": %.6f,\n"
+      "    \"mapping\": \"QL_EpsilonTrain_is_terminal_floor\"\n"
+      "  },\n"
       "  \"ou_theta\": %.3f,\n"
       "  \"ou_sigma\": %.3f\n"
       "}",
       k0, k1, k2,
       sigma_ref,
       calibrated_at,
-      TrainingEpisodes,
+      QL_TrainingEpisodes,
+      g_training_seed_used,
+      QL_LearningRate,
+      QL_DiscountFactor,
+      1.0,
+      QL_EpsilonTrain,
       OU_Theta,
       OU_Sigma
    );
@@ -313,6 +381,70 @@ bool RL_SaveThresholds(const string path)
    PrintFormat("Thresholds calibrated: k=[%.6f, %.6f, %.6f], sigma_ref=%.6f",
                k0, k1, k2, sigma_ref);
 
+   return true;
+}
+
+bool RL_WriteArtifactManifest(const string path,
+                              const int training_seed,
+                              const int duration_ms,
+                              const double average_reward,
+                              const double best_reward)
+{
+   int handle = FileOpen(path, FILE_WRITE | FILE_TXT | FILE_ANSI);
+   if(handle == INVALID_HANDLE)
+      return false;
+
+   string generated_at = TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
+   string json = StringFormat(
+      "{\n"
+      "  \"generated_at\": \"%s\",\n"
+      "  \"seed\": %d,\n"
+      "  \"duration_ms\": %d,\n"
+      "  \"qtable_path\": \"%s\",\n"
+      "  \"thresholds_path\": \"%s\",\n"
+      "  \"params\": {\n"
+      "    \"QL_LearningRate\": %.6f,\n"
+      "    \"QL_DiscountFactor\": %.6f,\n"
+      "    \"QL_TrainingEpisodes\": %d,\n"
+      "    \"QL_EpsilonTrain\": %.6f\n"
+      "  },\n"
+      "  \"epsilon_schedule\": {\n"
+      "    \"type\": \"linear_decay\",\n"
+      "    \"start\": %.6f,\n"
+      "    \"end\": %.6f,\n"
+      "    \"mapping\": \"QL_EpsilonTrain_is_terminal_floor\"\n"
+      "  },\n"
+      "  \"model_dimensions\": {\n"
+      "    \"states\": %d,\n"
+      "    \"actions\": %d,\n"
+      "    \"periods\": %d,\n"
+      "    \"quantiles\": %d\n"
+      "  },\n"
+      "  \"training_summary\": {\n"
+      "    \"average_reward\": %.6f,\n"
+      "    \"best_reward\": %.6f\n"
+      "  }\n"
+      "}",
+      generated_at,
+      training_seed,
+      duration_ms,
+      QTableOutputPath,
+      ThresholdsOutputPath,
+      QL_LearningRate,
+      QL_DiscountFactor,
+      QL_TrainingEpisodes,
+      QL_EpsilonTrain,
+      1.0,
+      QL_EpsilonTrain,
+      RL_NUM_STATES,
+      RL_NUM_ACTIONS,
+      RL_NUM_PERIODS,
+      RL_NUM_QUANTILES,
+      average_reward,
+      best_reward
+   );
+   FileWriteString(handle, json);
+   FileClose(handle);
    return true;
 }
 

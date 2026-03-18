@@ -14,6 +14,7 @@
 #define RPEA_NEWS_DIR            (RPEA_DIR"/news")
 #define RPEA_EMRT_DIR            (RPEA_DIR"/emrt")
 #define RPEA_QTABLE_DIR          (RPEA_DIR"/qtable")
+#define RPEA_RL_DIR              (RPEA_DIR"/rl")
 #define RPEA_BANDIT_DIR          (RPEA_DIR"/bandit")
 #define RPEA_LIQUIDITY_DIR       (RPEA_DIR"/liquidity")
 #define RPEA_CALIBRATION_DIR     (RPEA_DIR"/calibration")
@@ -27,6 +28,7 @@
 #define NEWS_DIR        RPEA_NEWS_DIR
 #define EMRT_DIR        RPEA_EMRT_DIR
 #define QTABLE_DIR      RPEA_QTABLE_DIR
+#define RL_DIR          RPEA_RL_DIR
 #define BANDIT_DIR      RPEA_BANDIT_DIR
 #define LIQUIDITY_DIR   RPEA_LIQUIDITY_DIR
 #define CALIBRATION_DIR RPEA_CALIBRATION_DIR
@@ -42,6 +44,7 @@
 #define FILE_EMRT_CACHE          (RPEA_EMRT_DIR"/emrt_cache.json")
 #define FILE_EMRT_BETA_GRID      (RPEA_EMRT_DIR"/beta_grid.json")
 #define FILE_QTABLE_BIN          (RPEA_QTABLE_DIR"/mr_qtable.bin")
+#define FILE_RL_THRESHOLDS       (RPEA_RL_DIR"/thresholds.json")
 #define FILE_BANDIT_POSTERIOR    (RPEA_BANDIT_DIR"/posterior.json")
 #define FILE_LIQUIDITY_STATS     (RPEA_LIQUIDITY_DIR"/spread_slippage_stats.json")
 #define FILE_CALIBRATION         (RPEA_CALIBRATION_DIR"/calibration.json")
@@ -112,6 +115,11 @@
 
 // MR diagnostics configuration
 #define DEFAULT_EnableMRBypassOnRLUnloaded   false
+#define DEFAULT_QLMode                       "enabled"
+#define DEFAULT_QLQTablePath                 FILE_QTABLE_BIN
+#define DEFAULT_QLThresholdsPath             FILE_RL_THRESHOLDS
+#define DEFAULT_BanditStateMode              "live"
+#define DEFAULT_BanditSnapshotPath           FILE_BANDIT_POSTERIOR
 
 // News and Queue Configuration
 #define DEFAULT_NewsCSVPath                  "RPEA/news/calendar_high_impact.csv"
@@ -177,6 +185,10 @@ bool   g_test_enable_mr_override_active = false;
 bool   g_test_enable_mr_override_value = true;
 bool   g_test_enable_mr_rl_bypass_override_active = false;
 bool   g_test_enable_mr_rl_bypass_override_value = DEFAULT_EnableMRBypassOnRLUnloaded;
+bool   g_test_ql_mode_override_active = false;
+string g_test_ql_mode_override_value = DEFAULT_QLMode;
+bool   g_test_bandit_state_mode_override_active = false;
+string g_test_bandit_state_mode_override_value = DEFAULT_BanditStateMode;
 bool   g_test_enable_adaptive_override_active = false;
 bool   g_test_enable_adaptive_override_value = DEFAULT_EnableAdaptiveRisk;
 bool   g_test_adaptive_bounds_override_active = false;
@@ -209,6 +221,30 @@ void Config_Test_SetEnableMRBypassOnRLUnloadedOverride(bool active, bool value)
 void Config_Test_ClearEnableMRBypassOnRLUnloadedOverride()
 {
    g_test_enable_mr_rl_bypass_override_active = false;
+}
+
+void Config_Test_SetQLModeOverride(bool active, string value)
+{
+   g_test_ql_mode_override_active = active;
+   g_test_ql_mode_override_value = value;
+}
+
+void Config_Test_ClearQLModeOverride()
+{
+   g_test_ql_mode_override_active = false;
+   g_test_ql_mode_override_value = DEFAULT_QLMode;
+}
+
+void Config_Test_SetBanditStateModeOverride(bool active, string value)
+{
+   g_test_bandit_state_mode_override_active = active;
+   g_test_bandit_state_mode_override_value = value;
+}
+
+void Config_Test_ClearBanditStateModeOverride()
+{
+   g_test_bandit_state_mode_override_active = false;
+   g_test_bandit_state_mode_override_value = DEFAULT_BanditStateMode;
 }
 
 void Config_Test_SetEnableAdaptiveRiskOverride(bool active, bool value)
@@ -1166,6 +1202,79 @@ inline bool Config_GetEnableMRBypassOnRLUnloaded()
 #endif
 }
 
+inline string Config_NormalizeModeString(const string value)
+{
+   string normalized = value;
+   StringTrimLeft(normalized);
+   StringTrimRight(normalized);
+   StringToLower(normalized);
+   return normalized;
+}
+
+inline string Config_NormalizePathString(const string value, const string fallback)
+{
+   string normalized = value;
+   StringTrimLeft(normalized);
+   StringTrimRight(normalized);
+   if(normalized == "")
+      return fallback;
+   return normalized;
+}
+
+inline string Config_NormalizeQLMode(const string value)
+{
+   string normalized = Config_NormalizeModeString(value);
+   if(normalized == "enabled" || normalized == "disabled")
+      return normalized;
+   return DEFAULT_QLMode;
+}
+
+inline string Config_GetQLMode()
+{
+#ifdef RPEA_TEST_RUNNER
+   if(g_test_ql_mode_override_active)
+      return Config_NormalizeQLMode(g_test_ql_mode_override_value);
+   #ifdef QLMode
+      return Config_NormalizeQLMode(QLMode);
+   #else
+      return DEFAULT_QLMode;
+   #endif
+#else
+   return Config_NormalizeQLMode(QLMode);
+#endif
+}
+
+inline bool Config_IsQLModeEnabled()
+{
+   return (Config_GetQLMode() == "enabled");
+}
+
+inline string Config_GetQLQTablePath()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef QLQTablePath
+      return Config_NormalizePathString(QLQTablePath, DEFAULT_QLQTablePath);
+   #else
+      return DEFAULT_QLQTablePath;
+   #endif
+#else
+   return Config_NormalizePathString(QLQTablePath, DEFAULT_QLQTablePath);
+#endif
+}
+
+inline string Config_GetQLThresholdsPath()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef QLThresholdsPath
+      return Config_NormalizePathString(QLThresholdsPath, DEFAULT_QLThresholdsPath);
+   #else
+      return DEFAULT_QLThresholdsPath;
+   #endif
+#else
+   return Config_NormalizePathString(QLThresholdsPath, DEFAULT_QLThresholdsPath);
+#endif
+}
+
 inline bool Config_GetUseBanditMetaPolicy()
 {
 #ifdef RPEA_TEST_RUNNER
@@ -1189,6 +1298,57 @@ inline bool Config_GetBanditShadowMode()
    #endif
 #else
    return BanditShadowMode;
+#endif
+}
+
+inline string Config_NormalizeBanditStateMode(const string value)
+{
+   string normalized = Config_NormalizeModeString(value);
+   if(normalized == "disabled" || normalized == "frozen" || normalized == "live")
+      return normalized;
+   return DEFAULT_BanditStateMode;
+}
+
+inline string Config_GetBanditStateMode()
+{
+#ifdef RPEA_TEST_RUNNER
+   if(g_test_bandit_state_mode_override_active)
+      return Config_NormalizeBanditStateMode(g_test_bandit_state_mode_override_value);
+   #ifdef BanditStateMode
+      return Config_NormalizeBanditStateMode(BanditStateMode);
+   #else
+      return DEFAULT_BanditStateMode;
+   #endif
+#else
+   return Config_NormalizeBanditStateMode(BanditStateMode);
+#endif
+}
+
+inline bool Config_IsBanditStateDisabled()
+{
+   return (Config_GetBanditStateMode() == "disabled");
+}
+
+inline bool Config_IsBanditStateFrozen()
+{
+   return (Config_GetBanditStateMode() == "frozen");
+}
+
+inline bool Config_IsBanditStateLive()
+{
+   return (Config_GetBanditStateMode() == "live");
+}
+
+inline string Config_GetBanditSnapshotPath()
+{
+#ifdef RPEA_TEST_RUNNER
+   #ifdef BanditSnapshotPath
+      return Config_NormalizePathString(BanditSnapshotPath, DEFAULT_BanditSnapshotPath);
+   #else
+      return DEFAULT_BanditSnapshotPath;
+   #endif
+#else
+   return Config_NormalizePathString(BanditSnapshotPath, DEFAULT_BanditSnapshotPath);
 #endif
 }
 

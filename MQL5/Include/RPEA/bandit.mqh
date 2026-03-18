@@ -32,6 +32,7 @@ struct BanditPosteriorState
 };
 
 BanditPosteriorState g_bandit_posterior;
+string g_bandit_loaded_snapshot_path = "";
 
 #ifdef RPEA_TEST_RUNNER
 bool         g_bandit_test_force_policy_active = false;
@@ -50,6 +51,21 @@ void Bandit_ResetPosteriorDefaults(BanditPosteriorState &state)
    state.bwisc_reward_sum = 0.0;
    state.mr_reward_sum = 0.0;
    state.updated_at = 0;
+}
+
+string Bandit_GetPosteriorPath()
+{
+   return Config_GetBanditSnapshotPath();
+}
+
+bool Bandit_IsSelectionEnabled()
+{
+   return !Config_IsBanditStateDisabled();
+}
+
+bool Bandit_IsMutationEnabled()
+{
+   return Config_IsBanditStateLive();
 }
 
 string Bandit_NormalizeStrategy(const string strategy)
@@ -124,9 +140,14 @@ bool Bandit_ComputePosteriorReady(const BanditPosteriorState &state)
    return true;
 }
 
-bool Bandit_LoadPosteriorFromFile(BanditPosteriorState &state)
+bool Bandit_LoadPosteriorFromFileAtPath(const string path, BanditPosteriorState &state)
 {
-   int handle = FileOpen(FILE_BANDIT_POSTERIOR, FILE_READ | FILE_TXT | FILE_ANSI);
+   if(path == "")
+      return false;
+
+   int handle = FileOpen(path, FILE_READ | FILE_TXT | FILE_ANSI);
+   if(handle == INVALID_HANDLE)
+      handle = FileOpen(path, FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
    if(handle == INVALID_HANDLE)
       return false;
 
@@ -232,9 +253,17 @@ bool Bandit_LoadPosteriorFromFile(BanditPosteriorState &state)
    return true;
 }
 
-bool Bandit_WritePosteriorAtomically(const BanditPosteriorState &state)
+bool Bandit_LoadPosteriorFromFile(BanditPosteriorState &state)
 {
-   string tmp_path = FILE_BANDIT_POSTERIOR + ".tmp";
+   return Bandit_LoadPosteriorFromFileAtPath(Bandit_GetPosteriorPath(), state);
+}
+
+bool Bandit_WritePosteriorAtomicallyAtPath(const string path, const BanditPosteriorState &state)
+{
+   if(path == "")
+      return false;
+
+   string tmp_path = path + ".tmp";
    int handle = FileOpen(tmp_path, FILE_WRITE | FILE_TXT | FILE_ANSI);
    if(handle == INVALID_HANDLE)
       return false;
@@ -248,10 +277,10 @@ bool Bandit_WritePosteriorAtomically(const BanditPosteriorState &state)
    FileWrite(handle, StringFormat("updated_at=%I64d", (long)state.updated_at));
    FileClose(handle);
 
-   if(FileIsExist(FILE_BANDIT_POSTERIOR))
-      FileDelete(FILE_BANDIT_POSTERIOR);
+   if(FileIsExist(path))
+      FileDelete(path);
 
-   if(!FileMove(tmp_path, 0, FILE_BANDIT_POSTERIOR, 0))
+   if(!FileMove(tmp_path, 0, path, 0))
    {
       FileDelete(tmp_path);
       return false;
@@ -259,16 +288,23 @@ bool Bandit_WritePosteriorAtomically(const BanditPosteriorState &state)
    return true;
 }
 
+bool Bandit_WritePosteriorAtomically(const BanditPosteriorState &state)
+{
+   return Bandit_WritePosteriorAtomicallyAtPath(Bandit_GetPosteriorPath(), state);
+}
+
 void Bandit_EnsurePosteriorLoaded()
 {
-   if(g_bandit_posterior.initialized)
+   string posterior_path = Bandit_GetPosteriorPath();
+   if(g_bandit_posterior.initialized && g_bandit_loaded_snapshot_path == posterior_path)
       return;
 
    BanditPosteriorState loaded;
    Bandit_ResetPosteriorDefaults(loaded);
-   loaded.loaded_from_file = Bandit_LoadPosteriorFromFile(loaded);
+   loaded.loaded_from_file = Bandit_LoadPosteriorFromFileAtPath(posterior_path, loaded);
    loaded.ready = Bandit_ComputePosteriorReady(loaded);
    g_bandit_posterior = loaded;
+   g_bandit_loaded_snapshot_path = posterior_path;
 }
 
 bool Bandit_IsPosteriorReady()
@@ -316,6 +352,8 @@ bool Bandit_RecordReward(const string strategy, const double reward)
    string normalized = Bandit_NormalizeStrategy(strategy);
    if(!Bandit_IsSupportedStrategy(normalized))
       return false;
+   if(!Bandit_IsMutationEnabled())
+      return false;
 
    Bandit_EnsurePosteriorLoaded();
 
@@ -334,7 +372,7 @@ bool Bandit_RecordReward(const string strategy, const double reward)
    g_bandit_posterior.total_updates++;
    g_bandit_posterior.updated_at = TimeCurrent();
    g_bandit_posterior.ready = Bandit_ComputePosteriorReady(g_bandit_posterior);
-   bool persisted = Bandit_WritePosteriorAtomically(g_bandit_posterior);
+   bool persisted = Bandit_WritePosteriorAtomicallyAtPath(Bandit_GetPosteriorPath(), g_bandit_posterior);
    if(persisted)
       g_bandit_posterior.loaded_from_file = true;
    return persisted;
@@ -347,12 +385,18 @@ bool Bandit_RecordTradeOutcome(const string strategy, const double net_outcome)
 
 BanditPolicy Bandit_SelectPolicy(const AppContext& ctx, const string symbol)
 {
+   if(!Bandit_IsSelectionEnabled())
+      return Bandit_Skip;
+
    Bandit_EnsurePosteriorLoaded();
 
 #ifdef RPEA_TEST_RUNNER
    if(g_bandit_test_force_policy_active)
       return g_bandit_test_force_policy;
 #endif
+
+   if(!g_bandit_posterior.ready)
+      return Bandit_Skip;
 
    if(symbol == "")
       return Bandit_Skip;
@@ -395,6 +439,7 @@ BanditPolicy Bandit_SelectPolicy(const AppContext& ctx, const string symbol)
 void Bandit_TestResetState()
 {
    ZeroMemory(g_bandit_posterior);
+   g_bandit_loaded_snapshot_path = "";
    g_bandit_test_force_policy_active = false;
    g_bandit_test_force_policy = Bandit_Skip;
 }
@@ -413,17 +458,19 @@ void Bandit_TestSetPosterior(const int bwisc_pulls,
    g_bandit_posterior.total_updates = (total_updates > 0 ? total_updates : 0);
    g_bandit_posterior.ready = Bandit_ComputePosteriorReady(g_bandit_posterior);
    g_bandit_posterior.updated_at = TimeCurrent();
+   g_bandit_loaded_snapshot_path = Bandit_GetPosteriorPath();
 }
 
 bool Bandit_TestLoadPosterior()
 {
    BanditPosteriorState loaded;
    Bandit_ResetPosteriorDefaults(loaded);
-   bool ok = Bandit_LoadPosteriorFromFile(loaded);
+   bool ok = Bandit_LoadPosteriorFromFileAtPath(Bandit_GetPosteriorPath(), loaded);
    if(ok)
    {
       loaded.loaded_from_file = true;
       g_bandit_posterior = loaded;
+      g_bandit_loaded_snapshot_path = Bandit_GetPosteriorPath();
    }
    return ok;
 }

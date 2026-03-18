@@ -350,6 +350,38 @@ bool TestMP_BanditReadiness_ValidPosterior()
 }
 
 //+------------------------------------------------------------------+
+//| Test: Bandit is suppressed when runtime state mode is disabled   |
+//+------------------------------------------------------------------+
+bool TestMP_BanditCanRun_DisabledStateFalse()
+{
+   int f = TestMP_Begin("TestMP_BanditCanRun_DisabledStateFalse");
+
+   Config_Test_SetEnableMROverride(true, true);
+   Config_Test_SetBanditStateModeOverride(true, "disabled");
+   ASSERT_FALSE(MetaPolicy_BanditCanRun(), "disabled bandit_state_mode blocks bandit path");
+   Config_Test_ClearBanditStateModeOverride();
+   Config_Test_ClearEnableMROverride();
+
+   return TestMP_End(f);
+}
+
+//+------------------------------------------------------------------+
+//| Test: Bandit is suppressed when MR is disabled                   |
+//+------------------------------------------------------------------+
+bool TestMP_BanditCanRun_MRDisabledFalse()
+{
+   int f = TestMP_Begin("TestMP_BanditCanRun_MRDisabledFalse");
+
+   Config_Test_SetEnableMROverride(true, false);
+   Config_Test_SetBanditStateModeOverride(true, "live");
+   ASSERT_FALSE(MetaPolicy_BanditCanRun(), "bandit cannot run when MR is disabled");
+   Config_Test_ClearBanditStateModeOverride();
+   Config_Test_ClearEnableMROverride();
+
+   return TestMP_End(f);
+}
+
+//+------------------------------------------------------------------+
 //| Test: Shadow mode logs bandit delta but returns deterministic     |
 //+------------------------------------------------------------------+
 bool TestMP_BanditShadow_UsesDeterministicChoice()
@@ -450,13 +482,15 @@ bool TestMetaPolicy_RunAll()
    bool ok15 = TestMP_Precedence_SessionCapOverridesLock();
    bool ok16 = TestMP_BanditReadiness_MissingPosterior();
    bool ok17 = TestMP_BanditReadiness_ValidPosterior();
-   bool ok18 = TestMP_BanditShadow_UsesDeterministicChoice();
-   bool ok19 = TestMP_EfficiencyHelpers_DefaultZero();
-   bool ok20 = TestMP_EfficiencyHelpers_Thresholded();
+   bool ok18 = TestMP_BanditCanRun_DisabledStateFalse();
+   bool ok19 = TestMP_BanditCanRun_MRDisabledFalse();
+   bool ok20 = TestMP_BanditShadow_UsesDeterministicChoice();
+   bool ok21 = TestMP_EfficiencyHelpers_DefaultZero();
+   bool ok22 = TestMP_EfficiencyHelpers_Thresholded();
 
    return (ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 &&
            ok9 && ok10 && ok11 && ok12 && ok13 && ok14 && ok15 && ok16 &&
-           ok17 && ok18 && ok19 && ok20);
+           ok17 && ok18 && ok19 && ok20 && ok21 && ok22);
 }
 
 #endif // TEST_META_POLICY_MQH

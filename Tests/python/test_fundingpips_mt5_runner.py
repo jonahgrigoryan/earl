@@ -8,6 +8,27 @@ from tools import fundingpips_mt5_runner as runner
 
 
 class FundingPipsMt5RunnerTests(unittest.TestCase):
+   def test_build_spec_parses_staged_files(self) -> None:
+      spec = runner.build_spec(
+         {
+            "name": "staged_probe",
+            "staged_files": [
+               {
+                  "source_path": "artifacts/qtable.bin",
+                  "terminal_relative_path": "RPEA/qtable/mr_qtable.bin",
+                  "artifact_id": "qtable_a",
+                  "sha256": "deadbeef",
+               }
+            ],
+         }
+      )
+
+      self.assertEqual(len(spec.staged_files), 1)
+      self.assertEqual(spec.staged_files[0].source_path, Path("artifacts/qtable.bin"))
+      self.assertEqual(spec.staged_files[0].terminal_relative_path, "RPEA/qtable/mr_qtable.bin")
+      self.assertEqual(spec.staged_files[0].artifact_id, "qtable_a")
+      self.assertEqual(spec.staged_files[0].sha256, "deadbeef")
+
    def test_build_runner_paths_resolves_relative_output_root(self) -> None:
       with tempfile.TemporaryDirectory() as tmp_dir:
          repo_root = Path(tmp_dir) / "repo"
@@ -77,6 +98,48 @@ class FundingPipsMt5RunnerTests(unittest.TestCase):
 
       self.assertNotEqual(key_a, key_b)
 
+   def test_compute_cache_key_changes_when_staged_file_hash_changes(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         repo = Path(tmp_dir)
+         artifact_path = repo / "artifacts" / "qtable.bin"
+         artifact_path.parent.mkdir(parents=True)
+         artifact_path.write_text("alpha", encoding="ascii")
+         spec = runner.build_spec(
+            {
+               "name": "staged_cache_probe",
+               "staged_files": [
+                  {
+                     "source_path": "artifacts/qtable.bin",
+                     "terminal_relative_path": "RPEA/qtable/mr_qtable.bin",
+                  }
+               ],
+            }
+         )
+         base_text = "RiskPct=1.5\nEnableMR=1\n"
+         terminal = {"path": "C:/MT5/terminal64.exe", "size": 1, "mtime_ns": 2}
+         dependency_hash = "dep_hash_v1"
+
+         fingerprint_a = runner.fingerprint_staged_files(spec.staged_files, repo)
+         artifact_path.write_text("beta", encoding="ascii")
+         fingerprint_b = runner.fingerprint_staged_files(spec.staged_files, repo)
+
+      key_a = runner.compute_cache_key(
+         spec,
+         base_text,
+         terminal,
+         dependency_hash,
+         staged_files_fingerprint=fingerprint_a,
+      )
+      key_b = runner.compute_cache_key(
+         spec,
+         base_text,
+         terminal,
+         dependency_hash,
+         staged_files_fingerprint=fingerprint_b,
+      )
+
+      self.assertNotEqual(key_a, key_b)
+
    def test_compute_cache_key_changes_when_agent_modes_change(self) -> None:
       spec_a = runner.build_spec({"name": "local_only", "use_local": 1, "use_remote": 0, "use_cloud": 0})
       spec_b = runner.build_spec({"name": "remote_enabled", "use_local": 0, "use_remote": 1, "use_cloud": 0})
@@ -133,6 +196,46 @@ class FundingPipsMt5RunnerTests(unittest.TestCase):
             "EnableMR": "1",
          },
       )
+
+   def test_stage_runtime_files_copies_into_terminal_tree(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         repo = Path(tmp_dir) / "repo"
+         terminal_data = Path(tmp_dir) / "terminal_data"
+         tester_root = Path(tmp_dir) / "tester_root"
+         artifact_path = repo / "artifacts" / "thresholds.json"
+         agent_files = (
+            tester_root
+            / "D0E8209F77C8CF37AD8BF550E51FF075"
+            / "Agent-127.0.0.1-3000"
+            / "MQL5"
+            / "Files"
+         )
+         artifact_path.parent.mkdir(parents=True)
+         terminal_data.mkdir(parents=True)
+         agent_files.mkdir(parents=True)
+         artifact_path.write_text("{\"k_thresholds\":[0.0]}", encoding="ascii")
+
+         staged_rows = runner.stage_runtime_files(
+            (
+               runner.StagedFileSpec(
+                  source_path=Path("artifacts/thresholds.json"),
+                  terminal_relative_path="RPEA/rl/thresholds.json",
+               ),
+            ),
+            repo=repo,
+            terminal_data_path=terminal_data,
+            tester_root=tester_root,
+         )
+         self.assertEqual(len(staged_rows), 1)
+         destination = Path(staged_rows[0]["terminal_destination_path"])
+         common_destination = Path(staged_rows[0]["common_destination_path"])
+         agent_destination = Path(staged_rows[0]["tester_agent_destination_paths"][0])
+         self.assertTrue(destination.exists())
+         self.assertTrue(common_destination.exists())
+         self.assertTrue(agent_destination.exists())
+         self.assertEqual(destination.read_text(encoding="ascii"), "{\"k_thresholds\":[0.0]}")
+         self.assertEqual(common_destination.read_text(encoding="ascii"), "{\"k_thresholds\":[0.0]}")
+         self.assertEqual(agent_destination.read_text(encoding="ascii"), "{\"k_thresholds\":[0.0]}")
 
    def test_run_single_backtest_returns_cache_hit_before_preflight(self) -> None:
       with tempfile.TemporaryDirectory() as tmp_dir:
@@ -401,6 +504,15 @@ class FundingPipsMt5RunnerTests(unittest.TestCase):
       self.assertIn(r"Report=Tester\reports\eurusd_probe.xml", ini_text)
       self.assertIn("Optimization=0", ini_text)
       self.assertIn("Expert=FundingPips\\RPEA", ini_text)
+
+   def test_compact_slug_shortens_overlong_names_with_hash_suffix(self) -> None:
+      raw = "phase5_anchor_pipeline__stage3__wf001_202508__report__baseline_artifacts__ql_enabled__baseline"
+
+      compact = runner.compact_slug(raw, max_length=64)
+
+      self.assertLessEqual(len(compact), 64)
+      self.assertRegex(compact, r"_[0-9a-f]{12}$")
+      self.assertNotEqual(compact, runner.safe_name(raw))
 
    def test_prepend_common_section_adds_only_common_block(self) -> None:
       common_ini = "\n".join(

@@ -30,6 +30,8 @@ DEFAULT_BASE_SET = Path("Tests") / "RPEA" / "RPEA_10k_default.set"
 DEFAULT_EXPERT = r"FundingPips\RPEA"
 DEFAULT_RULES_PROFILE = "fundingpips_1step_eval"
 DEFAULT_SCENARIO = "baseline"
+MAX_RUN_SLUG_LENGTH = 64
+MAX_REPORT_STEM_LENGTH = 64
 
 SUMMARY_FILENAME = "fundingpips_eval_summary.json"
 DAILY_FILENAME = "fundingpips_eval_daily.csv"
@@ -45,6 +47,14 @@ class RunnerPaths:
    tester_profiles_dir: Path
    config_dir: Path
    output_root: Path
+
+
+@dataclasses.dataclass(frozen=True)
+class StagedFileSpec:
+   source_path: Path
+   terminal_relative_path: str
+   artifact_id: str | None = None
+   sha256: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -74,6 +84,7 @@ class BacktestSpec:
    scenario: str
    rules_profile: str
    set_overrides: dict[str, Any]
+   staged_files: tuple[StagedFileSpec, ...]
    report_stem: str
    timeout_seconds: int
 
@@ -82,6 +93,15 @@ def spec_to_manifest_dict(spec: BacktestSpec) -> dict[str, Any]:
    data = dataclasses.asdict(spec)
    data["template_ini"] = str(spec.template_ini)
    data["base_set"] = str(spec.base_set)
+   data["staged_files"] = [
+      {
+         "source_path": str(item.source_path),
+         "terminal_relative_path": item.terminal_relative_path,
+         "artifact_id": item.artifact_id,
+         "sha256": item.sha256,
+      }
+      for item in spec.staged_files
+   ]
    return data
 
 
@@ -95,6 +115,45 @@ def normalize_override_value(value: Any) -> str:
    if value is None:
       return ""
    return str(value)
+
+
+def sha256_file(path: Path) -> str:
+   digest = hashlib.sha256()
+   with path.open("rb") as handle:
+      while True:
+         chunk = handle.read(65536)
+         if not chunk:
+            break
+         digest.update(chunk)
+   return digest.hexdigest()
+
+
+def parse_staged_files(raw_files: Any) -> tuple[StagedFileSpec, ...]:
+   if raw_files is None:
+      return ()
+   if not isinstance(raw_files, list):
+      raise ValueError("staged_files must be a list when provided")
+
+   parsed: list[StagedFileSpec] = []
+   for index, raw_item in enumerate(raw_files):
+      if not isinstance(raw_item, dict):
+         raise ValueError(f"staged_files[{index}] must be an object")
+      source_path = Path(str(raw_item.get("source_path", "")).strip())
+      terminal_relative_path = str(raw_item.get("terminal_relative_path", "")).strip()
+      if not source_path:
+         raise ValueError(f"staged_files[{index}].source_path is required")
+      if not terminal_relative_path:
+         raise ValueError(f"staged_files[{index}].terminal_relative_path is required")
+      artifact_id = raw_item.get("artifact_id")
+      parsed.append(
+         StagedFileSpec(
+            source_path=source_path,
+            terminal_relative_path=terminal_relative_path,
+            artifact_id=str(artifact_id).strip() or None if artifact_id is not None else None,
+            sha256=str(raw_item.get("sha256", "")).strip() or None,
+         )
+      )
+   return tuple(parsed)
 
 
 def parse_key_value_pairs(pairs: list[str]) -> dict[str, str]:
@@ -119,6 +178,18 @@ def safe_name(value: str) -> str:
          chars.append("_")
    collapsed = "".join(chars).strip("_")
    return collapsed or "run"
+
+
+def compact_slug(value: str, *, max_length: int) -> str:
+   slug = safe_name(value)
+   if len(slug) <= max_length:
+      return slug
+
+   digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+   head_budget = max_length - len(digest) - 1
+   if head_budget < 1:
+      return digest[:max_length]
+   return f"{slug[:head_budget]}_{digest}"
 
 
 def resolve_terminal_data_path(preferred: str | None) -> Path:
@@ -230,6 +301,7 @@ def compute_cache_key(
    base_set_text: str,
    terminal_info: dict[str, Any],
    expert_dependency_hash: str,
+   staged_files_fingerprint: list[dict[str, Any]] | None = None,
 ) -> str:
    payload = {
       "expert": spec.expert,
@@ -251,6 +323,7 @@ def compute_cache_key(
       "scenario": spec.scenario,
       "rules_profile": spec.rules_profile,
       "set_overrides": spec.set_overrides,
+      "staged_files": staged_files_fingerprint or [],
       "base_set_text": base_set_text,
       "expert_dependency_hash": expert_dependency_hash,
       "terminal": terminal_info,
@@ -292,6 +365,77 @@ def compute_ea_dependency_hash(repo: Path) -> str:
       digest.update(compute_directory_tree_hash(root, suffixes=(".mq5", ".mqh")).encode("ascii"))
       digest.update(b"\0")
    return digest.hexdigest()
+
+
+def fingerprint_staged_files(staged_files: tuple[StagedFileSpec, ...], repo: Path) -> list[dict[str, Any]]:
+   fingerprints: list[dict[str, Any]] = []
+   for item in staged_files:
+      source_path = resolve_repo_path(repo, item.source_path)
+      if not source_path.exists():
+         raise FileNotFoundError(f"Staged artifact source not found: {source_path}")
+      sha256 = item.sha256 or sha256_file(source_path)
+      artifact_id = item.artifact_id or f"{safe_name(source_path.stem)}_{sha256[:12]}"
+      fingerprints.append(
+         {
+            "artifact_id": artifact_id,
+            "source_path": str(source_path),
+            "terminal_relative_path": item.terminal_relative_path.replace("\\", "/"),
+            "sha256": sha256,
+            "size": source_path.stat().st_size,
+         }
+      )
+   fingerprints.sort(key=lambda row: (row["terminal_relative_path"], row["sha256"]))
+   return fingerprints
+
+
+def stage_runtime_files(
+   staged_files: tuple[StagedFileSpec, ...],
+   *,
+   repo: Path,
+   terminal_data_path: Path,
+   tester_root: Path | None = None,
+) -> list[dict[str, Any]]:
+   terminal_root = terminal_data_path / "MQL5" / "Files"
+   common_root = terminal_data_path.parent / "Common" / "Files"
+   tester_agent_roots: list[Path] = []
+   if tester_root is not None and tester_root.exists():
+      for child in sorted(tester_root.iterdir()):
+         if not child.is_dir():
+            continue
+         if child.name.startswith("Agent-"):
+            tester_agent_roots.append(child / "MQL5" / "Files")
+            continue
+         for grandchild in sorted(child.iterdir()):
+            if not grandchild.is_dir() or not grandchild.name.startswith("Agent-"):
+               continue
+            tester_agent_roots.append(grandchild / "MQL5" / "Files")
+
+   staged_rows = fingerprint_staged_files(staged_files, repo)
+   for row in staged_rows:
+      source_path = Path(str(row["source_path"]))
+      terminal_destination = terminal_root / Path(str(row["terminal_relative_path"]))
+      common_destination = common_root / Path(str(row["terminal_relative_path"]))
+      agent_destinations: list[str] = []
+
+      for destination in (terminal_destination, common_destination):
+         ensure_directory(destination.parent)
+         shutil.copy2(source_path, destination)
+
+      for root in tester_agent_roots:
+         destination = root / Path(str(row["terminal_relative_path"]))
+         ensure_directory(destination.parent)
+         shutil.copy2(source_path, destination)
+         agent_destinations.append(str(destination))
+
+      row["terminal_destination_path"] = str(terminal_destination)
+      row["common_destination_path"] = str(common_destination)
+      row["tester_agent_destination_paths"] = agent_destinations
+      row["runtime_destination_paths"] = [
+         str(terminal_destination),
+         str(common_destination),
+         *agent_destinations,
+      ]
+   return staged_rows
 
 
 def load_text(path: Path) -> str:
@@ -651,6 +795,7 @@ def build_spec(run_data: dict[str, Any], defaults: dict[str, Any] | None = None)
    base_set = Path(merged.get("base_set", DEFAULT_BASE_SET))
    report_stem = merged.get("report_stem") or safe_name(name)
    set_overrides = merged_set_overrides
+   staged_files = parse_staged_files(merged.get("staged_files"))
 
    return BacktestSpec(
       name=name,
@@ -678,6 +823,7 @@ def build_spec(run_data: dict[str, Any], defaults: dict[str, Any] | None = None)
       scenario=merged.get("scenario", DEFAULT_SCENARIO),
       rules_profile=merged.get("rules_profile", DEFAULT_RULES_PROFILE),
       set_overrides=set_overrides,
+      staged_files=staged_files,
       report_stem=report_stem,
       timeout_seconds=int(merged.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)),
    )
@@ -737,14 +883,17 @@ def run_single_backtest(
    base_set_text = load_text(base_set_path)
    terminal_info = terminal_fingerprint(paths.terminal_exe)
    expert_dependency_hash = compute_ea_dependency_hash(paths.repo_root)
+   staged_files_fingerprint = fingerprint_staged_files(spec.staged_files, paths.repo_root)
    cache_key = compute_cache_key(
       spec,
       base_set_text,
       terminal_info,
       expert_dependency_hash,
+      staged_files_fingerprint=staged_files_fingerprint,
    )
 
-   run_name = safe_name(spec.name)
+   run_name = compact_slug(spec.name, max_length=MAX_RUN_SLUG_LENGTH)
+   report_stem = compact_slug(spec.report_stem, max_length=MAX_REPORT_STEM_LENGTH)
    run_dir = paths.output_root / f"{run_name}__{cache_key}"
    inputs_dir = run_dir / "inputs"
    collected_dir = run_dir / "collected"
@@ -754,7 +903,7 @@ def run_single_backtest(
    manifest_path = run_dir / "run_manifest.json"
    cached_summary = collected_dir / SUMMARY_FILENAME
    cached_daily = collected_dir / DAILY_FILENAME
-   cached_report = resolve_cached_report_path(manifest_path, collected_dir, spec.report_stem, cache_key)
+   cached_report = resolve_cached_report_path(manifest_path, collected_dir, report_stem, cache_key)
    cached_manifest = load_json_text(manifest_path) if manifest_path.exists() else None
    if (
       manifest_path.exists()
@@ -773,10 +922,20 @@ def run_single_backtest(
          "report_path": str(cached_report),
          "decision_logs": (cached_manifest or {}).get("collected_decision_logs", []),
          "event_logs": (cached_manifest or {}).get("collected_event_logs", []),
+         "staged_files": (cached_manifest or {}).get("staged_files", []),
       }
 
    if sync_before_run:
       sync_repo(paths.repo_root)
+
+   staged_files = []
+   if spec.staged_files and not dry_run:
+      staged_files = stage_runtime_files(
+         spec.staged_files,
+         repo=paths.repo_root,
+         terminal_data_path=paths.terminal_data_path,
+         tester_root=paths.tester_root,
+      )
 
    compile_log_path = None
    if compile_before_run and not dry_run:
@@ -794,7 +953,7 @@ def run_single_backtest(
    profile_set_path = paths.tester_profiles_dir / profile_set_name
    shutil.copy2(generated_set_path, profile_set_path)
 
-   report_relative_path = rf"Tester\reports\{spec.report_stem}_{cache_key}.xml"
+   report_relative_path = rf"Tester\reports\{report_stem}_{cache_key}.xml"
    expected_report_path = paths.terminal_data_path / Path(report_relative_path)
    ensure_directory(expected_report_path.parent)
 
@@ -820,6 +979,8 @@ def run_single_backtest(
       "generated_ini": str(generated_ini_path),
       "generated_set": str(generated_set_path),
       "profile_set_path": str(profile_set_path),
+      "report_slug": report_stem,
+      "run_slug": run_name,
       "report_relative_path": report_relative_path,
       "terminal_exe": str(paths.terminal_exe),
       "metaeditor_exe": str(paths.metaeditor_exe),
@@ -827,6 +988,8 @@ def run_single_backtest(
       "tester_root": str(paths.tester_root),
       "terminal_fingerprint": terminal_info,
       "expert_dependency_hash": expert_dependency_hash,
+      "staged_files": staged_files_fingerprint,
+      "staged_files_runtime": staged_files,
       "compile_log_path": str(compile_log_path) if compile_log_path else None,
       "spec": spec_to_manifest_dict(spec),
    }
