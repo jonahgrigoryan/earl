@@ -1,0 +1,44 @@
+{
+  "name": "phase3_focus_postriskfix",
+  "rules_profile": "fundingpips_1step_eval",
+  "symbol": "EURUSD",
+  "period": "M1",
+  "from_date": "2025-06-03",
+  "to_date": "2025-09-03",
+  "window_length_trading_days": 10,
+  "window_step_trading_days": 5,
+  "base_set": "Tests/RPEA/RPEA_candidate_B_2024H2.set",
+  "seed": 20260314,
+  "n_trials": 6,
+  "search_space": {
+    "RiskPct": {
+      "type": "categorical",
+      "choices": [2.0]
+    },
+    "MR_RiskPct_Default": {
+      "type": "categorical",
+      "choices": [0.8, 0.9, 1.0]
+    },
+    "ORMinutes": {
+      "type": "categorical",
+      "choices": [45]
+    },
+    "CutoffHour": {
+      "type": "categorical",
+      "choices": [23]
+    },
+    "StartHourLO": {
+      "type": "categorical",
+      "choices": [5, 7]
+    }
+  },
+  "scenarios": [
+    {
+      "id": "baseline",
+      "weight": 1.0,
+      "set_overrides": {
+        "SpreadMultATR": 0.005
+      }
+    }
+  ]
+}

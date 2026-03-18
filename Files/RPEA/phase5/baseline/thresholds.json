@@ -1,0 +1,5 @@
+{
+  "k_thresholds": [-0.02, 0.0, 0.02],
+  "sigma_ref": 0.015,
+  "calibrated_at": "2026-02-25"
+}

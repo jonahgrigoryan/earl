@@ -218,11 +218,26 @@
 #ifndef EnableMRBypassOnRLUnloaded
 #define EnableMRBypassOnRLUnloaded false
 #endif
+#ifndef QLMode
+#define QLMode "enabled"
+#endif
+#ifndef QLQTablePath
+#define QLQTablePath "RPEA/qtable/mr_qtable.bin"
+#endif
+#ifndef QLThresholdsPath
+#define QLThresholdsPath "RPEA/rl/thresholds.json"
+#endif
 #ifndef UseBanditMetaPolicy
 #define UseBanditMetaPolicy true
 #endif
 #ifndef BanditShadowMode
 #define BanditShadowMode true
+#endif
+#ifndef BanditStateMode
+#define BanditStateMode "live"
+#endif
+#ifndef BanditSnapshotPath
+#define BanditSnapshotPath "RPEA/bandit/posterior.json"
 #endif
 #ifndef EnableAnomalyDetector
 #define EnableAnomalyDetector true

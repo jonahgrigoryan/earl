@@ -50,12 +50,14 @@ void TestBandit_ResetIsolation()
 {
    TestBandit_PrepareFiles();
    Bandit_TestResetState();
+   Config_Test_ClearBanditStateModeOverride();
    Liquidity_TestResetState();
 }
 
 void TestBandit_Cleanup()
 {
    Bandit_TestResetState();
+   Config_Test_ClearBanditStateModeOverride();
    Liquidity_TestResetState();
    FileDelete(FILE_BANDIT_POSTERIOR);
 }
@@ -100,6 +102,7 @@ bool TestBandit_RecordTradeOutcome_UpdatesPosterior()
    int f = TestBandit_Begin("TestBandit_RecordTradeOutcome_UpdatesPosterior");
 
    TestBandit_ResetIsolation();
+   Config_Test_SetBanditStateModeOverride(true, "live");
    Bandit_TestSetPosterior(0, 0.0, 0, 0.0, 0);
 
    ASSERT_TRUE(Bandit_RecordTradeOutcome("BWISC", 15.0), "positive close outcome persists BWISC update");
@@ -107,6 +110,38 @@ bool TestBandit_RecordTradeOutcome_UpdatesPosterior()
 
    ASSERT_TRUE(Bandit_RecordTradeOutcome("MR", -4.0), "negative close outcome persists MR update");
    ASSERT_TRUE(Bandit_TestGetTotalUpdates() == 2, "total_updates increments on second outcome");
+
+   return TestBandit_End(f);
+}
+
+bool TestBandit_RecordTradeOutcome_FrozenSkipsMutation()
+{
+   int f = TestBandit_Begin("TestBandit_RecordTradeOutcome_FrozenSkipsMutation");
+
+   TestBandit_ResetIsolation();
+   Config_Test_SetBanditStateModeOverride(true, "frozen");
+   Bandit_TestSetPosterior(1, 1.0, 1, 0.0, 2);
+
+   ASSERT_FALSE(Bandit_RecordTradeOutcome("BWISC", 15.0), "frozen mode blocks bandit mutation");
+   ASSERT_TRUE(Bandit_TestGetTotalUpdates() == 2, "total_updates stay unchanged in frozen mode");
+
+   return TestBandit_End(f);
+}
+
+bool TestBandit_SelectPolicy_DisabledStateSkips()
+{
+   int f = TestBandit_Begin("TestBandit_SelectPolicy_DisabledStateSkips");
+
+   TestBandit_ResetIsolation();
+   Config_Test_SetBanditStateModeOverride(true, "disabled");
+   Bandit_TestSetPosterior(8, 7.0, 8, 6.0, 16);
+
+   AppContext ctx;
+   ZeroMemory(ctx);
+   ctx.symbols_count = 1;
+
+   BanditPolicy policy = Bandit_SelectPolicy(ctx, "EURUSD");
+   ASSERT_TRUE(policy == Bandit_Skip, "disabled mode suppresses bandit selection");
 
    return TestBandit_End(f);
 }
@@ -140,10 +175,12 @@ bool TestBandit_RunAll()
    bool ok1 = TestBandit_PosteriorMissingFileFallback();
    bool ok2 = TestBandit_PosteriorPersistRoundTrip();
    bool ok3 = TestBandit_RecordTradeOutcome_UpdatesPosterior();
-   bool ok4 = TestBandit_SelectPolicy_HardLiquidityBlock();
+   bool ok4 = TestBandit_RecordTradeOutcome_FrozenSkipsMutation();
+   bool ok5 = TestBandit_SelectPolicy_DisabledStateSkips();
+   bool ok6 = TestBandit_SelectPolicy_HardLiquidityBlock();
    TestBandit_Cleanup();
 
-   return (ok1 && ok2 && ok3 && ok4);
+   return (ok1 && ok2 && ok3 && ok4 && ok5 && ok6);
 }
 
 #endif // TEST_BANDIT_MQH

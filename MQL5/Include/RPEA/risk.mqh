@@ -15,6 +15,47 @@ inline double Risk_FloorToStep(const double value, const double step)
    return floored * step;
 }
 
+inline ENUM_ORDER_TYPE Risk_InferOrderTypeFromStop(const double entry, const double stop)
+{
+   return (stop < entry ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
+}
+
+double Risk_CalcStopLossPerLot(const string symbol,
+                               const double entry,
+                               const double stop,
+                               const double point,
+                               const double min_stop_points,
+                               double &sl_points,
+                               double &calc_stop)
+{
+   if(symbol == NULL || symbol == "")
+      return 0.0;
+   if(!MathIsValidNumber(entry) || !MathIsValidNumber(stop) || !MathIsValidNumber(point))
+      return 0.0;
+   if(entry <= 0.0 || point <= 0.0)
+      return 0.0;
+
+   sl_points = MathAbs(entry - stop) / point;
+   if(min_stop_points > 0.0)
+      sl_points = MathMax(sl_points, min_stop_points);
+   if(sl_points <= 0.0)
+      return 0.0;
+
+   ENUM_ORDER_TYPE order_type = Risk_InferOrderTypeFromStop(entry, stop);
+   double direction = (order_type == ORDER_TYPE_BUY ? -1.0 : 1.0);
+   calc_stop = entry + (sl_points * point * direction);
+
+   double loss = 0.0;
+   if(!OrderCalcProfit(order_type, symbol, 1.0, entry, calc_stop, loss))
+      return 0.0;
+
+   loss = MathAbs(loss);
+   if(!MathIsValidNumber(loss) || loss <= 0.0)
+      return 0.0;
+
+   return loss;
+}
+
 double Risk_SizingByATRDistanceForSymbol(const string symbol,
                                           const double entry, const double stop,
                                           const double equity, const double riskPct,
@@ -35,17 +76,11 @@ double Risk_SizingByATRDistanceForSymbol(const string symbol,
    double effective_risk_pct = riskPct * effective_conf;
 
    double point = 0.0;
-   double tick_size = 0.0;
-   double tick_value = 0.0;
    double vol_min = 0.0;
    double vol_max = 0.0;
    double vol_step = 0.0;
 
    if(!SymbolInfoDouble(symbol, SYMBOL_POINT, point) || point <= 0.0)
-      return 0.0;
-   if(!SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE, tick_size) || tick_size <= 0.0)
-      return 0.0;
-   if(!SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE, tick_value) || tick_value <= 0.0)
       return 0.0;
    if(!SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN, vol_min) || vol_min <= 0.0)
       return 0.0;
@@ -79,19 +114,18 @@ double Risk_SizingByATRDistanceForSymbol(const string symbol,
    if(min_stop > 0.0)
       sl_points = MathMax(sl_points, min_stop);
 
-   double tick_ratio = tick_size / point;
-   if(tick_ratio <= 0.0)
+   double calc_stop = stop;
+   double loss_per_lot = Risk_CalcStopLossPerLot(symbol,
+                                                 entry,
+                                                 stop,
+                                                 point,
+                                                 min_stop,
+                                                 sl_points,
+                                                 calc_stop);
+   if(loss_per_lot <= 0.0)
       return 0.0;
 
-   double value_per_point = tick_value / tick_ratio;
-   if(value_per_point <= 0.0)
-      return 0.0;
-
-   double denom = sl_points * value_per_point;
-   if(denom <= 0.0)
-      return 0.0;
-
-   double raw_volume = risk_money / denom;
+   double raw_volume = risk_money / loss_per_lot;
    if(!MathIsValidNumber(raw_volume) || raw_volume <= 0.0)
       return 0.0;
 
@@ -107,6 +141,7 @@ double Risk_SizingByATRDistanceForSymbol(const string symbol,
 
    double margin_used_pct = 0.0;
    double final_volume = volume;
+   ENUM_ORDER_TYPE order_type = Risk_InferOrderTypeFromStop(entry, stop);
 
 #ifndef RPEA_RISK_SKIP_MARGIN_CHECK
    if(final_volume >= vol_min && final_volume > 0.0)
@@ -122,7 +157,7 @@ double Risk_SizingByATRDistanceForSymbol(const string symbol,
          while(volume_iter >= vol_min && volume_iter > 0.0)
          {
             double required_margin = 0.0;
-            if(!OrderCalcMargin(ORDER_TYPE_BUY, symbol, volume_iter, entry, required_margin) ||
+            if(!OrderCalcMargin(order_type, symbol, volume_iter, entry, required_margin) ||
                !MathIsValidNumber(required_margin))
             {
                final_volume = 0.0;
@@ -169,14 +204,16 @@ double Risk_SizingByATRDistanceForSymbol(const string symbol,
    }
 
    string log_fields = StringFormat(
-      "{\"symbol\":\"%s\",\"entry\":%.5f,\"stop\":%.5f,\"risk_money\":%.2f,\"confidence\":%.2f,\"effective_risk_pct\":%.2f,\"sl_points\":%.2f,\"raw_volume\":%.4f,\"final_volume\":%.4f,\"margin_used_pct\":%.2f,\"room_cap\":%.2f,\"clamped\":%s}",
+      "{\"symbol\":\"%s\",\"entry\":%.5f,\"stop\":%.5f,\"calc_stop\":%.5f,\"risk_money\":%.2f,\"confidence\":%.2f,\"effective_risk_pct\":%.2f,\"sl_points\":%.2f,\"loss_per_lot\":%.2f,\"raw_volume\":%.4f,\"final_volume\":%.4f,\"margin_used_pct\":%.2f,\"room_cap\":%.2f,\"clamped\":%s}",
       symbol,
       entry,
       stop,
+      calc_stop,
       risk_money,
       effective_conf,
       effective_risk_pct,
       sl_points,
+      loss_per_lot,
       raw_volume,
       final_volume,
       log_margin,

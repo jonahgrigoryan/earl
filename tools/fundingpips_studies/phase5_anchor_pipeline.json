@@ -1,0 +1,69 @@
+{
+  "name": "phase5_anchor_pipeline",
+  "phase4_spec_path": "tools/fundingpips_studies/phase4_anchor_wfo_stress.json",
+  "phase4_manifest_path": ".tmp/fundingpips_phase4/phase4_anchor_wfo_stress/phase4_manifest.json",
+  "baseline": {
+    "phase4_candidate_id": "anchor_mr100",
+    "behavior_controls": {
+      "UseXAUEURProxy": 1,
+      "NewsBufferS": 0,
+      "MaxSpreadPoints": 0,
+      "BWISC_ConfCut": 0.0,
+      "MR_ConfCut": 0.0,
+      "EMRT_FastThresholdPct": 100,
+      "MR_TimeStopMin": 60,
+      "MR_TimeStopMax": 90,
+      "MR_LongOnly": 1,
+      "QL_LearningRate": 0.1,
+      "QL_DiscountFactor": 0.99,
+      "QL_EpsilonTrain": 0.1,
+      "QL_TrainingEpisodes": 10000,
+      "QL_SimulationPaths": 1000,
+      "MR_EMRTWeight": 0.0,
+      "AnomalyShadowMode": 0,
+      "EnableMR": 1,
+      "EnableAnomalyDetector": 0,
+      "UseBanditMetaPolicy": 0,
+      "BanditShadowMode": 0,
+      "EnableMRBypassOnRLUnloaded": 1,
+      "EnableAdaptiveRisk": 0,
+      "MR_UseLogRatio": 1,
+      "QLMode": "enabled",
+      "QLQTablePath": "RPEA/qtable/mr_qtable.bin",
+      "QLThresholdsPath": "RPEA/rl/thresholds.json",
+      "BanditStateMode": "disabled",
+      "BanditSnapshotPath": "RPEA/bandit/posterior.json"
+    },
+    "rl_mode_default": "enabled",
+    "bandit_state_mode_default": "disabled",
+    "qtable_path": "Files/RPEA/phase5/baseline/mr_qtable.bin",
+    "thresholds_path": "Files/RPEA/phase5/baseline/thresholds.json",
+    "bandit_snapshot_path": "Files/RPEA/phase5/baseline/posterior.json",
+    "study_seed": 20260316,
+    "notes": "Phase 5 baseline bundle for the promoted Phase 4 anchor. The frozen bandit architecture is only valid when the staged posterior snapshot is ready."
+  },
+  "stage2": {
+    "search_space": {
+      "MR_ConfCut": {
+        "type": "categorical",
+        "choices": [0.0, 0.05]
+      },
+      "EMRT_FastThresholdPct": {
+        "type": "categorical",
+        "choices": [95, 100]
+      },
+      "MR_EMRTWeight": {
+        "type": "categorical",
+        "choices": [0.0, 0.2, 0.4]
+      },
+      "MR_TimeStopMin": {
+        "type": "categorical",
+        "choices": [60, 75]
+      },
+      "MR_TimeStopMax": {
+        "type": "categorical",
+        "choices": [90, 105]
+      }
+    }
+  }
+}

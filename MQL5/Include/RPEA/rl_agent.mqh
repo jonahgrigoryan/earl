@@ -30,10 +30,21 @@ double   g_sigma_ref = 0.0;
 datetime g_thresholds_calibrated_at = 0;
 bool     g_thresholds_loaded = false;
 
+void RL_ResetThresholdsToDefaults()
+{
+   g_quantile_thresholds[0] = -0.03;
+   g_quantile_thresholds[1] = 0.0;
+   g_quantile_thresholds[2] = 0.03;
+   g_sigma_ref = 0.0;
+   g_thresholds_calibrated_at = 0;
+   g_thresholds_loaded = false;
+}
+
 void RL_InitQTable()
 {
    ArrayInitialize(g_qtable, 0.0);
    g_qtable_loaded = false;
+   RL_ResetThresholdsToDefaults();
 }
 
 bool RL_ParseCalibrationDate(const string date_text, datetime &out_time)
@@ -55,13 +66,13 @@ bool RL_ParseCalibrationDate(const string date_text, datetime &out_time)
 // File: Files/RPEA/rl/thresholds.json
 // Format: { "k_thresholds": [-0.02, 0.0, 0.02], "sigma_ref": 0.015, "calibrated_at": "2026-01-28" }
 // Fallback: if missing or stale (>30 days), keep fixed 3% thresholds.
-bool RL_LoadThresholds()
+bool RL_LoadThresholdsFromPath(const string path)
 {
-   g_thresholds_loaded = false;
-   g_sigma_ref = 0.0;
-   g_thresholds_calibrated_at = 0;
+   RL_ResetThresholdsToDefaults();
+   if(path == "")
+      return false;
 
-   string json = Persistence_ReadWholeFile("RPEA/rl/thresholds.json");
+   string json = Persistence_ReadWholeFile(path);
    if(json == "")
       return false;
 
@@ -99,6 +110,20 @@ bool RL_LoadThresholds()
    g_thresholds_calibrated_at = calibrated_time;
    g_thresholds_loaded = true;
    return true;
+}
+
+bool RL_LoadThresholds()
+{
+   return RL_LoadThresholdsFromPath(FILE_RL_THRESHOLDS);
+}
+
+int RL_OpenReadBinaryWithCommonFallback(const string path)
+{
+   int handle = FileOpen(path, FILE_READ|FILE_BIN);
+   if(handle != INVALID_HANDLE)
+      return handle;
+   ResetLastError();
+   return FileOpen(path, FILE_READ|FILE_BIN|FILE_COMMON);
 }
 
 int RL_QuantileBin(const double value)
@@ -152,6 +177,13 @@ int RL_ActionForState(const int state_id)
    return best_action;
 }
 
+int RL_RuntimeActionForState(const int state_id)
+{
+   if(!Config_IsQLModeEnabled())
+      return (int)RL_ACTION_HOLD;
+   return RL_ActionForState(state_id);
+}
+
 // Get Q-advantage for a state: (max(Q) - mean(Q)) normalized to [0,1]
 double RL_GetQAdvantage(const int state_id)
 {
@@ -180,6 +212,13 @@ double RL_GetQAdvantage(const int state_id)
    return advantage;
 }
 
+double RL_RuntimeQAdvantage(const int state_id)
+{
+   if(!Config_IsQLModeEnabled())
+      return 0.5;
+   return RL_GetQAdvantage(state_id);
+}
+
 // Load Q-table from binary file
 bool RL_LoadQTable(const string path)
 {
@@ -189,7 +228,7 @@ bool RL_LoadQTable(const string path)
       return false;
    }
 
-   int handle = FileOpen(path, FILE_READ|FILE_BIN);
+   int handle = RL_OpenReadBinaryWithCommonFallback(path);
    if(handle == INVALID_HANDLE)
    {
       RL_InitQTable();
