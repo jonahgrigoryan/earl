@@ -208,6 +208,17 @@ def resolve_terminal_data_path(preferred: str | None) -> Path:
    return profiles[0].resolve()
 
 
+def resolve_tester_root(terminal_data_path: Path) -> Path:
+   resolved_terminal_data = terminal_data_path.resolve()
+   for candidate in (resolved_terminal_data, *resolved_terminal_data.parents):
+      if (
+         candidate.name.lower() == "terminal"
+         and candidate.parent.name.lower() == "metaquotes"
+      ):
+         return (candidate.parent / "Tester").resolve()
+   return (resolved_terminal_data.parent / "Tester").resolve()
+
+
 def resolve_terminal_exe(mt5_install_path: str | None, terminal_data_path: Path) -> Path:
    candidates = []
    if mt5_install_path:
@@ -762,7 +773,7 @@ def build_runner_paths(
    terminal_data = resolve_terminal_data_path(terminal_data_path)
    terminal_exe = resolve_terminal_exe(mt5_install_path, terminal_data)
    metaeditor_exe = resolve_metaeditor_exe(mt5_install_path, terminal_data)
-   tester_root = Path(os.environ["APPDATA"]) / "MetaQuotes" / "Tester"
+   tester_root = resolve_tester_root(terminal_data)
    output_root_path = Path(output_root)
    resolved_output_root = (
       (repo / output_root_path).resolve()

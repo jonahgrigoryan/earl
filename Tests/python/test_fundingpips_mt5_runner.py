@@ -74,6 +74,39 @@ class FundingPipsMt5RunnerTests(unittest.TestCase):
       self.assertEqual(paths.repo_root, repo_root)
       self.assertEqual(paths.output_root, (repo_root / "relative_output").resolve())
 
+   def test_build_runner_paths_derives_tester_root_without_appdata(self) -> None:
+      with tempfile.TemporaryDirectory() as tmp_dir:
+         repo_root = Path(tmp_dir) / "repo"
+         terminal_data = Path(tmp_dir) / "MetaQuotes" / "Terminal" / "PROFILE123"
+         terminal_exe = Path(tmp_dir) / "terminal64.exe"
+         metaeditor_exe = Path(tmp_dir) / "metaeditor64.exe"
+         repo_root.mkdir(parents=True)
+         terminal_data.mkdir(parents=True)
+         terminal_exe.write_text("terminal", encoding="ascii")
+         metaeditor_exe.write_text("metaeditor", encoding="ascii")
+
+         original_repo_root = runner.repo_root
+         original_resolve_terminal_data_path = runner.resolve_terminal_data_path
+         original_resolve_terminal_exe = runner.resolve_terminal_exe
+         original_resolve_metaeditor_exe = runner.resolve_metaeditor_exe
+         original_appdata = os.environ.pop("APPDATA", None)
+         try:
+            runner.repo_root = lambda: repo_root
+            runner.resolve_terminal_data_path = lambda preferred: terminal_data
+            runner.resolve_terminal_exe = lambda mt5_install_path, terminal_data_path: terminal_exe
+            runner.resolve_metaeditor_exe = lambda mt5_install_path, terminal_data_path: metaeditor_exe
+
+            paths = runner.build_runner_paths(output_root="relative_output")
+         finally:
+            runner.repo_root = original_repo_root
+            runner.resolve_terminal_data_path = original_resolve_terminal_data_path
+            runner.resolve_terminal_exe = original_resolve_terminal_exe
+            runner.resolve_metaeditor_exe = original_resolve_metaeditor_exe
+            if original_appdata is not None:
+               os.environ["APPDATA"] = original_appdata
+
+      self.assertEqual(paths.tester_root, (Path(tmp_dir) / "MetaQuotes" / "Tester").resolve())
+
    def test_compute_cache_key_is_order_independent_for_overrides(self) -> None:
       spec_a = runner.build_spec(
          {
