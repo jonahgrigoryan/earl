@@ -125,6 +125,64 @@ double Allocator_ComputeBias(const string setup_type, const int direction, const
    return 0.0;
 }
 
+double Allocator_GapToMinLotFraction(const double volume, const double volume_min)
+{
+   if(!MathIsValidNumber(volume) || !MathIsValidNumber(volume_min) || volume_min <= 0.0)
+      return 0.0;
+
+   double gap = (volume_min - volume) / volume_min;
+   return (gap > 0.0 ? gap : 0.0);
+}
+
+bool Allocator_ClassifyBudgetScaledVolume(const double volume,
+                                          const double scale,
+                                          const double step,
+                                          const double volume_min,
+                                          const double volume_max,
+                                          double &scaled_raw_volume,
+                                          double &scaled_floored_volume,
+                                          string &zero_subcause,
+                                          double &zero_reference_volume,
+                                          double &zero_gap_to_min_lot_frac)
+{
+   scaled_raw_volume = 0.0;
+   scaled_floored_volume = 0.0;
+   zero_subcause = "";
+   zero_reference_volume = 0.0;
+   zero_gap_to_min_lot_frac = 0.0;
+
+   if(!MathIsValidNumber(volume) || volume <= 0.0)
+      return false;
+   if(!MathIsValidNumber(scale) || scale <= 0.0)
+      return false;
+   if(!MathIsValidNumber(step) || step <= 0.0)
+      return false;
+   if(!MathIsValidNumber(volume_min) || volume_min <= 0.0)
+      return false;
+
+   scaled_raw_volume = volume * scale;
+   if(!MathIsValidNumber(scaled_raw_volume) || scaled_raw_volume <= 0.0)
+   {
+      zero_subcause = "below_min_after_budget";
+      zero_reference_volume = 0.0;
+      zero_gap_to_min_lot_frac = 1.0;
+      return true;
+   }
+
+   scaled_floored_volume = MathFloor(scaled_raw_volume / step) * step;
+   if(MathIsValidNumber(volume_max) && volume_max > 0.0 && scaled_floored_volume > volume_max)
+      scaled_floored_volume = volume_max;
+
+   if(scaled_floored_volume < volume_min || scaled_floored_volume <= 0.0)
+   {
+      scaled_floored_volume = 0.0;
+      zero_subcause = "below_min_after_budget";
+      zero_reference_volume = scaled_raw_volume;
+      zero_gap_to_min_lot_frac = Allocator_GapToMinLotFraction(scaled_raw_volume, volume_min);
+   }
+   return true;
+}
+
 string Allocator_RegimeLabelToString(const REGIME_LABEL regime)
 {
    switch(regime)
@@ -493,9 +551,24 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
    }
 
    double volume = 0.0;
+   RiskSizingDiagnostics risk_diag;
+   risk_diag = g_last_risk_sizing_diagnostics;
+   double budget_scaled_raw_volume = 0.0;
+   double budget_scaled_floored_volume = 0.0;
+   string volume_zero_subcause = "";
+   double volume_zero_reference_volume = 0.0;
+   double volume_zero_gap_to_min_lot_frac = 0.0;
+   double diagnostic_volume_min = 0.0;
+   double diagnostic_volume_step = 0.0;
    if(rejection == "")
    {
       volume = Risk_SizingByATRDistanceForSymbol(exec_symbol, entry_price, sl_price, equity, riskPct, -1.0, confidence);
+      risk_diag = g_last_risk_sizing_diagnostics;
+      diagnostic_volume_min = risk_diag.volume_min;
+      diagnostic_volume_step = risk_diag.volume_step;
+      volume_zero_subcause = risk_diag.volume_zero_subcause;
+      volume_zero_reference_volume = risk_diag.volume_zero_reference_volume;
+      volume_zero_gap_to_min_lot_frac = risk_diag.volume_zero_gap_to_min_lot_frac;
       if(volume <= 0.0)
          rejection = "volume_zero";
    }
@@ -543,11 +616,33 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
               if(!SymbolInfoDouble(exec_symbol, SYMBOL_VOLUME_STEP, step) || step<=0.0) step = 0.01;
               if(!SymbolInfoDouble(exec_symbol, SYMBOL_VOLUME_MIN, vmin) || vmin<=0.0) vmin = step;
               if(!SymbolInfoDouble(exec_symbol, SYMBOL_VOLUME_MAX, vmax) || vmax<=0.0) vmax = 100.0;
-              double vol_scaled = volume * scale;
-              // Quantize to step and clamp
-              vol_scaled = MathFloor(vol_scaled/step) * step;
-              if(vol_scaled < vmin) vol_scaled = 0.0;
-              if(vol_scaled > vmax) vol_scaled = vmax;
+              diagnostic_volume_min = vmin;
+              diagnostic_volume_step = step;
+
+              double vol_scaled = 0.0;
+              string budget_zero_subcause = "";
+              double budget_zero_reference_volume = 0.0;
+              double budget_zero_gap_to_min_lot_frac = 0.0;
+              if(!Allocator_ClassifyBudgetScaledVolume(volume,
+                                                      scale,
+                                                      step,
+                                                      vmin,
+                                                      vmax,
+                                                      budget_scaled_raw_volume,
+                                                      vol_scaled,
+                                                      budget_zero_subcause,
+                                                      budget_zero_reference_volume,
+                                                      budget_zero_gap_to_min_lot_frac))
+              {
+                 rejection = "budget_gate";
+              }
+              budget_scaled_floored_volume = vol_scaled;
+              if(rejection == "" && StringLen(budget_zero_subcause) > 0)
+              {
+                 volume_zero_subcause = budget_zero_subcause;
+                 volume_zero_reference_volume = budget_zero_reference_volume;
+                 volume_zero_gap_to_min_lot_frac = budget_zero_gap_to_min_lot_frac;
+              }
               if(vol_scaled > 0.0)
               {
                  volume = vol_scaled;
@@ -663,6 +758,45 @@ OrderPlan Allocator_BuildOrderPlan(const AppContext& ctx,
       log_fields += StringFormat(",\"open_risk\":%.2f", budget.open_risk);
    if(MathIsValidNumber(budget.pending_risk) && budget.pending_risk > 0.0)
       log_fields += StringFormat(",\"pending_risk\":%.2f", budget.pending_risk);
+   if(risk_diag.initialized)
+   {
+      log_fields += StringFormat(
+         ",\"risk_raw_volume\":%.8f,\"risk_floored_volume\":%.8f,\"risk_final_volume\":%.8f,\"volume_min\":%.8f,\"volume_step\":%.8f,\"risk_raw_gap_to_min_lot_frac\":%.8f,\"risk_floored_gap_to_min_lot_frac\":%.8f",
+         risk_diag.raw_volume,
+         risk_diag.floored_volume,
+         risk_diag.final_volume,
+         diagnostic_volume_min,
+         diagnostic_volume_step,
+         risk_diag.raw_gap_to_min_lot_frac,
+         risk_diag.floored_gap_to_min_lot_frac
+      );
+      if(StringLen(risk_diag.volume_zero_subcause) > 0)
+      {
+         log_fields += StringFormat(
+            ",\"risk_volume_zero_subcause\":\"%s\",\"risk_volume_zero_reference_volume\":%.8f,\"risk_volume_zero_gap_to_min_lot_frac\":%.8f",
+            risk_diag.volume_zero_subcause,
+            risk_diag.volume_zero_reference_volume,
+            risk_diag.volume_zero_gap_to_min_lot_frac
+         );
+      }
+   }
+   if(budget_scaled_raw_volume > 0.0 || budget_scaled_floored_volume > 0.0)
+   {
+      log_fields += StringFormat(
+         ",\"budget_scaled_raw_volume\":%.8f,\"budget_scaled_floored_volume\":%.8f",
+         budget_scaled_raw_volume,
+         budget_scaled_floored_volume
+      );
+   }
+   if(StringLen(volume_zero_subcause) > 0)
+   {
+      log_fields += StringFormat(
+         ",\"volume_zero_subcause\":\"%s\",\"volume_zero_reference_volume\":%.8f,\"volume_zero_gap_to_min_lot_frac\":%.8f",
+         volume_zero_subcause,
+         volume_zero_reference_volume,
+         volume_zero_gap_to_min_lot_frac
+      );
+   }
    if(plan.comment != "")
       log_fields += StringFormat(",\"comment\":\"%s\"", plan.comment);
    log_fields += "}";

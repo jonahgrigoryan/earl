@@ -863,6 +863,32 @@ def build_candidates(decision_rows: list[DecisionRow], event_rows: list[EventRow
             "logged_worst_case_risk_money": "",
             "effective_risk_pct": "",
             "risk_raw_volume": "",
+            "risk_floored_volume": "",
+            "risk_final_volume": "",
+            "volume_min": "",
+            "volume_step": "",
+            "risk_raw_gap_to_min_lot_frac": "",
+            "risk_floored_gap_to_min_lot_frac": "",
+            "risk_volume_zero_subcause": "",
+            "risk_volume_zero_reference_volume": "",
+            "risk_volume_zero_gap_to_min_lot_frac": "",
+            "volume_zero_subcause": normalize_candidate_text(row.fields.get("volume_zero_subcause")),
+            "volume_zero_reference_volume": maybe_number_text(
+               coerce_float(row.fields.get("volume_zero_reference_volume")),
+               places=8,
+            ),
+            "volume_zero_gap_to_min_lot_frac": maybe_number_text(
+               coerce_float(row.fields.get("volume_zero_gap_to_min_lot_frac")),
+               places=8,
+            ),
+            "budget_scaled_raw_volume": maybe_number_text(
+               coerce_float(row.fields.get("budget_scaled_raw_volume")),
+               places=8,
+            ),
+            "budget_scaled_floored_volume": maybe_number_text(
+               coerce_float(row.fields.get("budget_scaled_floored_volume")),
+               places=8,
+            ),
             "meta_choice": "",
             "meta_confidence": "",
             "meta_regime": "",
@@ -909,7 +935,42 @@ def build_candidates(decision_rows: list[DecisionRow], event_rows: list[EventRow
             )
             candidate["risk_raw_volume"] = maybe_number_text(
                coerce_float(risk_row.fields.get("raw_volume")),
-               places=4,
+               places=8,
+            )
+            candidate["risk_floored_volume"] = maybe_number_text(
+               coerce_float(risk_row.fields.get("floored_volume")),
+               places=8,
+            )
+            candidate["risk_final_volume"] = maybe_number_text(
+               coerce_float(risk_row.fields.get("final_volume")),
+               places=8,
+            )
+            candidate["volume_min"] = maybe_number_text(
+               coerce_float(risk_row.fields.get("volume_min") or row.fields.get("volume_min")),
+               places=8,
+            )
+            candidate["volume_step"] = maybe_number_text(
+               coerce_float(risk_row.fields.get("volume_step") or row.fields.get("volume_step")),
+               places=8,
+            )
+            candidate["risk_raw_gap_to_min_lot_frac"] = maybe_number_text(
+               coerce_float(risk_row.fields.get("raw_gap_to_min_lot_frac")),
+               places=8,
+            )
+            candidate["risk_floored_gap_to_min_lot_frac"] = maybe_number_text(
+               coerce_float(risk_row.fields.get("floored_gap_to_min_lot_frac")),
+               places=8,
+            )
+            candidate["risk_volume_zero_subcause"] = normalize_candidate_text(
+               risk_row.fields.get("volume_zero_subcause")
+            )
+            candidate["risk_volume_zero_reference_volume"] = maybe_number_text(
+               coerce_float(risk_row.fields.get("volume_zero_reference_volume")),
+               places=8,
+            )
+            candidate["risk_volume_zero_gap_to_min_lot_frac"] = maybe_number_text(
+               coerce_float(risk_row.fields.get("volume_zero_gap_to_min_lot_frac")),
+               places=8,
             )
             attach_source_reference(candidate, "risk_sizing", risk_row)
 
@@ -2086,6 +2147,20 @@ def write_outputs(
       "logged_worst_case_risk_money",
       "effective_risk_pct",
       "risk_raw_volume",
+      "risk_floored_volume",
+      "risk_final_volume",
+      "volume_min",
+      "volume_step",
+      "risk_raw_gap_to_min_lot_frac",
+      "risk_floored_gap_to_min_lot_frac",
+      "risk_volume_zero_subcause",
+      "risk_volume_zero_reference_volume",
+      "risk_volume_zero_gap_to_min_lot_frac",
+      "volume_zero_subcause",
+      "volume_zero_reference_volume",
+      "volume_zero_gap_to_min_lot_frac",
+      "budget_scaled_raw_volume",
+      "budget_scaled_floored_volume",
       "meta_choice",
       "meta_confidence",
       "meta_regime",

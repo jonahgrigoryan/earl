@@ -382,6 +382,44 @@ bool TestAllocatorMR_AdaptiveRiskMicroModePrecedence()
 }
 
 //+------------------------------------------------------------------+
+//| Test: Budget scaling zero classification stays diagnostic-only   |
+//+------------------------------------------------------------------+
+bool TestAllocatorMR_BudgetScaleZeroClassification()
+{
+   int f = TestAllocMR_Begin("TestAllocatorMR_BudgetScaleZeroClassification");
+
+   double scaled_raw = 0.0;
+   double scaled_floored = 0.0;
+   string zero_subcause = "";
+   double zero_reference_volume = 0.0;
+   double zero_gap_to_min_lot_frac = 0.0;
+   bool ok = Allocator_ClassifyBudgetScaledVolume(0.015,
+                                                  0.5,
+                                                  0.01,
+                                                  0.01,
+                                                  100.0,
+                                                  scaled_raw,
+                                                  scaled_floored,
+                                                  zero_subcause,
+                                                  zero_reference_volume,
+                                                  zero_gap_to_min_lot_frac);
+
+   ASSERT_TRUE(ok, "Budget scale diagnostics helper succeeds");
+   ASSERT_TRUE(MathAbs(scaled_raw - 0.0075) < 0.0000001,
+               "Scaled raw volume preserved before floor");
+   ASSERT_TRUE(MathAbs(scaled_floored) < 0.0000001,
+               "Scaled floored volume drops to zero");
+   ASSERT_TRUE(zero_subcause == "below_min_after_budget",
+               "Budget classification reports below_min_after_budget");
+   ASSERT_TRUE(MathAbs(zero_reference_volume - 0.0075) < 0.0000001,
+               "Budget zero reference volume matches scaled raw volume");
+   ASSERT_TRUE(MathAbs(zero_gap_to_min_lot_frac - 0.25) < 0.0000001,
+               "Budget zero gap matches 25pct below min lot");
+
+   return TestAllocMR_End(f);
+}
+
+//+------------------------------------------------------------------+
 //| Run all tests                                                    |
 //+------------------------------------------------------------------+
 bool TestAllocatorMR_RunAll()
@@ -401,8 +439,9 @@ bool TestAllocatorMR_RunAll()
    bool ok9 = TestAllocatorMR_AdaptiveRiskDisabledBaseline();
    bool ok10 = TestAllocatorMR_AdaptiveRiskEnabledRespectsClamp();
    bool ok11 = TestAllocatorMR_AdaptiveRiskMicroModePrecedence();
+   bool ok12 = TestAllocatorMR_BudgetScaleZeroClassification();
 
-   return (ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10 && ok11);
+   return (ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10 && ok11 && ok12);
 }
 
 #endif // TEST_ALLOCATOR_MR_MQH
